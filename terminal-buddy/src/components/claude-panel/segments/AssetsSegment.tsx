@@ -1,4 +1,4 @@
-import { FC, useCallback, useEffect, useMemo, useState } from 'react';
+import { FC, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createClaudeAsset,
   deleteClaudeAsset,
@@ -54,6 +54,9 @@ export const AssetsSegment: FC = () => {
   const [createForm, setCreateForm] = useState({ name: '', description: '' });
   const [importing, setImporting] = useState(false);
   const [importSource, setImportSource] = useState<{ scope: AssetScope; projectDir: string }>({ scope: 'user', projectDir: '' });
+  // 导入来源切换的请求序号（审查 M-19）：快来源的响应晚到会覆盖新来源的
+  // 列表，勾选项与实际导入来源错位。
+  const importRequestSeq = useRef(0);
   const [importable, setImportable] = useState<ImportableClaudeAsset[]>([]);
   const [importChecked, setImportChecked] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<ClaudeAssetEntry | null>(null);
@@ -133,11 +136,14 @@ export const AssetsSegment: FC = () => {
   };
 
   const loadImportable = async (source: { scope: AssetScope; projectDir: string }) => {
+    const seq = ++importRequestSeq.current;
     try {
       const list = await listImportableClaudeAssets(source.scope, source.scope === 'project' ? source.projectDir : undefined);
+      if (seq !== importRequestSeq.current) return; // 已切换到其他来源，丢弃过时响应
       setImportable(list.filter(item => item.kind === kind));
       setImportChecked(new Set());
     } catch (error) {
+      if (seq !== importRequestSeq.current) return;
       setImportable([]);
       showToast(String(error), 'error');
     }

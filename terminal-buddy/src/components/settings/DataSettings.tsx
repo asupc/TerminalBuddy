@@ -2,6 +2,7 @@ import { FC, useEffect, useState } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { Download, FolderOpen, Upload } from 'lucide-react';
 import {
+  getDataPath,
   getDataPathStatus,
   setDataPath as setDataPathCmd,
   exportAllData,
@@ -14,9 +15,11 @@ interface DataSettingsProps {
   dataPath: string;
   askConfirm: (message: string, onConfirm: () => void) => void;
   setConfirmDialog: (v: null) => void;
+  /** 迁移成功后通知父级刷新展示路径（审查 M-4：否则 UI 停留旧路径） */
+  onDataPathChanged?: (path: string) => void;
 }
 
-export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setConfirmDialog }) => {
+export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setConfirmDialog, onDataPathChanged }) => {
   const [pendingDataPath, setPendingDataPath] = useState('');
   const [isMigrating, setIsMigrating] = useState(false);
   const [dirStatus, setDirStatus] = useState<DataPathStatus | null>(null);
@@ -65,6 +68,9 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
                   try {
                     await setDataPathCmd(pendingDataPath);
                     setPendingDataPath('');
+                    void showAlert('数据迁移完成', '迁移成功');
+                    // 立即拉取新路径并通知父级刷新（审查 M-4），避免 UI 停留在旧路径
+                    getDataPath().then(path => onDataPathChanged?.(path)).catch(() => {});
                   } catch (err) {
                     void showAlert('迁移失败: ' + String(err), '迁移失败');
                   }

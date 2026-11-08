@@ -328,7 +328,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       case 'hotkeys':
         return <HotkeySettings settings={settings} updateSetting={updateSetting} />;
       case 'data':
-        return <DataSettings dataPath={dataPath} askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} />;
+        return <DataSettings dataPath={dataPath} askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} onDataPathChanged={setDataPath} />;
       case 'profiles':
         return <ProfilesSettings askConfirm={askConfirm} dismissConfirm={() => setConfirmDialog(null)} />;
       case 'commands':

@@ -29,6 +29,8 @@ export const MemorySegment: FC = () => {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  // 未保存时切换文件需要确认：用应用内 ConfirmDialog（WebView2 下 window.confirm 不可靠）。
+  const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
   const [form, setForm] = useState({ name: '', memoryType: 'project', description: '' });
 
   useEffect(() => {
@@ -64,8 +66,7 @@ export const MemorySegment: FC = () => {
     if (projectDir) void loadFiles(projectDir);
   }, [projectDir, loadFiles]);
 
-  const openFile = useCallback(async (name: string) => {
-    if (dirty && selected && !window.confirm('当前文件未保存，切换将丢失修改，确定吗？')) return;
+  const loadFile = useCallback(async (name: string) => {
     try {
       setSelected(name);
       setContent(await readClaudeMemoryFile(projectDir, name));
@@ -73,7 +74,15 @@ export const MemorySegment: FC = () => {
     } catch (error) {
       showToast(String(error), 'error');
     }
-  }, [projectDir, dirty, selected, showToast]);
+  }, [projectDir, showToast]);
+
+  const openFile = useCallback(async (name: string) => {
+    if (dirty && selected) {
+      setPendingSwitch(name);
+      return;
+    }
+    await loadFile(name);
+  }, [dirty, selected, loadFile]);
 
   const save = useCallback(async () => {
     if (!selected) return;
@@ -227,6 +236,19 @@ export const MemorySegment: FC = () => {
             <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="一句话摘要（用于召回）" />
           </label>
         </Dialog>
+      )}
+      {pendingSwitch && (
+        <ConfirmDialog
+          title="切换文件"
+          message="当前文件未保存，切换将丢失修改，确定吗？"
+          confirmText="放弃修改并切换"
+          onClose={() => setPendingSwitch(null)}
+          onConfirm={() => {
+            const next = pendingSwitch;
+            setPendingSwitch(null);
+            void loadFile(next);
+          }}
+        />
       )}
       {deleteTarget && (
         <ConfirmDialog

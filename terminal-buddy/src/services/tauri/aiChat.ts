@@ -10,6 +10,9 @@ export interface AiMessage {
   skillName?: string;
   /** 子代理（Task 工具）产生的消息：subagent 类型名（如 "Explore"）。主线程消息不携带。 */
   subagent?: string;
+  /** 子代理分组键（turn + parent_tool_use_id）：同一子代理的全部消息共享，
+   * 前端据此精确分组（V-5）——名称仅作显示，同名代理不误并组。 */
+  subagentKey?: string;
   /** 模型切换分段（role = system）：切换前后的供应商与模型，前端渲染为分隔线。 */
   modelSwitch?: AiModelSwitch;
 }

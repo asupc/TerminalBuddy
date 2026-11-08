@@ -1,6 +1,7 @@
 import { FC, useCallback, useEffect, useState } from 'react';
 import { listClaudeProjects, readClaudeMd, writeClaudeMd, type ClaudeProjectInfo } from '../../../services/tauri';
 import { useAppStore } from '../../../stores/appStore';
+import { showConfirm } from '../../../services/dialog';
 import { pickScopedProject, useClaudeProjectScope } from '../../../hooks/useClaudeProjectScope';
 
 const SNIPPETS: Array<{ label: string; content: string }> = [
@@ -84,18 +85,31 @@ export const ClaudeMdSegment: FC = () => {
     setDirty(true);
   };
 
+  // 切换作用域/项目前确认（审查 M-20）：未保存的编辑直接切换会静默丢弃，
+  // 与同面板 MemorySegment 的行为保持一致。
+  const switchKind = async (next: 'global' | 'project') => {
+    if (next === kind) return;
+    if (dirty && !(await showConfirm('当前编辑内容尚未保存，切换后将丢失，确定切换？'))) return;
+    setKind(next);
+  };
+  const switchProject = async (dir: string) => {
+    if (dir === projectDir) return;
+    if (dirty && !(await showConfirm('当前编辑内容尚未保存，切换后将丢失，确定切换？'))) return;
+    setProjectDir(dir);
+  };
+
   return (
     <div className="claude-segment claudemd-segment">
       <div className="claude-segment-toolbar">
         <div className="claude-segment-seg">
-          <button type="button" className={kind === 'global' ? 'on' : ''} onClick={() => setKind('global')}>全局</button>
-          <button type="button" className={kind === 'project' ? 'on' : ''} onClick={() => setKind('project')}>项目</button>
+          <button type="button" className={kind === 'global' ? 'on' : ''} onClick={() => void switchKind('global')}>全局</button>
+          <button type="button" className={kind === 'project' ? 'on' : ''} onClick={() => void switchKind('project')}>项目</button>
         </div>
         {kind === 'project' && (
           <select
             className="claude-segment-select"
             value={projectDir}
-            onChange={e => setProjectDir(e.target.value)}
+            onChange={e => void switchProject(e.target.value)}
           >
             {projects.length === 0 && <option value="">（未发现项目）</option>}
             {projects.map(project => (

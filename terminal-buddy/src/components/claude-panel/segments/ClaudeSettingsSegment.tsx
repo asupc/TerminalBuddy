@@ -597,7 +597,7 @@ const SettingRow: FC<SettingRowProps> = ({ template, value, customized, onChange
           <input
             className="claude-settings-input"
             type="number"
-            value={typeof value === 'number' ? value : (typeof value === 'string' && value !== '' ? Number(value) || '' : '')}
+            value={typeof value === 'number' ? value : (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value)) ? Number(value) : '')}
             placeholder={customized ? '' : '未设置'}
             onChange={e => {
               if (e.target.value === '') onReset();

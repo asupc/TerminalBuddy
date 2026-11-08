@@ -37,17 +37,29 @@ const STATUS_LABEL: Record<string, string> = {
   error: '出错',
 };
 
-/** 增量帧合并：用索引 Map 定位待更新消息，流式期间每帧都是 O(n) 而非 O(n·m)。 */
+/** 增量帧合并：流式期间的帧几乎只更新/追加尾部消息，先在尾部小窗口内定位，
+ * 命中不到再退回全量索引 Map，避免每帧 O(n) 重建 Map（审查 V-17）。 */
+const MERGE_TAIL_SCAN = 8;
 function mergeSession(previous: AiSession | null, frame: AiSessionUpdateFrame): AiSession {
   if (!previous || frame.session.revision >= previous.revision) {
     if (!previous) return { ...frame.session, messages: [...frame.messages] };
-    const index = new Map<string, number>();
-    previous.messages.forEach((message, position) => index.set(message.id, position));
     const messages = previous.messages.slice();
+    let indexMap: Map<string, number> | null = null;
     for (const message of frame.messages) {
-      const at = index.get(message.id);
+      let at: number | undefined;
+      for (let k = 1; k <= MERGE_TAIL_SCAN; k++) {
+        const position = messages.length - k;
+        if (position >= 0 && messages[position].id === message.id) { at = position; break; }
+      }
+      if (at == null) {
+        indexMap ??= new Map(messages.map((item, position) => [item.id, position]));
+        at = indexMap.get(message.id);
+      }
       if (at != null) messages[at] = message;
-      else { index.set(message.id, messages.length); messages.push(message); }
+      else {
+        indexMap?.set(message.id, messages.length);
+        messages.push(message);
+      }
     }
     return { ...frame.session, messages };
   }
@@ -101,6 +113,16 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const updateAgentTab = useAppStore(state => state.updateAgentTab);
   const closeAgentTab = useAppStore(state => state.closeAgentTab);
   const [session, setSession] = useState<AiSession | null>(null);
+  // 本地已作答的审批 id：answer() 乐观移除后，增量帧与六秒兜底快照会整壳
+  // 替换 session 把卡片带回（后端已拒绝二次作答，复活只会误导），统一过滤
+  // （审查 V-6 / N-7）。
+  const answeredApprovalsRef = useRef<Set<string>>(new Set());
+  const stripAnswered = useCallback((value: AiSession): AiSession => {
+    const answered = answeredApprovalsRef.current;
+    if (answered.size === 0 || !value.approvals?.length) return value;
+    const approvals = value.approvals.filter(item => !answered.has(item.id));
+    return approvals.length === value.approvals.length ? value : { ...value, approvals };
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -125,11 +147,11 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     setSession(null);
     setError(null);
     aiSessionGet(tab.sessionId)
-      .then(value => { if (!disposed) setSession(value); })
+      .then(value => { if (!disposed) setSession(stripAnswered(value)); })
       .catch(reason => { if (!disposed) setError(String(reason)); });
     const unlisten = listenTauri<AiSessionUpdateFrame>(AI_SESSION_UPDATE_EVENT, frame => {
       if (disposed || frame.session.id !== tab.sessionId) return;
-      setSession(previous => mergeSession(previous, frame));
+      setSession(previous => stripAnswered(mergeSession(previous, frame)));
     });
     // 其他客户端删除会话时同步关闭标签。
     const unlistenRemoved = listenTauri<string>(AI_SESSION_REMOVED_EVENT, id => {
@@ -156,7 +178,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     previousStatus.current = session.status;
     if (previous && previous !== 'idle' && session.status === 'idle') {
       let cancelled = false;
-      aiSessionGet(tab.sessionId).then(fresh => { if (!cancelled) setSession(fresh); }).catch(() => {});
+      aiSessionGet(tab.sessionId).then(fresh => { if (!cancelled) setSession(stripAnswered(fresh)); }).catch(() => {});
       return () => { cancelled = true; };
     }
     return undefined;
@@ -193,14 +215,28 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   }, [session?.slashCatalog, tab.provider, fallbackCatalog]);
   const slashCatalog = session?.slashCatalog ?? fallbackCatalog;
 
-  // 连续工具调用合并为一个块；连续同名子代理消息合并为子代理组；用户/助手消息保持原顺序。
+  // 连续工具调用合并为一个块；子代理消息按 subagentKey（turn + parent_tool_use_id，
+  // 审查 V-5）精确分组——同名代理不误并组、同一代理被主线程消息隔开也不拆组，
+  // 组位置取首次出现处；用户/助手消息保持原顺序。旧会话无 subagentKey 时回落
+  // 按名称相邻合并（兼容历史数据）。
   const blocks = useMemo<ChatBlock[]>(() => {
     const result: ChatBlock[] = [];
+    const groupIndex = new Map<string, number>();
     for (const message of messages) {
       if (message.subagent) {
+        const groupKey = message.subagentKey ?? `name:${message.subagent}`;
+        const at = message.subagentKey ? groupIndex.get(groupKey) : undefined;
+        if (at != null) {
+          const block = result[at];
+          if (block.kind === 'subagent') { block.messages.push(message); continue; }
+        }
         const last = result[result.length - 1];
-        if (last?.kind === 'subagent' && last.name === message.subagent) last.messages.push(message);
-        else result.push({ kind: 'subagent', name: message.subagent, messages: [message] });
+        if (!message.subagentKey && last?.kind === 'subagent' && last.name === message.subagent) {
+          last.messages.push(message);
+          continue;
+        }
+        groupIndex.set(groupKey, result.length);
+        result.push({ kind: 'subagent', name: message.subagent, messages: [message] });
         continue;
       }
       if (message.role !== 'tool') {
@@ -251,7 +287,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     stickToBottom.current = true;
     try {
       const snapshot = await aiSessionSend(tab.sessionId, { text, requestId: crypto.randomUUID() });
-      setSession(previous => (previous && previous.revision > snapshot.revision ? previous : snapshot));
+      setSession(previous => (previous && previous.revision > snapshot.revision ? previous : stripAnswered(snapshot)));
     } catch (reason) {
       setError(String(reason));
       setDraft(text);
@@ -263,6 +299,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const answer = useCallback(async (approval: AnswerAiApproval) => {
     try {
       await aiSessionAnswer(tab.sessionId, approval);
+      answeredApprovalsRef.current.add(approval.approvalId);
       setSession(previous => previous
         ? { ...previous, approvals: previous.approvals.filter(item => item.id !== approval.approvalId) }
         : previous);
@@ -276,7 +313,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     setError(null);
     try {
       const snapshot = await aiSessionSwitchModel(tab.sessionId, providerId, model);
-      setSession(previous => (previous && previous.revision > snapshot.revision ? previous : snapshot));
+      setSession(previous => (previous && previous.revision > snapshot.revision ? previous : stripAnswered(snapshot)));
     } catch (reason) {
       setError(String(reason));
     }
@@ -330,27 +367,21 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   // 发送中或 Agent 正在执行且不在等用户确认：显示「AI 正在思考中」，长时间无正文时也能看出进程仍在跑。
   const busy = sending || (running && session?.status !== 'approval');
   const [thinkingSince, setThinkingSince] = useState<number | null>(null);
-  const [clock, setClock] = useState(Date.now());
   useEffect(() => {
     setThinkingSince(previous => busy ? (previous ?? Date.now()) : null);
-  }, [busy]);
-  useEffect(() => {
-    if (!busy) return;
-    const timer = window.setInterval(() => setClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
   }, [busy]);
   // 事件通道丢帧时兜底拉一次快照：避免界面长期停在“思考中”而实际已结束。
   useEffect(() => {
     if (!busy) return;
     const timer = window.setInterval(() => {
       aiSessionGet(tab.sessionId)
-        .then(fresh => setSession(previous => (!previous || fresh.revision >= previous.revision ? fresh : previous)))
+        .then(fresh => setSession(previous => (!previous || fresh.revision >= previous.revision ? stripAnswered(fresh) : previous)))
         .catch(() => {});
     }, 6000);
     return () => window.clearInterval(timer);
   }, [busy, tab.sessionId]);
-  const thinkingSeconds = thinkingSince ? Math.max(0, Math.floor((clock - thinkingSince) / 1000)) : 0;
-  const elapsedText = thinkingSeconds >= 8 ? `已等待 ${thinkingSeconds} 秒` : null;
+  // 已等待秒数由 AgentMessageList 内部的 ElapsedBadge 自行计时渲染（V-16）：
+  // clock 状态住在父组件时，busy 期间每秒整页重渲染。
   const busyText = session?.status === 'stopping'
     ? '正在中断'
     : session?.status === 'background' ? '后台任务执行中' : 'AI 正在思考中';
@@ -433,7 +464,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
           localError={error}
           busy={busy}
           busyText={busyText}
-          elapsedText={elapsedText}
+          thinkingSince={thinkingSince}
           stickRef={stickToBottom}
           onAnswer={answer}
           onActiveUserChange={setActiveNodeId}

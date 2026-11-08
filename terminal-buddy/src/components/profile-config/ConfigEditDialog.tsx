@@ -180,6 +180,13 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
         setSaveError('请先添加项目并设置项目路径'); return;
       }
       const commands = startupCommands.filter(c => c.trim() !== '');
+      // 端口校验（审查 M-28）：清空输入会得到 0，静默落盘会让连接走错误端口。
+      const portError = data.terminalType === 'ssh'
+        ? (sshPort < 1 || sshPort > 65535 ? 'SSH 端口必须在 1-65535 之间' : null)
+        : data.terminalType === 'mstsc'
+          ? (mstscPort < 1 || mstscPort > 65535 ? '远程桌面端口必须在 1-65535 之间' : null)
+          : null;
+      if (portError) { setSaveError(portError); return; }
       if (profile) {
         await updateProfile({
           ...profile,
@@ -451,7 +458,10 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
               </div>
               <div className="form-group">
                 <label>端口</label>
-                <input type="number" value={sshPort} onChange={e => setSshPort(Number(e.target.value))} />
+                <input type="number" min={1} max={65535} value={sshPort} onChange={e => {
+  const parsed = e.target.value === '' ? 0 : Number(e.target.value);
+  setSshPort(Number.isFinite(parsed) ? parsed : 0);
+}} />
               </div>
               <div className="form-group">
                 <label>用户名</label>
@@ -511,7 +521,10 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
               </div>
               <div className="form-group">
                 <label>端口</label>
-                <input type="number" value={mstscPort} onChange={e => setMstscPort(Number(e.target.value))} placeholder="3389" />
+                <input type="number" min={1} max={65535} value={mstscPort} onChange={e => {
+  const parsed = e.target.value === '' ? 0 : Number(e.target.value);
+  setMstscPort(Number.isFinite(parsed) ? parsed : 0);
+}} placeholder="3389" />
               </div>
               <div className="form-group">
                 <label>用户名</label>

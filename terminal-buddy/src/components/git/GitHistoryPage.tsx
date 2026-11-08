@@ -234,9 +234,13 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch }) =>
     if (!historyResult || historyLoading || historyLoadingMore || !historyHasMore) return;
 
     const skip = historyResult.commits.length;
+    // 记录当前加载代次：期间若发生刷新（loadHistory 会递增 ref），旧分页结果必须丢弃，
+    // 否则会把旧仓库/旧范围的历史片段追加进新列表。
+    const requestId = historyLoadRequestRef.current;
     setHistoryLoadingMore(true);
     try {
       const result = await gitGetHistory(repoRoot, 200, skip);
+      if (historyLoadRequestRef.current !== requestId) return;
       if (result.commits.length === 0) {
         setHistoryHasMore(false);
         return;
@@ -250,9 +254,11 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch }) =>
       });
       setHistoryHasMore(result.commits.length >= 200);
     } catch (err) {
-      setHistoryError(`加载更多历史记录失败：${String(err)}`);
+      if (historyLoadRequestRef.current === requestId) {
+        setHistoryError(`加载更多历史记录失败：${String(err)}`);
+      }
     } finally {
-      setHistoryLoadingMore(false);
+      if (historyLoadRequestRef.current === requestId) setHistoryLoadingMore(false);
     }
   }, [historyResult, historyLoading, historyLoadingMore, historyHasMore, repoRoot]);
 

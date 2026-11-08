@@ -139,26 +139,38 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentRef = useRef(content);
   contentRef.current = content;
+  const isDraftRef = useRef(isDraft);
+  isDraftRef.current = isDraft;
+  const filePathRef = useRef(filePath);
+  filePathRef.current = filePath;
+
+  const flushDraftRef = useRef<() => void>(() => {});
+  flushDraftRef.current = () => {
+    const current = contentRef.current;
+    const path = filePathRef.current;
+    if (!isDraftRef.current || current === null || current === lastLoadedContentRef.current) return;
+    writeFileContent(path, current).then(() => {
+      lastLoadedContentRef.current = current;
+      getFileMeta(path).then(meta => { diskMetaRef.current = meta; }).catch(() => {});
+    }).catch(console.error);
+  };
 
   useEffect(() => {
     if (!isDraft) return;
-    const autoSave = () => {
-      const current = contentRef.current;
-      if (current !== null && current !== lastLoadedContentRef.current) {
-        writeFileContent(filePath, current).then(() => {
-          lastLoadedContentRef.current = current;
-          getFileMeta(filePath).then(meta => { diskMetaRef.current = meta; }).catch(() => {});
-        }).catch(console.error);
-      }
-    };
-    autoSaveTimerRef.current = setInterval(autoSave, 3000);
+    autoSaveTimerRef.current = setInterval(() => flushDraftRef.current(), 3000);
     return () => {
       if (autoSaveTimerRef.current) {
         clearInterval(autoSaveTimerRef.current);
         autoSaveTimerRef.current = null;
       }
+      // 注意：这里不能落盘。依赖 [isDraft, filePath] 变化（另存为）时也会执行
+      // cleanup，闭包里的旧草稿路径已被删除，会把当前内容写回孤儿文件。落盘放在
+      // 下面的「仅卸载」effect 中，用 ref 取最新的路径/内容。
     };
   }, [isDraft, filePath]);
+
+  // 组件卸载（关闭/切换标签）时立即落盘一次，避免 3 秒窗口内的草稿内容丢失。
+  useEffect(() => () => { flushDraftRef.current(); }, []);
 
   // Initial load（走 loadFileContent，保证“先取 meta 后读内容”的防漏检顺序）
   useEffect(() => {
@@ -394,6 +406,17 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
 
           await writeFileContent(savePath, value);
 
+          // 本地写盘已成功：立即同步保存基准并解除冲突。
+          // 必须在进入 SSH 上传等长等待之前执行，否则等待期内的输入会被
+          // 收尾处的 onDirtyChange(false) 误标为已保存（关标签即丢内容）。
+          lastLoadedContentRef.current = value;
+          onDirtyChange(ed.getValue() === value);
+          const savedMeta = await getFileMeta(savePath).catch(() => null);
+          if (savedMeta) diskMetaRef.current = savedMeta;
+          setConflictNotice(false);
+          setDiffDiskContent(null);
+          notifiedModTimeRef.current = 0;
+
           // If this was a draft that was saved to a new location, clean up
           if (isNewSave) {
             // Remove draft file and update draft index
@@ -449,20 +472,18 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
                 }
               }).then(fn => { unlistenError = fn; if (done) fn(); });
 
-              // Timeout fallback
-              setTimeout(() => { if (!done) { done = true; finish(); } }, 30000);
+              // Timeout fallback（本地已保存，超时只影响上传确认，给出明确提示）
+              setTimeout(() => {
+                if (!done) {
+                  done = true;
+                  showSaveNotify('error', '上传超时：本地已保存，请在传输面板确认上传结果');
+                  finish();
+                }
+              }, 30000);
             });
           } else {
             showSaveNotify('success', '已保存');
           }
-          onDirtyChange(false);
-          const meta = await getFileMeta(savePath).catch(() => null);
-          if (meta) diskMetaRef.current = meta;
-          lastLoadedContentRef.current = value;
-          // 本地内容已写入磁盘，冲突解除
-          setConflictNotice(false);
-          setDiffDiskContent(null);
-          notifiedModTimeRef.current = 0;
         } catch (err) {
           console.error('Failed to save file:', err);
           showSaveNotify('error', '保存失败');
@@ -526,6 +547,9 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
     if (value !== null) {
       try {
         await writeFileContent(filePath, value);
+        lastLoadedContentRef.current = value;
+        const meta = await getFileMeta(filePath).catch(() => null);
+        if (meta) diskMetaRef.current = meta;
         const session = useAppStore.getState().sessions.find(
           s => s.sessionType === 'editor' && s.profileId === filePath
         );
@@ -538,10 +562,8 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
             void showAlert('已保存到本地，但上传到服务器失败: ' + String(uploadErr), '上传失败');
           }
         }
-        onDirtyChange(false);
-        const meta = await getFileMeta(filePath).catch(() => null);
-        if (meta) diskMetaRef.current = meta;
-        lastLoadedContentRef.current = value;
+        // 与保存动作一致：以上传发起前的实时内容复核，避免等待窗口内的输入被误标已保存
+        onDirtyChange((editorRef.current?.getValue() ?? value) !== value);
       } catch (err) {
         console.error('Failed to save file:', err);
       }

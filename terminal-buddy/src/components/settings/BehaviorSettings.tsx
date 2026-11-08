@@ -162,7 +162,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
             </p>
           </div>
           <div className="settings-row-ctrl">
-            <button className="btn-secondary" onClick={() => useAppStore.getState().openSettingsDialog('web-auth')}>
+            <button className="btn-secondary" onClick={() => useAppStore.getState().openSettingsDialog('web-management')}>
               {webApiStatus?.hasPassword ? '管理访问' : '设置登录密码'}
             </button>
           </div>

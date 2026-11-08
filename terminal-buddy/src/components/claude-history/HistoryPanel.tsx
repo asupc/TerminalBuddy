@@ -449,6 +449,12 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
     });
   }, [history, provider, extraParamPresets, profiles]);
 
+  // 原生会话恢复不消费终端预设参数（审查 M-18）：该模式下隐藏预设菜单项，
+  // 避免用户选择「恢复会话（预设X）」后参数被静默丢弃。
+  const isNativeResume = useCallback((item: ClaudeSessionItem) =>
+    getAppSettings().nativeChatSessions && !liveTerminalBySession.has(item.sessionId),
+  [liveTerminalBySession]);
+
   // 「新会话形态」为原生会话时，历史恢复走原生聊天标签（独立 CLI 进程 + --resume/thread 续接），
   // 与项目模型启动共用同一开关；会话仍活在某个终端里时保持终端路径（聚焦原终端）。
   const resumeNative = useCallback(async (item: ClaudeSessionItem, vendorRef?: ClaudeVendorRef) => {
@@ -503,10 +509,10 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
     }
     setSelectedId(item.sessionId);
     const MENU_W = 210;
-    const MENU_H = 320 + presetsFor(item).length * 28;
+    const MENU_H = 320 + (isNativeResume(item) ? 0 : presetsFor(item).length) * 28;
     const pos = fitContextMenuToViewport(e.clientX, e.clientY, MENU_W, MENU_H);
     setContextMenu({ x: pos.x, y: pos.y, item });
-  }, [presetsFor, selectedIds]);
+  }, [presetsFor, isNativeResume, selectedIds]);
 
   const handleToggleFlag = useCallback(async (
     item: ClaudeSessionItem,
@@ -575,6 +581,12 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
   };
 
   const selectedItems = items.filter(item => selectedIds.has(item.sessionId));
+
+  // 右键菜单在打开后可能被后台索引刷新替换掉旧对象；操作时始终取列表里的最新条目，
+  // 否则「收藏/归档」会按打开菜单时的旧状态反向切换。
+  const contextMenuItem = contextMenu
+    ? items.find(item => item.sessionId === contextMenu.item.sessionId) ?? contextMenu.item
+    : null;
 
   const itemTitle = (item: ClaudeSessionItem) => item.customTitle || item.title;
 
@@ -851,7 +863,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
         {...resizeHandleProps}
       />
 
-      {contextMenu && (
+      {contextMenu && contextMenuItem && (
         <div
           ref={menuRef}
           className="claude-hist-context"
@@ -870,15 +882,15 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
             icon={Play}
             label="恢复会话"
             hint="（双击）"
-            onClick={() => { handleResume(contextMenu.item); setContextMenu(null); }}
+            onClick={() => { handleResume(contextMenuItem); setContextMenu(null); }}
           />
-          {presetsFor(contextMenu.item).map(preset => (
+          {!isNativeResume(contextMenuItem) && presetsFor(contextMenuItem).map(preset => (
             <MenuItem
               key={preset.id}
               icon={Play}
               label="恢复会话"
               preset={preset}
-              onClick={() => { handleResume(contextMenu.item, preset); setContextMenu(null); }}
+              onClick={() => { handleResume(contextMenuItem, preset); setContextMenu(null); }}
             />
           ))}
           <ClaudeModelMenuSection
@@ -887,7 +899,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
             separatorClassName="claude-hist-context-sep"
             title="指定模型恢复"
             onPickModel={(providerId, modelId) => {
-              const item = contextMenu.item;
+              const item = contextMenuItem;
               setContextMenu(null);
               handleResumeWithModel(item, { providerId, modelId });
             }}
@@ -897,38 +909,38 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
             icon={Eye}
             label="查看详情 / 回放"
             onClick={() => {
-              handleReplay(contextMenu.item.sessionId, itemTitle(contextMenu.item), contextMenu.item.projectDir);
+              handleReplay(contextMenuItem.sessionId, itemTitle(contextMenuItem), contextMenuItem.projectDir);
               setContextMenu(null);
             }}
           />
           <MenuItem
             icon={Download}
             label="导出…"
-            onClick={() => { setExportTarget(contextMenu.item); setContextMenu(null); }}
+            onClick={() => { setExportTarget(contextMenuItem); setContextMenu(null); }}
           />
           <div className="claude-hist-context-sep" />
           <MenuItem
             icon={Pencil}
             label="重命名…"
             onClick={() => {
-              setRenameValue(itemTitle(contextMenu.item));
-              setRenamingId(contextMenu.item.sessionId);
+              setRenameValue(itemTitle(contextMenuItem));
+              setRenamingId(contextMenuItem.sessionId);
               setContextMenu(null);
             }}
           />
           <MenuItem
-            icon={contextMenu.item.starred ? StarOff : Star}
-            label={contextMenu.item.starred ? '取消收藏' : '收藏'}
+            icon={contextMenuItem.starred ? StarOff : Star}
+            label={contextMenuItem.starred ? '取消收藏' : '收藏'}
             onClick={() => {
-              void handleToggleFlag(contextMenu.item, { starred: !contextMenu.item.starred });
+              void handleToggleFlag(contextMenuItem, { starred: !contextMenuItem.starred });
               setContextMenu(null);
             }}
           />
           <MenuItem
-            icon={contextMenu.item.archived ? ArchiveRestore : Archive}
-            label={contextMenu.item.archived ? '取消归档' : '归档'}
+            icon={contextMenuItem.archived ? ArchiveRestore : Archive}
+            label={contextMenuItem.archived ? '取消归档' : '归档'}
             onClick={() => {
-              void handleToggleFlag(contextMenu.item, { archived: !contextMenu.item.archived });
+              void handleToggleFlag(contextMenuItem, { archived: !contextMenuItem.archived });
               setContextMenu(null);
             }}
           />
@@ -936,14 +948,14 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
             icon={Trash2}
             label="删除记录…"
             danger
-            onClick={() => { setDeleteTarget([contextMenu.item]); setContextMenu(null); }}
+            onClick={() => { setDeleteTarget([contextMenuItem]); setContextMenu(null); }}
           />
           <div className="claude-hist-context-sep" />
           <MenuItem
             icon={Copy}
             label="复制会话 ID"
             onClick={() => {
-              void navigator.clipboard.writeText(contextMenu.item.sessionId)
+              void navigator.clipboard.writeText(contextMenuItem.sessionId)
                 .then(() => showToast('会话 ID 已复制', 'success'))
                 .catch(error => showToast(`复制失败: ${String(error)}`, 'error'));
               setContextMenu(null);
@@ -954,7 +966,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
             icon={FolderOpen}
             label="打开所在文件夹"
             onClick={() => {
-              void openInExplorer(contextMenu.item.filePath).catch(error => showToast(String(error), 'error'));
+              void openInExplorer(contextMenuItem.filePath).catch(error => showToast(String(error), 'error'));
               setContextMenu(null);
             }}
           />

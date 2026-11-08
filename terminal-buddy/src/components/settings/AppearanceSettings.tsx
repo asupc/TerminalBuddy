@@ -1,5 +1,5 @@
 import { setTaskSummaryEnabled, useTaskSummaryStore } from '../../stores/taskSummaryStore';
-import { FC } from 'react';
+import { FC, useRef } from 'react';
 import { BREATHING_LIGHT_COLORS } from '../../types';
 import { type AppSettings, type BreathingLightColorMode } from '../../utils/settings';
 
@@ -9,6 +9,28 @@ interface AppearanceSettingsProps {
 }
 
 export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, updateSetting }) => {
+  // 自定义列表选中色的文本框允许输入中间态，但失焦时必须回退到最近一次合法颜色，
+  // 否则非法值会直接写进设置并被 CSS 静默忽略。
+  const lastValidColors = useRef({
+    listSelectionBg: settings.listSelectionBg,
+    listSelectionFg: settings.listSelectionFg,
+    listSelectionBorderColor: settings.listSelectionBorderColor,
+  });
+  const isValidColor = (value: string) => /^#[0-9a-fA-F]{6}$/.test(value) || /^#[0-9a-fA-F]{3}$/.test(value);
+  const updateColorText = (
+    key: 'listSelectionBg' | 'listSelectionFg' | 'listSelectionBorderColor',
+    value: string,
+    commit: boolean,
+  ) => {
+    if (isValidColor(value)) {
+      lastValidColors.current[key] = value;
+      updateSetting(key, value);
+    } else if (commit) {
+      updateSetting(key, lastValidColors.current[key]);
+    } else {
+      updateSetting(key, value);
+    }
+  };
   const summaryEnabled = useTaskSummaryStore(state => state.enabled);
   const summarySaving = useTaskSummaryStore(state => state.saving);
   const summaryError = useTaskSummaryStore(state => state.error);
@@ -212,7 +234,8 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
                     <input
                       type="text"
                       value={settings.listSelectionBg}
-                      onChange={(e) => updateSetting('listSelectionBg', e.target.value)}
+                      onChange={(e) => updateColorText('listSelectionBg', e.target.value, false)}
+                      onBlur={(e) => updateColorText('listSelectionBg', e.target.value, true)}
                     />
                   </div>
                 </div>
@@ -227,7 +250,8 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
                     <input
                       type="text"
                       value={settings.listSelectionFg}
-                      onChange={(e) => updateSetting('listSelectionFg', e.target.value)}
+                      onChange={(e) => updateColorText('listSelectionFg', e.target.value, false)}
+                      onBlur={(e) => updateColorText('listSelectionFg', e.target.value, true)}
                     />
                   </div>
                 </div>
@@ -242,7 +266,8 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
                     <input
                       type="text"
                       value={settings.listSelectionBorderColor}
-                      onChange={(e) => updateSetting('listSelectionBorderColor', e.target.value)}
+                      onChange={(e) => updateColorText('listSelectionBorderColor', e.target.value, false)}
+                      onBlur={(e) => updateColorText('listSelectionBorderColor', e.target.value, true)}
                     />
                   </div>
                 </div>

@@ -1066,10 +1066,15 @@
   min-width: 0;
 }
 
-/* 虚拟化块 wrapper：窗口外的块只有固定高度占位，不渲染正文 */
+/* 虚拟化块 wrapper：窗口外的块只有固定高度占位，不渲染正文。
+   display:flex 恢复子块（.agent-tool-entry 等依赖 align-self 的条目）的
+   对齐语义——wrapper 引入后它们不再直接挂在消息列表的 flex 容器下（V-11）。 */
 .agent-chat-item {
   flex-shrink: 0;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 /* 跳转定位后的闪烁高亮：1.8 秒渐隐 */

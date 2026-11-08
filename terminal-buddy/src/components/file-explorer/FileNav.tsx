@@ -10,13 +10,18 @@ import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { showAlert } from '../../services/dialog';
 import { canDownloadToBrowser, downloadToBrowser } from '../../services/fileDownload';
-import { supportsSystemExplorerOpen } from '../../services/platform';
+import { supportsSystemExplorerOpen, serverPathsCaseInsensitive } from '../../services/platform';
 import { GitOperationsHost, type GitContextAction, type GitOperationsHostHandle } from '../git/GitOperationsHost';
 import { getGitOperation, subscribeGitOperations } from '../../services/gitOperationState';
 import { getCachedGitRepositoryStatus, loadGitRepositoryStatus, subscribeGitRepositoryStatus } from '../../services/gitStatusCache';
 import { RemoteFileTree } from './RemoteFileTree';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import './FileNav.css';
+
+/** 去重键：只有大小写不敏感的服务端才折叠大小写（Linux 上 a/A 是不同目录）。 */
+function rootKey(path: string): string {
+  return serverPathsCaseInsensitive() ? path.toLowerCase() : path;
+}
 
 import { ConfiguredFileRoot } from './ConfiguredFileRoot';
 import { sortLabel, directoryName, normalizeConfiguredPath, isPathEqualOrInside, replacePathPrefix } from './file-utils';
@@ -84,7 +89,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
     }
     for (const profile of profiles) {
       const path = normalizeConfiguredPath(effectiveProfilePath(profile, projects));
-      if (path && !uniquePaths.has(path.toLowerCase())) uniquePaths.set(path.toLowerCase(), path);
+      if (path && !uniquePaths.has(rootKey(path))) uniquePaths.set(rootKey(path), path);
     }
     return [...uniquePaths.values()];
   }, [profiles, projects]);
@@ -94,14 +99,14 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
     return [...fileRoots, ...projects.map(project => project.path), ...(tabProjectDirectory ? [tabProjectDirectory] : [])]
       .map(normalizeConfiguredPath)
       .filter(path => {
-        const key = path.toLowerCase();
+        const key = rootKey(path);
         if (!path || seen.has(key)) return false;
         seen.add(key);
         return true;
       });
   }, [fileRoots, projects, tabProjectDirectory]);
   const activeProjectRoot = useMemo(() => tabProjectDirectory && rootDirectories.find(
-    path => normalizeConfiguredPath(path).toLowerCase() === normalizeConfiguredPath(tabProjectDirectory).toLowerCase(),
+    path => rootKey(normalizeConfiguredPath(path)) === rootKey(normalizeConfiguredPath(tabProjectDirectory)),
   ), [tabProjectDirectory, rootDirectories]);
   const gitContextTarget = ctxMenu
     ? ctxMenu.path

@@ -46,7 +46,19 @@ export function LlmProviderDialog({ draft, onClose, onSave }: LlmProviderDialogP
   const [saving, setSaving] = useState(false);
   const fetchRequestId = useRef(0);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  // 模型行用稳定的 key（而非 index）：拖拽/删除后 index 会变，React 复用错行
+  // 会让下拉框内部状态（高亮项、输入草稿）串位。
+  const rowKeySeed = useRef(0);
+  const newRowKey = () => `model-row-${++rowKeySeed.current}`;
+  const [rowKeys, setRowKeys] = useState<string[]>(() => draft.models.map(() => newRowKey()));
   const { containerRef, startDrag, dragClass } = useDragReorder((from, to) => {
+    setRowKeys(keys => {
+      const next = [...keys];
+      const [moved] = next.splice(from, 1);
+      if (!moved) return keys;
+      next.splice(to, 0, moved);
+      return next;
+    });
     setEditor(current => {
       const next = [...current.models];
       const [moved] = next.splice(from, 1);
@@ -56,7 +68,10 @@ export function LlmProviderDialog({ draft, onClose, onSave }: LlmProviderDialogP
     });
   });
 
-  useEffect(() => { setEditor(draft); }, [draft]);
+  useEffect(() => {
+    setEditor(draft);
+    setRowKeys(draft.models.map(() => newRowKey()));
+  }, [draft]);
 
   const doFetch = async () => {
     if (fetching) return;
@@ -91,9 +106,11 @@ export function LlmProviderDialog({ draft, onClose, onSave }: LlmProviderDialogP
     }));
   };
   const removeModel = (index: number) => {
+    setRowKeys(keys => keys.filter((_, i) => i !== index));
     setEditor(current => ({ ...current, models: current.models.filter((_, i) => i !== index) }));
   };
   const addModel = () => {
+    setRowKeys(keys => [...keys, newRowKey()]);
     setEditor(current => ({
       ...current,
       models: [...current.models, { id: '', enabled: true, contextWindow: 0, effortLevel: '', maxOutputTokens: 0 }],
@@ -179,7 +196,7 @@ export function LlmProviderDialog({ draft, onClose, onSave }: LlmProviderDialogP
           )}
           {editor.models.length > 0 && <div className="llm-model-list" ref={containerRef}>
             {editor.models.map((model, index) => (
-              <div className={`llm-model-entry model-drag-row${dragClass(index)}`} key={index} data-drag-index={index}>
+              <div className={`llm-model-entry model-drag-row${dragClass(index)}`} key={rowKeys[index] ?? index} data-drag-index={index}>
                 <span className="model-drag-handle" role="button" tabIndex={0} title="拖拽排序"
                   aria-label={`拖拽排序模型 ${index + 1}`}
                   onPointerDown={event => startDrag(event, index)}>

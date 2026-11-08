@@ -469,6 +469,8 @@ export function ConfirmDialog({
   confirmVariant = 'danger',
 }: ConfirmDialogProps) {
   const [open, setOpen] = useState(true);
+  // 离场动画期间按钮仍可点击，未防抖会让 onConfirm 执行两次（删除/停止等操作）。
+  const [confirmed, setConfirmed] = useState(false);
   const requestClose = () => setOpen(false);
   return (
     <Dialog
@@ -481,7 +483,7 @@ export function ConfirmDialog({
       footer={(
         <>
           <button type="button" className="btn-secondary" onClick={requestClose}>{cancelText}</button>
-          <button type="button" className={`btn-${confirmVariant}`} onClick={() => { onConfirm(); requestClose(); }}>{confirmText}</button>
+          <button type="button" className={`btn-${confirmVariant}`} disabled={confirmed} onClick={() => { if (confirmed) return; setConfirmed(true); onConfirm(); requestClose(); }}>{confirmText}</button>
         </>
       )}
     >

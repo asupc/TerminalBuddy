@@ -13,6 +13,10 @@ export function clientTerminalOwner(): 'pc' | 'web' {
 export function serverUsesWindowsPaths(): boolean {
   return !isBrowserClient() || serverPlatform === 'windows';
 }
+/** 服务端文件系统是否大小写不敏感（用于路径去重键，不能一律小写化）。 */
+export function serverPathsCaseInsensitive(): boolean {
+  return !isBrowserClient() || serverPlatform === 'windows' || serverPlatform === 'darwin';
+}
 export function defaultShellType(): 'powershell' | 'bash' {
   return serverUsesWindowsPaths() ? 'powershell' : 'bash';
 }

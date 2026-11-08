@@ -20,7 +20,7 @@ import { Toast } from "./components/shared/Toast";
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
 import { flushPendingSaveTabs } from './stores/slices/sessionsSlice';
-import { getAllProfiles, getProjects, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, getAgentSessionsForTerminals, checkAppUpdate, type UpdateInfo } from './services/tauri';
+import { getAllProfiles, getProjects, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, getAgentSessionsForTerminals, checkAppUpdate, readClientData, type UpdateInfo } from './services/tauri';
 import { compareVersions } from './utils/version';
 import { APP_VERSION } from './version';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
@@ -226,6 +226,19 @@ function App() {
       await initExtraParamPresets();
       await initCmdOverrides();
       await initCustomCommands();
+
+      // 文件排除规则回读（审查 H-9）：持久化在 ClientData/exclusion_patterns，
+      // 读取失败或无记录时保持默认规则。直接 setState，避免触发 action 里的写回。
+      try {
+        const rawExclusions = await readClientData('exclusion_patterns');
+        if (rawExclusions) {
+          const parsed = JSON.parse(rawExclusions);
+          // 空数组是用户明确清空规则的结果，必须原样恢复；只有「无记录」才保持默认。
+          if (Array.isArray(parsed) && parsed.every(p => typeof p === 'string')) {
+            useAppStore.setState({ exclusionPatterns: parsed });
+          }
+        }
+      } catch { /* 保持默认规则 */ }
 
       const settings = getAppSettings();
 
@@ -514,6 +527,9 @@ function App() {
         await updateProfileLastUsed(profile.id);
       } catch (err) {
         console.error('Failed to start mstsc:', err);
+        import('./services/dialog').then(({ showAlert }) =>
+          showAlert(String(err), '远程桌面启动失败'),
+        ).catch(() => {});
       }
       return;
     }

@@ -1,4 +1,4 @@
-import { FC, useCallback, useEffect, useState } from 'react';
+import { FC, useCallback, useEffect, useRef, useState } from 'react';
 import {
   deleteClaudeMcpServer,
   getClaudeMcpConfigPath,
@@ -110,6 +110,15 @@ export const McpSegment: FC = () => {
 
   const activeProjectDir = scope === 'project' ? projectDir : undefined;
 
+  // 切换作用域/项目后旧探测结果不再适用；递增代数同时丢弃在途请求的迟到回包，
+  // 避免同名服务器跨作用域串扰。
+  const probeGeneration = useRef(0);
+  useEffect(() => {
+    probeGeneration.current += 1;
+    setProbeMap({});
+    setProbing(false);
+  }, [scope, projectDir]);
+
   const load = useCallback(async () => {
     if (scope === 'project' && !projectDir) {
       setServers([]);
@@ -131,18 +140,20 @@ export const McpSegment: FC = () => {
   }, [load]);
 
   const probe = async () => {
+    const generation = ++probeGeneration.current;
     setProbing(true);
     try {
       const list = await probeClaudeMcp(60);
+      if (generation !== probeGeneration.current) return;
       const map: Record<string, ClaudeMcpProbeStatus> = {};
       for (const item of list) map[item.name] = item;
       setProbeMap(map);
       const ok = list.filter(item => item.status === 'connected').length;
       showToast(`检测完成：${ok}/${list.length} 连通`, ok === list.length ? 'success' : 'info');
     } catch (error) {
-      showToast(String(error), 'error');
+      if (generation === probeGeneration.current) showToast(String(error), 'error');
     } finally {
-      setProbing(false);
+      if (generation === probeGeneration.current) setProbing(false);
     }
   };
 

@@ -48,25 +48,86 @@ function formatPermissions(mode: number): string {
   return (mode & 0o040000 ? 'd' : '-') + perms.join('');
 }
 
-function waitForDownload(transferId: string): Promise<void> {
+/** 先注册监听再发起下载（M-34）：Rust 端完成事件只发一次，原「await 发起 →
+ * 再 waitForDownload」的顺序在下载快于监听注册时永久错过完成事件；并带
+ * 超时兜底，避免事件丢失后 Promise 永挂。
+ */
+function downloadWithProgress(
+  terminalId: string, remotePath: string, localPath: string,
+  transferId: string, profileId: string, timeoutMs = 60_000,
+): Promise<void> {
   return new Promise((resolve, reject) => {
+    let settled = false;
     let unlistenProgress: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
-    const cleanup = () => { unlistenProgress?.(); unlistenError?.(); };
-
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      unlistenProgress?.();
+      unlistenError?.();
+      if (error) reject(error); else resolve();
+    };
+    // 超时按「无进度」计算：每收到一次进度就重新计时。固定 60 秒总时长会把
+    // 慢速链路上仍在正常下载的大文件误判为失败，用户重试还会与后端残留写者
+    // 并发写同一个目标文件。
+    const armTimeout = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => finish(new Error('下载超时')), timeoutMs);
+    };
+    armTimeout();
     onTransferProgress((progress) => {
-      if (progress.transferId === transferId && progress.percent >= 100) {
-        cleanup();
-        resolve();
-      }
+      if (progress.transferId !== transferId) return;
+      if (progress.percent >= 100) { finish(); return; }
+      armTimeout();
     }).then(fn => { unlistenProgress = fn; });
-
     onTransferError((evt) => {
-      if (evt.transferId === transferId) {
-        cleanup();
-        reject(new Error(evt.error));
-      }
+      if (evt.transferId === transferId) finish(new Error(evt.error));
     }).then(fn => { unlistenError = fn; });
+    remoteDownload(terminalId, remotePath, localPath, transferId, profileId).catch(e => finish(new Error(String(e))));
+  });
+}
+
+// 模块级传输监听单例（H-8b）：进度与完成事件由全局 store 消费，与
+// RemoteFileTree 组件的挂载状态解耦——此前监听随组件卸载/切换丢失，
+// 而 Rust 端 100% 事件只发一次，错过后传输项永久停在「传输中」。
+let transferListenersInstalled = false;
+function installTransferListeners() {
+  if (transferListenersInstalled) return;
+  transferListenersInstalled = true;
+  onTransferProgress((progress) => {
+    const store = useAppStore.getState();
+    if (progress.transferId) {
+      const item = store.transfers.find(t => t.id === progress.transferId);
+      if (item) {
+        store.updateTransferProgress(item.id, progress.transferred, progress.total, progress.percent);
+        if (progress.percent >= 100) {
+          store.completeTransfer(item.id);
+        }
+      }
+      return;
+    }
+    // Legacy（无 transferId 的旧事件）：仅当该终端恰好只有一个 active 传输时
+    // 才匹配——按 terminalId+active 任取一个会把并发下载的进度串扰、把大文件
+    // 提前标「已完成」（M-32）。
+    const activeTransfers = store.transfers.filter(
+      t => t.terminalId === progress.terminalId && t.status === 'active'
+    );
+    if (activeTransfers.length === 1) {
+      const item = activeTransfers[0];
+      store.updateTransferProgress(item.id, progress.transferred, progress.total, progress.percent);
+      if (progress.percent >= 100) {
+        store.completeTransfer(item.id);
+      }
+    }
+  });
+  onTransferError((evt) => {
+    const store = useAppStore.getState();
+    const item = store.transfers.find(t => t.id === evt.transferId);
+    if (item) {
+      store.failTransfer(item.id, evt.error);
+    }
   });
 }
 
@@ -107,6 +168,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const remoteFileCache = useAppStore(s => s.remoteFileCache[terminalId]);
   const setRemoteFileCache = useAppStore(s => s.setRemoteFileCache);
   const connectedRef = useRef(false);
+  // 最新会话标识：快速切换 SSH 终端时，晚到的旧会话响应据此丢弃（H-8a）
+  const latestTerminalIdRef = useRef(terminalId);
+  latestTerminalIdRef.current = terminalId;
   const [showTransferPanel, setShowTransferPanel] = useState(false);
 
   const connectSession = useCallback(async () => {
@@ -116,15 +180,22 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     setError(null);
     try {
       await connectSshSession(terminalId, session.profileId);
+      // 快会话的连接结果晚到时（组件已切到另一终端）不能置位当前连接状态，
+      // 否则 connectedRef 被错误置 true、后续操作打到错误会话上（H-8a）。
+      if (latestTerminalIdRef.current !== terminalId) return false;
       connectedRef.current = true;
       setConnected(true);
       return true;
     } catch (e) {
       console.error('SSH session connect failed:', e);
-      setError('连接失败: ' + String(e));
+      if (latestTerminalIdRef.current === terminalId) {
+        setError('连接失败: ' + String(e));
+      }
       return false;
     } finally {
-      setConnecting(false);
+      // 旧会话的收尾同样要守卫，否则 A→B 切换时 A 的 finally 会提前清掉
+      // B 正在显示的 connecting/loading 状态（复核 #7）。
+      if (latestTerminalIdRef.current === terminalId) setConnecting(false);
     }
   }, [terminalId, session?.profileId]);
 
@@ -134,6 +205,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     setError(null);
     try {
       const entries = await remoteListDir(terminalId, path);
+      // 旧会话的列表响应晚到时丢弃，避免覆盖当前会话的列表与 currentPath（H-8a）
+      if (latestTerminalIdRef.current !== terminalId) return;
       setFiles(entries);
       setCurrentPath(path);
       setSessionDirectory(terminalId, path);
@@ -141,9 +214,11 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       setRemoteFileCache(terminalId, { files: entries, currentPath: path });
     } catch (err) {
       console.error('Failed to list remote directory:', err);
-      setError(String(err));
+      if (latestTerminalIdRef.current === terminalId) {
+        setError(String(err));
+      }
     } finally {
-      setLoading(false);
+      if (latestTerminalIdRef.current === terminalId) setLoading(false);
     }
   }, [terminalId, setSessionDirectory, setRemoteFileCache]);
 
@@ -183,53 +258,21 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     }
   }, [terminalId, session?.profileId]);
 
-  // Transfer progress listener — match by transferId for async transfers
+  // Transfer progress listener — store 更新走模块级单例（H-8b），组件内
+  // 仅保留本会话的轻量进度条展示（丢失无碍，store 状态由单例保证）。
   useEffect(() => {
+    installTransferListeners();
     let unlistenProgress: (() => void) | undefined;
-    let unlistenError: (() => void) | undefined;
 
     onTransferProgress((progress) => {
       if (progress.terminalId !== terminalId) return;
-      const store = useAppStore.getState();
-
-      // Match by transferId (async transfers)
-      if (progress.transferId) {
-        const item = store.transfers.find(t => t.id === progress.transferId);
-        if (item) {
-          store.updateTransferProgress(item.id, progress.transferred, progress.total, progress.percent);
-          if (progress.percent >= 100) {
-            store.completeTransfer(item.id);
-          }
-          return;
-        }
-      }
-
-      // Legacy: match by active transfer (handleEdit / handleOpenInSystem)
-      const activeTransfer = store.transfers.find(t =>
-        t.terminalId === terminalId && t.status === 'active'
-      );
-      if (activeTransfer) {
-        store.updateTransferProgress(activeTransfer.id, progress.transferred, progress.total, progress.percent);
-        if (progress.percent >= 100) {
-          store.completeTransfer(activeTransfer.id);
-        }
-        return;
-      }
       setTransferProgress(progress);
       if (progress.percent >= 100) {
         setTimeout(() => setTransferProgress(null), 1500);
       }
     }).then(fn => { unlistenProgress = fn; });
 
-    onTransferError((evt) => {
-      const store = useAppStore.getState();
-      const item = store.transfers.find(t => t.id === evt.transferId);
-      if (item) {
-        store.failTransfer(item.id, evt.error);
-      }
-    }).then(fn => { unlistenError = fn; });
-
-    return () => { unlistenProgress?.(); unlistenError?.(); };
+    return () => { unlistenProgress?.(); };
   }, [terminalId]);
 
   // Close context menu on outside click
@@ -397,8 +440,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       await ensureDir(tempDir);
       const localPath = `${tempDir}/${file.name}`;
       const id = crypto.randomUUID();
-      await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
-      await waitForDownload(id);
+      // 监听先行 + 超时兜底（M-34）：完成事件只发一次，await 发起后再监听
+      // 会与快速完成竞态而永久错过。
+      await downloadWithProgress(terminalId, file.path, localPath, id, session?.profileId || '');
       await openPath(localPath);
     } catch (err) {
       console.error('Open in system failed:', err);
@@ -414,8 +458,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       await ensureDir(tempDir);
       const localPath = `${tempDir}/${file.name}`;
       const id = crypto.randomUUID();
-      await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
-      await waitForDownload(id);
+      // 同 handleOpenInSystem：监听先行 + 超时兜底（M-34）。
+      await downloadWithProgress(terminalId, file.path, localPath, id, session?.profileId || '');
       useAppStore.getState().openEditorSession(localPath, file.path, terminalId);
     } catch (err) {
       console.error('Edit failed:', err);

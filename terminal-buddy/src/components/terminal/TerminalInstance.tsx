@@ -8,7 +8,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../../services/tauri';
-import { isBrowserClient } from '../../services/platform';
+import { defaultShellType, isBrowserClient } from '../../services/platform';
 import { ServerMonitor } from '../shared/ServerMonitor';
 import { listen } from '@tauri-apps/api/event';
 import { getAppSettings, matchesHotkey } from '../../utils/settings';
@@ -130,18 +130,46 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     }
     updateAutocomplete(null);
   }, [updateAutocomplete]);
+
+  // 搜索式补全的选择接受（审查 M-21）：终端行已有输入时按差量补全，
+  // 已输入与所选命令不构成前缀则先退格清空再整条插入——此前整条发送
+  // 会造成 `gi` + `git status` → `gigit status` 的前缀重复。
+  const acceptSearchPick = useCallback((command: string) => {
+    const term = xtermRef.current;
+    if (!term || !allowsTerminalAutocomplete(term)) {
+      closeAutocomplete();
+      return;
+    }
+    const input = getInputAtCursor(term);
+    if (input) {
+      const completion = getAutocompleteCompletion(command, input);
+      if (completion) {
+        onOutputRef.current(terminalId, completion);
+        closeAutocomplete();
+        return;
+      }
+      onOutputRef.current(terminalId, '\b'.repeat(input.length) + command);
+      closeAutocomplete();
+      return;
+    }
+    onOutputRef.current(terminalId, command);
+    closeAutocomplete();
+  }, [terminalId, closeAutocomplete]);
   colorThemeRef.current = colorTheme;
 
-  const sendPastedText = useCallback((text: string): boolean => {
+  // 括号粘贴必须一次性写入：开启/关闭标记（\x1b[200~ / \x1b[201~）若被异步分块
+  // 拆到不同 tick，用户在这期间的按键会落进粘贴内容里（Enter 变成换行而不是提交），
+  // 两次快速粘贴也会互相穿插。大段内容交给后端一次写 PTY，由 write_all 处理缓冲。
+  const sendPastedText = useCallback((text: string, submit = false): boolean => {
     if (readOnlyRef.current || !text) return false;
     if (text.includes('\n') || text.includes('\r')) {
       // 粘贴行尾必须写 CR：ConPTY 会把输入流里的 LF 当成带 Ctrl 修饰的 Enter，
       // 在开启 kitty 键盘协议的 TUI 里被编码成 CSI 13;5u（Ctrl+Enter=提交），
       // 导致粘贴内容被逐行提交、或 CSI-u 序列被字面插进消息文本。
       const sanitized = text.replace(/\r?\n/g, '\r');
-      onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+      onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~${submit ? '\r' : ''}`);
     } else {
-      onOutputRef.current(terminalId, text);
+      onOutputRef.current(terminalId, `${text}${submit ? '\r' : ''}`);
     }
     return true;
   }, [terminalId]);
@@ -149,10 +177,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   // 图片粘贴辅助的插入回调：引用文本走粘贴规范（CR + 括号粘贴），发送时补 \r
   const handlePasteImageInsert = useCallback((text: string, submit: boolean) => {
     if (readOnlyRef.current) return;
-    sendPastedText(text);
-    if (submit) onOutputRef.current(terminalId, '\r');
+    // \r 与粘贴内容合并为同一次写入，避免两次 IPC 乱序把回车插进粘贴中间。
+    sendPastedText(text, submit);
     xtermRef.current?.focus();
-  }, [sendPastedText, terminalId]);
+  }, [sendPastedText]);
 
   const adjustTerminalContextMenuPosition = useCallback(() => {
     if (!contextMenu.visible) return;
@@ -402,6 +430,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         getWindowsBuildNumber(),
         getTerminalLoadingMode(terminalId),
       ]);
+      // traits 查询的 await 窗口内组件可能已卸载（M-25）：继续执行会对 null
+      // 容器 terminal.open() 抛异常并泄漏已注册的监听。
+      if (disposed || !terminalRef.current) return;
       usesVsCodeTerminal = terminalLoadingMode === 'vsCode';
       void bootLog(`initTerminal[${terminalId}]: terminal traits took ${(performance.now() - tBuildNum).toFixed(0)}ms, build=${buildNumber}, mode=${terminalLoadingMode}`);
 
@@ -775,26 +806,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         });
       }
 
-      // Chunk large paste data to prevent SSH/PTY buffer overflow
-      const PASTE_CHUNK_SIZE = 256;
-      const PASTE_CHUNK_DELAY = 10;
-      const chunkedSend = (data: string) => {
-        if (data.length <= PASTE_CHUNK_SIZE) {
-          onOutputRef.current(terminalId, data);
-          return;
-        }
-        const chunks: string[] = [];
-        for (let i = 0; i < data.length; i += PASTE_CHUNK_SIZE) {
-          chunks.push(data.slice(i, i + PASTE_CHUNK_SIZE));
-        }
-        const sendNext = (idx: number) => {
-          if (disposed || readOnlyRef.current || idx >= chunks.length) return;
-          onOutputRef.current(terminalId, chunks[idx]);
-          if (idx < chunks.length - 1) {
-            setTimeout(() => sendNext(idx + 1), PASTE_CHUNK_DELAY);
-          }
-        };
-        sendNext(0);
+      // 括号粘贴（含 xterm 自身的中键粘贴）同样必须一次性写入，理由见 sendPastedText。
+
+      // 远端 Linux 会话的 cd 解析按 POSIX 语义（审查 M-22）：ssh/docker/k8s
+      // 不能套用 Windows 规则，否则解析出的路径持久化后会在恢复时注入错误 cd。
+      // 本地 bash（Linux 桌面 / Docker 服务端）同样是 POSIX 路径，一并纳入。
+      const isUnixSession = () => {
+        const type = useAppStore.getState().sessions.find(s => s.id === terminalId)?.terminalType;
+        if (type === 'ssh' || type === 'docker' || type === 'k8s') return true;
+        return defaultShellType() === 'bash';
       };
 
       terminal.onData((data) => {
@@ -805,7 +825,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           clearAutocomplete();
           // Enter 后稍等缓冲区刷新，检测 cd 命令并记录目录
           setTimeout(() => {
-            if (!disposed) detectAndTrackCd(terminal, terminalId);
+            if (!disposed) detectAndTrackCd(terminal, terminalId, isUnixSession());
           }, 50);
         }
 
@@ -819,17 +839,17 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             if (/^cd(\s|$)/i.test(trimmed)) {
               const args = trimmed.split(/\s+/);
               const cwd = useAppStore.getState().sessionDirectories[terminalId] || '';
-              const target = resolveCdTarget(cwd, args[1]);
+              const target = resolveCdTarget(cwd, args[1], isUnixSession());
               if (target) {
                 useAppStore.getState().setSessionDirectory(terminalId, target);
               }
             }
           }
           if (inner.includes('\n')) {
-            // 同 sendPastedText：行尾归一化为 CR，避免 ConPTY 把 LF 当 Ctrl+Enter 上报
+            // 同 sendPastedText：行尾归一化为 CR，避免 ConPTY 把 LF 当 Ctrl+Enter 上报。
             onOutputRef.current(terminalId, `\x1b[200~${inner.replace(/\r?\n/g, '\r')}\x1b[201~`);
           } else {
-            chunkedSend(data);
+            onOutputRef.current(terminalId, data);
           }
         } else if (data.length > 1 && /[\r\n]/.test(data)) {
           // 同 sendPastedText：行尾归一化为 CR，避免 ConPTY 把 LF 当 Ctrl+Enter 上报
@@ -1034,6 +1054,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (e.key === 'Enter' && (e.ctrlKey || e.shiftKey)) {
           e.preventDefault();
           e.stopPropagation();
+          // 显式换行（不提交）。已知局限（N-9）：Windows ConPTY 会把注入的 LF
+          // 上报为 Ctrl+Enter，kitty 协议 TUI 中可能表现为提交而非换行；
+          // 这是所有非物理按键注入方案的共同限制，暂保持 LF 不变。
           onOutputRef.current(terminalId, '\n');
           return;
         }
@@ -1071,8 +1094,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                 if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
                   onOutputRef.current(terminalId, trimmed.replace(/"/g, '\\"'));
                 } else if (text.includes('\n') || text.includes('\r')) {
-                  const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                  onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+                  // 多行粘贴统一走 sendPastedText（H-7）：行尾归一化为 CR。
+                  // 此前此处把行尾归一化成 LF，ConPTY 会把 LF 当 Ctrl+Enter 上报，
+                  // 在 kitty 键盘协议 TUI（Claude Code/Codex 等）里粘贴内容被逐行提交。
+                  sendPastedText(text);
                 } else {
                   sendPastedText(text);
                 }
@@ -1491,7 +1516,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           />
           <button
             className={`terminal-search-case ${searchCaseSensitive ? 'active' : ''}`}
-            onClick={() => setSearchCaseSensitive(!searchCaseSensitive)}
+            onClick={() => {
+              const next = !searchCaseSensitive;
+              setSearchCaseSensitive(next);
+              // 切换大小写后必须按新选项重新搜索，否则高亮仍是旧规则的结果。
+              if (searchAddonRef.current && searchText) {
+                searchAddonRef.current.findNext(searchText, { caseSensitive: next, regex: false });
+              }
+            }}
             title="区分大小写"
           >
             Aa
@@ -1588,8 +1620,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                   if (!item) return;
                   e.preventDefault();
                   e.stopPropagation();
-                  onOutputRef.current(terminalId, item.command);
-                  closeAutocomplete();
+                  acceptSearchPick(item.command);
                 }
               }}
             />
@@ -1608,15 +1639,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                   closeAutocomplete();
                   return;
                 }
-                const input = getInputAtCursor(term);
-                if (autocomplete.searchable || !input) {
-                  // 搜索面板或输入为空：整条插入命令
-                  onOutputRef.current(terminalId, cmd.command);
-                } else {
-                  const completion = getAutocompleteCompletion(cmd.command, input);
-                  if (completion) onOutputRef.current(terminalId, completion);
-                }
-                closeAutocomplete();
+                acceptSearchPick(cmd.command);
               }}
             >
               <span className="autocomplete-cmd">{cmd.command}</span>

@@ -126,7 +126,9 @@ export const createSessionsSlice = (
 			return {
 				sessions,
 				activeSessionId: keepActive ? state.activeSessionId : s.id,
-				activeSpecialTab: null,
+				// 其它端新建终端时不抢当前视图：保留用户正在看的特殊页签，
+				// 否则手机/Web 端每建一个终端都会把桌面端的设置/文件页顶掉。
+				activeSpecialTab: keepActive ? state.activeSpecialTab : null,
 			};
 		}),
 	resolveStartingSession: (startingId, terminalId) => {

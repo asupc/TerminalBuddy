@@ -1,6 +1,12 @@
 import type { StoreApi } from "zustand";
 import type { AppState } from "../appStore";
 import { writeClientData } from "../../services/tauri";
+import { serverPathsCaseInsensitive } from "../../services/platform";
+
+/** 路径去重键：大小写不敏感的服务端才折叠大小写，否则 Linux 上仅大小写不同的目录会被误判重复。 */
+function fileRootKey(path: string): string {
+	return serverPathsCaseInsensitive() ? path.toLowerCase() : path;
+}
 
 function persistFileTreeNav(state: { navBackStack: string[]; navForwardStack: string[]; fileSortBy: "name" | "size" | "modified"; fileSortDir: "asc" | "desc"; fileRoots: string[] }) {
 	writeClientData(
@@ -64,16 +70,16 @@ export const createFileTreeSlice = (
 	fileRoots: [],
 	addFileRoot: (path) =>
 		set((state) => {
-			const pathKey = path.toLowerCase();
-			if (state.fileRoots.some((candidate) => candidate.toLowerCase() === pathKey)) return state;
+			const pathKey = fileRootKey(path);
+			if (state.fileRoots.some((candidate) => fileRootKey(candidate) === pathKey)) return state;
 			const fileRoots = [...state.fileRoots, path];
 			persistFileTreeNav({ ...state, fileRoots });
 			return { fileRoots };
 		}),
 	removeFileRoot: (path) =>
 		set((state) => {
-			const pathKey = path.toLowerCase();
-			const fileRoots = state.fileRoots.filter((candidate) => candidate.toLowerCase() !== pathKey);
+			const pathKey = fileRootKey(path);
+			const fileRoots = state.fileRoots.filter((candidate) => fileRootKey(candidate) !== pathKey);
 			persistFileTreeNav({ ...state, fileRoots });
 			return { fileRoots };
 		}),

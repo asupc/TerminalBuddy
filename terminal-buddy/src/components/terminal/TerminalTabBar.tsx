@@ -110,10 +110,15 @@ export const TerminalTabBar: FC = () => {
           .map(session => closeTerminalCmd(session.id).catch(() => {}))
       );
     };
-    if (workingCount > 0) {
+    // 脏编辑器同样要确认（审查 M-23）：批量关闭绕过单关的未保存检查会静默丢内容。
+    const dirtyCount = sessionsToClose.filter(s => s.isDirty).length;
+    if (workingCount > 0 || dirtyCount > 0) {
+      const warnings: string[] = [];
+      if (workingCount > 0) warnings.push(`${workingCount} 个终端正在执行任务`);
+      if (dirtyCount > 0) warnings.push(`${dirtyCount} 个编辑器有未保存修改`);
       setConfirmDialog({
         title: '关闭其他',
-        message: `其他 ${sessionsToClose.length} 个选项卡中有 ${workingCount} 个终端正在执行任务，确定要关闭吗？`,
+        message: `其他 ${sessionsToClose.length} 个选项卡中有 ${warnings.join('、')}，确定要关闭吗？`,
         onConfirm: () => {
           setConfirmDialog(null);
           performClose();
@@ -139,10 +144,15 @@ export const TerminalTabBar: FC = () => {
           .map(session => closeTerminalCmd(session.id).catch(() => {}))
       );
     };
-    if (workingCount > 0) {
+    // 脏编辑器同样要确认（审查 M-23）：批量关闭绕过单关的未保存检查会静默丢内容。
+    const dirtyCount = sessionsToClose.filter(s => s.isDirty).length;
+    if (workingCount > 0 || dirtyCount > 0) {
+      const warnings: string[] = [];
+      if (workingCount > 0) warnings.push(`${workingCount} 个终端正在执行任务`);
+      if (dirtyCount > 0) warnings.push(`${dirtyCount} 个编辑器有未保存修改`);
       setConfirmDialog({
         title: '关闭左侧',
-        message: `左侧 ${sessionsToClose.length} 个选项卡中有 ${workingCount} 个终端正在执行任务，确定要关闭吗？`,
+        message: `左侧 ${sessionsToClose.length} 个选项卡中有 ${warnings.join('、')}，确定要关闭吗？`,
         onConfirm: () => {
           setConfirmDialog(null);
           performClose();
@@ -168,10 +178,15 @@ export const TerminalTabBar: FC = () => {
           .map(session => closeTerminalCmd(session.id).catch(() => {}))
       );
     };
-    if (workingCount > 0) {
+    // 脏编辑器同样要确认（审查 M-23）：批量关闭绕过单关的未保存检查会静默丢内容。
+    const dirtyCount = sessionsToClose.filter(s => s.isDirty).length;
+    if (workingCount > 0 || dirtyCount > 0) {
+      const warnings: string[] = [];
+      if (workingCount > 0) warnings.push(`${workingCount} 个终端正在执行任务`);
+      if (dirtyCount > 0) warnings.push(`${dirtyCount} 个编辑器有未保存修改`);
       setConfirmDialog({
         title: '关闭右侧',
-        message: `右侧 ${sessionsToClose.length} 个选项卡中有 ${workingCount} 个终端正在执行任务，确定要关闭吗？`,
+        message: `右侧 ${sessionsToClose.length} 个选项卡中有 ${warnings.join('、')}，确定要关闭吗？`,
         onConfirm: () => {
           setConfirmDialog(null);
           performClose();

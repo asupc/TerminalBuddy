@@ -90,7 +90,14 @@ export const createProfilesSlice = (
 	setActiveSpecialTab: (tab) => set({ activeSpecialTab: tab }),
 
 	exclusionPatterns: ["node_modules", ".git"],
-	setExclusionPatterns: (patterns) => set({ exclusionPatterns: patterns }),
+	setExclusionPatterns: (patterns) => {
+		set({ exclusionPatterns: patterns });
+		// 排除规则持久化到后端（审查 H-9）：此前只写内存，重启即丢。
+		// 失败不阻断 UI（与主题等其他客户端数据一致的降级策略）。
+		import("../../services/tauri").then(({ writeClientData }) =>
+			writeClientData("exclusion_patterns", JSON.stringify(patterns))
+		).catch(e => console.error("保存排除规则失败:", e));
+	},
 
 	// 拖拽中的 profile id（ConfigNav → TabNav 启动终端）
 	dragProfileId: null,

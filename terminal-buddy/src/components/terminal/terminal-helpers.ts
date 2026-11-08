@@ -634,11 +634,28 @@ export function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor
  * 解析 cd 命令的目标路径。
  * 支持: cd path, cd .., cd ~, cd /, 以及无参数的 cd（回到 home）。
  * 返回绝对路径或 null（无法解析时）。
+ * unix = true 时按 POSIX 语义解析（审查 M-22）：SSH/Docker/K8s 会话的 cd
+ * 不能套用 Windows 规则（`cd ~`→`C:\Users`、`/var/log`→`\var\log`），
+ * 解析结果持久化后会在恢复会话时注入错误目录。
  */
-export function resolveCdTarget(cwd: string, arg: string | undefined): string | null {
+export function resolveCdTarget(cwd: string, arg: string | undefined, unix = false): string | null {
   if (!arg || arg === '~') {
-    // 浏览器环境无法访问 process.env，使用常见默认值
-    return 'C:\\Users';
+    // Windows 桌面端用常见默认值；远端家目录无法在前端解析（不知道用户名），
+    // 返回 null 保持原目录不更新。
+    return unix ? null : 'C:\\Users';
+  }
+  if (unix) {
+    if (arg.startsWith('~')) return null;
+    if (arg.startsWith('/')) return arg;
+    const parts = cwd.replace(/\/+$/, '').split('/');
+    for (const seg of arg.split('/')) {
+      if (seg === '..') {
+        if (parts.length > 1) parts.pop();
+      } else if (seg && seg !== '.') {
+        parts.push(seg);
+      }
+    }
+    return parts.join('/') || '/';
   }
   // 绝对路径
   if (/^[A-Za-z]:\\/.test(arg) || arg.startsWith('/')) {
@@ -657,7 +674,7 @@ export function resolveCdTarget(cwd: string, arg: string | undefined): string | 
 }
 
 /** 从终端缓冲区提取当前行命令，检测 cd 并更新 sessionDirectory */
-export function detectAndTrackCd(terminal: Terminal, terminalId: string) {
+export function detectAndTrackCd(terminal: Terminal, terminalId: string, unix = false) {
   const buffer = terminal.buffer.active;
   const line = buffer.getLine(buffer.baseY + buffer.cursorY);
   if (!line) return;
@@ -669,7 +686,7 @@ export function detectAndTrackCd(terminal: Terminal, terminalId: string) {
   const parts = input.split(/\s+/);
   if (parts[0] === 'cd') {
     const cwd = useAppStore.getState().sessionDirectories[terminalId] || '';
-    const target = resolveCdTarget(cwd, parts[1]);
+    const target = resolveCdTarget(cwd, parts[1], unix);
     if (target) {
       useAppStore.getState().setSessionDirectory(terminalId, target);
     }

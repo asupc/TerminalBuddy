@@ -28,13 +28,23 @@ export const CommandsSettings: FC<CommandsSettingsProps> = ({ askConfirm, dismis
 
   const templates = useMemo(() => getEffectiveTemplates(), [customCommands, overrides]);
 
+  // 写入侧已把 key 归一为 trim 后的命令；读取侧必须同样归一，否则 'ping '
+  // 这类内置命令的「隐藏/改说明」会出现「写了但不生效、无法恢复」。
+  const overrideFor = (command: string) => overrides[command.trim()];
+
   useEffect(() => {
     if (!activeTab && templates.length > 0) setActiveTab(templates[0].category);
   }, [activeTab, templates]);
 
   const updateOverrides = (next: Record<string, CmdOverride>) => {
-    setOverrides(next);
-    saveCmdOverrides(next);
+    // key 归一 trim（审查 M-26）：内置命令如 'ping ' 带尾随空格，而读取侧
+    // 全部按 trim 匹配，写入不 trim 会让「隐藏/改说明」对这批内置命令失效。
+    const normalized: Record<string, CmdOverride> = {};
+    for (const [key, value] of Object.entries(next)) {
+      normalized[key.trim()] = value;
+    }
+    setOverrides(normalized);
+    saveCmdOverrides(normalized);
   };
 
   const deleteCustomCommand = (command: CommandItem) => {
@@ -47,22 +57,23 @@ export const CommandsSettings: FC<CommandsSettingsProps> = ({ askConfirm, dismis
   };
 
   const toggleHidden = (command: CommandItem) => {
-    const override = overrides[command.command];
+    const key = command.command.trim();
+    const override = overrideFor(key);
     const next = { ...overrides };
-    if (override?.hidden) delete next[command.command];
-    else next[command.command] = { ...override, hidden: true };
+    if (override?.hidden) delete next[key];
+    else next[key] = { ...override, hidden: true };
     updateOverrides(next);
   };
 
   const startEditing = (command: CommandItem) => {
     setEditingCommand(command.command);
-    setEditDescription(overrides[command.command]?.desc ?? command.desc);
+    setEditDescription(overrideFor(command.command)?.desc ?? command.desc);
   };
 
   const saveDescription = (command: CommandItem) => {
     updateOverrides({
       ...overrides,
-      [command.command]: { ...overrides[command.command], desc: editDescription },
+      [command.command.trim()]: { ...overrideFor(command.command), desc: editDescription },
     });
     setEditingCommand(null);
   };
@@ -120,7 +131,7 @@ export const CommandsSettings: FC<CommandsSettingsProps> = ({ askConfirm, dismis
               onClick={() => setActiveTab(category.category)}
             >
               {category.category}
-              <span className="cmd-tab-count">{category.commands.filter(command => !overrides[command.command]?.hidden).length}</span>
+              <span className="cmd-tab-count">{category.commands.filter(command => !overrideFor(command.command)?.hidden).length}</span>
             </button>
           ))}
         </div>
@@ -130,7 +141,7 @@ export const CommandsSettings: FC<CommandsSettingsProps> = ({ askConfirm, dismis
         {visibleCategories.map(category => (
           <div key={category.category} className="cmd-cat-items">
             {category.commands.map(command => {
-              const override = overrides[command.command];
+              const override = overrideFor(command.command);
               if (!search && override?.hidden) return null;
               const isCustom = category.category === '自定义';
               const isEditing = editingCommand === command.command;
@@ -199,7 +210,7 @@ export const CommandsSettings: FC<CommandsSettingsProps> = ({ askConfirm, dismis
               const command = contextMenu.cmd;
               setContextMenu(null);
               toggleHidden(command);
-            }}>{overrides[contextMenu.cmd.command]?.hidden ? '恢复显示' : '隐藏'}</div>
+            }}>{overrideFor(contextMenu.cmd.command)?.hidden ? '恢复显示' : '隐藏'}</div>
           )}
         </div>
       )}

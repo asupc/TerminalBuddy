@@ -233,12 +233,19 @@ export const WebManageSettings: FC = () => {
       // 共享开关独立保存（handleToggleShare），启停服务只透传当前值。
       const currentShare = shareSessions;
       if (serverRunning) {
-        // 停止：关闭开关后 restart_web_server 会检测 enabled=false 并停止。
-        await saveWebApiSettings(false, port, username, '', currentShare);
+        // 停止：使用已持久化的端口/用户名，避免把表单里未确认的修改一并写盘。
+        const persisted = await getWebApiStatus();
+        await saveWebApiSettings(false, persisted.port, persisted.username, '', currentShare);
         await restartWebServer();
         setServerRunning(false);
         setServerAddress('已停止');
       } else {
+        const portError = getCustomPortError(String(port));
+        if (portError) {
+          setServerError(portError);
+          setServerLoading(false);
+          return;
+        }
         if (!webPassword && !hasPassword) {
           setServerError('请先设置密码');
           setServerLoading(false);
