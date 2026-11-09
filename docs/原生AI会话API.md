@@ -59,6 +59,19 @@ AI REST 接口不使用普通 API 的请求正文大小和处理超时限制；�
 
 消息字段为 `id`、`role`（`user` / `assistant` / `tool`）、`text`、`createdAt`；会话还包含状态、模型、项目、确认请求、错误及单调递增 revision。会话还返回非敏感的 `providerId`、`providerName`，供首页历史项和二级页面展示来源；旧会话这两个字段默认为空。内部 thread ID、归属账户和请求去重信息不会返回客户端。
 
+消息还带可选的 `todo`（布尔）标记：`TodoWrite` 的工具调用与其 `tool_result` 置为 `true`，正文仍保留原始 `TodoWrite\n{input JSON}` 供历史恢复回填清单，客户端渲染时应跳过这类消息（清单由会话级 `todos` 呈现）。
+
+会话新增两个可选字段（值为空时不序列化，旧会话与非 Claude 会话自然缺省）：
+
+- `todos`：当前任务清单，数组，元素为 `{ content, status, activeForm? }`，`status ∈ pending | in_progress | completed`。数据来自 Claude 的两条工具路径，规则不同：
+  - `TodoWrite`（全量快照）：每次调用**整体替换**清单，不叠加；
+  - `TaskCreate` / `TaskUpdate` / `TaskList`（增量）：`TaskCreate` 在结果行 `Task #N created successfully: 标题` 到达时按编号插入，`TaskUpdate` 按 `taskId` 改字段，`TaskList` 的 `#N [status] 标题` 多行结果整表校准。编号即清单序号（从 1 起）。
+
+  这两组工具在 Claude Code 2.1.x 默认关闭（`system/init.tools` 里没有它们，模型会明确回答"工具不存在"），原生会话在 `--settings` 临时配置里默认打开 `CLAUDE_CODE_ENABLE_TODO_TOOLS` / `CLAUDE_CODE_ENABLE_TASKS`；用户已在同一位置显式配置的值不会被覆盖。历史恢复时按最后一条 `TodoWrite` 快照或重放 `Task*` 序列回填，解析失败静默跳过。上一轮任务结束、进入新回合时清单清空。
+- `agents`：本轮派发过的子代理，数组，元素为 `{ taskId, toolUseId?, name, description?, status, background, parentTaskId?, depth, startedAt, endedAt?, summary?, durationMs?, toolUses? }`，`status ∈ running | completed | failed | stopped | killed | paused`。
+
+`agents` 由 Claude 的 `system/task_started`、`task_updated`、`task_notification` 与 `background_tasks_changed` 快照维护：以快照做校准（快照中消失的条目置 `stopped` 而非删除），`run_id` 字典序更小的迟到帧直接丢弃，终态不回退。`ambient`（内部杂务）与 `skip_transcript` 条目不进 `agents`；`awaited` 条目进 `agents`，但不计入「后台任务未完成」的回合结束判定。`toolUseId` 与消息的 `subagentKey`（`{turn}:{parent_tool_use_id}`）后半段相同，客户端据此筛选该子代理的完整过程。上一轮任务结束、会话中断、服务重启或进程退出时，仍在 `running` 的条目标为终态，不会残留「执行中」。这两组字段只随会话文件存活，不跨会话共享；Codex 会话当前不产生 `agents`。
+
 WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type": "update", "session": "不含历史消息的会话对象", "messages": ["新增或变更的完整消息对象"] }`。客户端按消息 ID 更新有序列表；重连重新获取首帧，REST 可用于补偿。AI 连接不占用普通终端的全局配额，不限制帧或消息大小，不按固定发送或心跳超时断开；保留 Ping/Pong 和认证复核，实际连接关闭、网络错误、令牌失效或关闭 Web API 时结束订阅，服务端任务仍独立执行。
 
 ## 安卓聊天决策

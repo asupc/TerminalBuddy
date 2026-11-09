@@ -1,0 +1,1412 @@
+<title>原生会话任务面板</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* ============================================================
+   设计令牌：沿用 TerminalBuddy 现有主题（src/styles/global.css）
+   布局概念：左侧是可交互的原生会话模拟窗口，右侧是设计说明
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --bg: #f3f4f6;
+  --bg-2: #ffffff;
+  --bg-3: #e9ebee;
+  --bg-elev: #ffffff;
+  --fg: #24272c;
+  --fg-2: #626870;
+  --fg-3: #8a9098;
+  --accent: #176fbd;
+  --border: #d6d9de;
+  --border-2: #e4e6e9;
+  --ok: #23845b;
+  --warn: #9a6b12;
+  --danger: #c9434d;
+  --agent: #7c5ce0;
+
+  --font-ui: system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-xl: 12px;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #181a1d;
+    --bg-2: #202226;
+    --bg-3: #2a2d31;
+    --bg-elev: #25282c;
+    --fg: #e3e5e8;
+    --fg-2: #9aa0a8;
+    --fg-3: #6f767f;
+    --accent: #4b95e9;
+    --border: #34383d;
+    --border-2: #2b2f33;
+    --ok: #55b988;
+    --warn: #d9a441;
+    --danger: #ef6b73;
+    --agent: #a78bfa;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #181a1d;
+  --bg-2: #202226;
+  --bg-3: #2a2d31;
+  --bg-elev: #25282c;
+  --fg: #e3e5e8;
+  --fg-2: #9aa0a8;
+  --fg-3: #6f767f;
+  --accent: #4b95e9;
+  --border: #34383d;
+  --border-2: #2b2f33;
+  --ok: #55b988;
+  --warn: #d9a441;
+  --danger: #ef6b73;
+  --agent: #a78bfa;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* hidden 属性必须压过各处的 display:flex */
+[hidden] { display: none !important; }
+
+body {
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  padding-block: 20px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell { max-width: 1320px; margin: 0 auto; }
+
+/* ── 页面顶栏 ─────────────────────────────────────────────── */
+.topbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.topbar h1 {
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  text-wrap: balance;
+}
+
+.topbar p {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--fg-2);
+  max-width: 62ch;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-2);
+}
+
+.segmented button {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--ease) 140ms, color var(--ease) 140ms;
+}
+
+.segmented button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  cursor: pointer;
+}
+
+.icon-btn:hover { color: var(--fg); border-color: var(--fg-3); }
+
+/* 键盘焦点统一可见 */
+button:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── 两栏舞台 ─────────────────────────────────────────────── */
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .stage { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── 会话窗口（模拟真实布局） ─────────────────────────────── */
+.device {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 760px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  background: var(--bg-2);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.12);
+}
+
+@media (max-width: 720px) {
+  .device { height: auto; min-height: 620px; }
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-2);
+  background: var(--bg-2);
+}
+
+.agent-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.chat-titles { min-width: 0; }
+
+.chat-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--fg-3);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.badge.ok {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+
+.model-chip {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-2);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.chat-path {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 消息区 */
+.chat-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.messages {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px 46px 8px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  scrollbar-width: thin;
+}
+
+.row { display: flex; width: 100%; }
+.row.user { justify-content: flex-end; }
+.row.assistant { justify-content: flex-start; }
+
+.bubble {
+  max-width: min(560px, 84%);
+  padding: 8px 12px;
+  border-radius: var(--r-xl);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.bubble.user {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.bubble.assistant {
+  max-width: 70%;
+  background: var(--bg);
+  border: 1px solid var(--border-2);
+}
+
+.bubble p + p { margin-top: 6px; }
+.bubble code {
+  padding: 1px 4px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+/* 工具条目（与产品现有样式一致） */
+.tool-entry {
+  align-self: flex-start;
+  max-width: min(560px, 84%);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  overflow: hidden;
+}
+
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-head:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.tool-head .ico { color: var(--fg-3); font-family: var(--font-mono); font-size: 11px; }
+.tool-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tool-sum { color: var(--fg-3); }
+
+/* 主线程 Task 派发：渲染为子代理组头（本次新增） */
+.task-head {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(560px, 84%);
+  padding: 7px 11px;
+  border: 1px solid color-mix(in srgb, var(--agent) 34%, transparent);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--agent) 8%, transparent);
+  color: var(--agent);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--ease) 140ms;
+}
+
+.task-head:hover { background: color-mix(in srgb, var(--agent) 14%, transparent); }
+
+.task-head .task-name { font-weight: 600; }
+.task-head .task-desc {
+  color: color-mix(in srgb, var(--agent) 78%, var(--fg-2));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-head .spacer { margin-left: auto; }
+
+/* 子代理折叠组（现有能力） */
+.sub-group {
+  align-self: flex-start;
+  width: min(560px, 84%);
+  border: 1px solid color-mix(in srgb, var(--agent) 28%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--agent) 6%, transparent);
+  overflow: hidden;
+}
+
+.sub-group .tool-head { color: var(--agent); }
+
+/* 思考中 */
+.thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-xl);
+  background: var(--bg);
+  color: var(--fg-2);
+  font-size: 12px;
+}
+
+.dots { display: inline-flex; gap: 3px; }
+.dots i {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent);
+  animation: blink 1.2s infinite ease-in-out;
+}
+.dots i:nth-child(2) { animation-delay: 0.15s; }
+.dots i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes blink {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* 右侧输入节点导轨（现有能力，弱化展示） */
+.rail {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  right: 10px;
+  width: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 7px;
+  pointer-events: none;
+}
+
+.rail i {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--fg-3);
+  opacity: 0.4;
+}
+
+.rail i.on { background: var(--accent); opacity: 0.9; width: 22px; }
+
+@media (max-width: 720px) { .rail { display: none; } }
+
+/* ── 输入区：清单卡 + 子代理 chip 带 ─────────────────────── */
+.composer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border-2);
+  background: var(--bg-2);
+}
+
+/* 任务清单卡 */
+.todo-card {
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border-2));
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  overflow: hidden;
+}
+
+.todo-card[hidden] { display: none; }
+
+.todo-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.todo-head:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+
+.todo-ring {
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.todo-now {
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-2);
+}
+
+.todo-now b { color: var(--fg); font-weight: 600; }
+
+.todo-meter {
+  width: 64px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.todo-meter span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 320ms var(--ease);
+}
+
+.chev {
+  color: var(--fg-3);
+  font-size: 10px;
+  transition: transform 160ms var(--ease);
+  flex-shrink: 0;
+}
+
+.todo-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
+
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 8px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.todo-head[aria-expanded="false"] + .todo-list { display: none; }
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  color: var(--fg-2);
+}
+
+.todo-item .mark {
+  width: 13px;
+  height: 13px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.todo-item.done { color: var(--fg-3); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--fg-3) 60%, transparent); }
+.todo-item.done .mark { color: var(--ok); }
+
+.todo-item.now { color: var(--fg); font-weight: 600; }
+.todo-item.now .mark {
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+  animation: pulse 1.6s infinite ease-in-out;
+}
+
+.todo-item.pending .mark {
+  border: 1px solid var(--fg-3);
+  border-radius: 50%;
+  opacity: 0.6;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+
+/* 完成态：收成一行并淡化 */
+.todo-card.done-all { border-color: var(--border-2); background: transparent; }
+.todo-card.done-all .todo-now { color: var(--fg-3); }
+.todo-card.done-all .todo-meter span { background: var(--ok); }
+
+/* 子代理 chip 带 */
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chips[hidden] { display: none; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--agent) 30%, var(--border-2));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--agent) 6%, transparent);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background var(--ease) 140ms, border-color var(--ease) 140ms;
+}
+
+.chip:hover { background: color-mix(in srgb, var(--agent) 13%, transparent); }
+
+.chip[aria-pressed="true"] {
+  border-color: var(--agent);
+  background: color-mix(in srgb, var(--agent) 16%, transparent);
+  color: var(--fg);
+}
+
+.chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--agent);
+  flex-shrink: 0;
+}
+
+.chip.running .dot { animation: pulse 1.6s infinite ease-in-out; }
+.chip.done { border-color: var(--border-2); background: transparent; }
+.chip.done .dot { background: var(--ok); animation: none; }
+.chip.failed { border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.chip.failed .dot { background: var(--danger); }
+.chip.stopped .dot { background: var(--fg-3); }
+
+.chip .name { font-weight: 600; color: var(--fg); }
+.chip .meta { color: var(--fg-3); font-variant-numeric: tabular-nums; }
+
+.chip-more {
+  padding: 4px 9px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-3);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* 排队消息（现有能力） */
+.pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px dashed var(--border-2);
+  border-radius: var(--r-md);
+  font-size: 11.5px;
+  color: var(--fg-2);
+}
+
+.pending .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pending .btn-mini { font-size: 10.5px; }
+
+/* 输入框 */
+.input-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg);
+}
+
+.input-ph {
+  min-height: 46px;
+  font-size: 13px;
+  color: var(--fg-3);
+}
+
+.input-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.usage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--fg-3);
+  margin-right: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage b { color: var(--fg-2); font-weight: 500; }
+
+.mini-meter {
+  display: inline-block;
+  width: 54px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.mini-meter span { display: block; height: 100%; width: 34%; background: var(--accent); }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn:hover { color: var(--fg); border-color: var(--fg-3); }
+.btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.btn.danger { border-color: color-mix(in srgb, var(--danger) 50%, transparent); color: var(--danger); }
+.btn-mini {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+/* ── 子代理抽屉 ───────────────────────────────────────────── */
+.drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 78%);
+  border-left: 1px solid var(--border);
+  background: var(--bg-2);
+  box-shadow: -14px 0 34px rgb(0 0 0 / 0.16);
+  transform: translateX(0);
+  transition: transform 220ms var(--ease), opacity 220ms var(--ease);
+}
+
+.drawer[hidden] { display: none; }
+
+.drawer.closing { transform: translateX(24px); opacity: 0; }
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-2);
+}
+
+.drawer-head .name { font-weight: 600; font-size: 13px; color: var(--agent); }
+.drawer-head .spacer { margin-left: auto; }
+
+.drawer-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-2);
+  font-size: 11px;
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  scrollbar-width: thin;
+}
+
+.drawer .bubble { max-width: 100%; font-size: 12.5px; }
+.drawer .tool-entry { max-width: 100%; }
+
+.nested {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-left: 2px solid color-mix(in srgb, var(--agent) 40%, transparent);
+  color: var(--fg-3);
+  font-size: 11px;
+}
+
+/* 抽屉内的工具正文 */
+.tool-body {
+  padding: 7px 9px;
+  border-top: 1px solid var(--border-2);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--fg-3);
+  white-space: pre-wrap;
+  max-height: 132px;
+  overflow: auto;
+}
+
+@media (max-width: 640px) {
+  .drawer { width: 100%; box-shadow: none; }
+}
+
+/* ── 右侧说明 ─────────────────────────────────────────────── */
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.notes h2 {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+.note {
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-2);
+}
+
+.note h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+
+.note h3 .k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.note h3 .k.agent {
+  background: color-mix(in srgb, var(--agent) 16%, transparent);
+  color: var(--agent);
+}
+
+.note p { font-size: 12px; line-height: 1.62; color: var(--fg-2); }
+.note p + p { margin-top: 6px; }
+.note code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg);
+}
+
+.states {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.state-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--fg-2);
+}
+
+.state-row .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.state-row .dot.run { background: var(--agent); }
+.state-row .dot.ok { background: var(--ok); }
+.state-row .dot.bad { background: var(--danger); }
+.state-row .dot.st { background: var(--fg-3); }
+
+.foot {
+  margin-top: 22px;
+  font-size: 11.5px;
+  color: var(--fg-3);
+  line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+</style>
+
+<div class="shell">
+  <div class="topbar">
+    <div>
+      <h1>原生会话 · 任务清单与子代理面板</h1>
+      <p>输入框上方的清单卡与子代理 chip，点 chip 打开右侧抽屉查看该子代理的完整工作过程。下面是一个可交互的界面模拟，切换状态看三种形态。</p>
+    </div>
+    <div class="topbar-actions">
+      <div class="segmented" role="group" aria-label="会话状态">
+        <button type="button" data-variant="running" aria-pressed="true">运行中</button>
+        <button type="button" data-variant="done" aria-pressed="false">已完成</button>
+        <button type="button" data-variant="empty" aria-pressed="false">无任务</button>
+      </div>
+      <button class="icon-btn" type="button" id="themeBtn" aria-label="切换深浅色" title="切换深浅色">◐</button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <!-- ═══ 会话窗口 ═══ -->
+    <div class="device">
+      <header class="chat-header">
+        <div class="agent-mark">C</div>
+        <div class="chat-titles">
+          <div class="chat-title">原生会话任务面板调研</div>
+          <div class="chat-sub">
+            <span class="badge" id="statusBadge">执行中</span>
+            <span class="model-chip">claude-sonnet-5-5</span>
+            <span class="chat-path">/root/code/terminal-buddy</span>
+          </div>
+        </div>
+      </header>
+
+      <div class="chat-body">
+        <div class="messages">
+          <div class="row user">
+            <div class="bubble user">调研一下原生会话对 agent todolist 的可视化优化展示。</div>
+          </div>
+
+          <div class="row assistant">
+            <div class="bubble assistant"><p>先看现有实现，确认 CLI 到底把哪些状态发给了我们。</p></div>
+          </div>
+
+          <button class="tool-head tool-entry" type="button" aria-expanded="false" onclick="this.setAttribute('aria-expanded', this.getAttribute('aria-expanded')==='true'?'false':'true')">
+            <span class="ico">↵</span>
+            <span class="tool-name">6 个工具调用<span class="tool-sum"> · Bash、Read、Grep、TodoWrite 等</span></span>
+          </button>
+
+          <div class="row assistant">
+            <div class="bubble assistant">
+              <p>结论已经清楚：CLI 的 <code>task_started</code> 与 <code>task_updated</code> 带了完整状态，后端却把它们压平成一句中文工具消息。清单同理，<code>TodoWrite</code> 的输入被当成普通工具参数存进了正文。</p>
+            </div>
+          </div>
+
+          <button class="task-head" type="button" data-agent="explore">
+            <span>◈</span>
+            <span class="task-name">Explore</span>
+            <span class="task-desc">— 并行代码审查</span>
+            <span class="spacer"></span>
+            <span class="chip running" style="padding:1px 8px;font-size:10.5px;pointer-events:none">
+              <span class="dot"></span><span class="meta" data-since="42" data-label="">42s</span>
+            </span>
+          </button>
+
+          <div class="sub-group">
+            <button class="tool-head" type="button" aria-expanded="false" onclick="this.setAttribute('aria-expanded', this.getAttribute('aria-expanded')==='true'?'false':'true'); this.nextElementSibling.hidden = this.getAttribute('aria-expanded')!=='true';">
+              <span class="ico">◈</span>
+              <span class="tool-name">子代理 general-purpose<span class="tool-sum"> · 2 段回复 · 8 次工具</span></span>
+            </button>
+            <div class="tool-body" hidden>已核对 Codex app-server 的 item/started 事件，plan 条目与 Claude 的 todos 同构。</div>
+          </div>
+
+          <div class="row assistant">
+            <div class="bubble assistant">
+              <p>我把事件契约和前端渲染路径都核对完了，下面开始写解析层。</p>
+            </div>
+          </div>
+
+          <div class="thinking">
+            <span class="dots"><i></i><i></i><i></i></span>
+            <span>AI 正在思考中…<span style="color:var(--fg-3)"> 已等待 12 秒</span></span>
+          </div>
+        </div>
+
+        <!-- 右侧输入节点导轨（既有能力） -->
+        <nav class="rail" aria-hidden="true">
+          <i></i><i></i><i class="on"></i><i></i>
+        </nav>
+
+        <!-- 子代理抽屉 -->
+        <aside class="drawer" id="drawer" aria-label="子代理工作过程">
+          <div class="drawer-head">
+            <span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--agent)"></span>
+            <span class="name" id="drawerName">Explore</span>
+            <span class="badge" id="drawerBadge" style="background:color-mix(in srgb, var(--agent) 16%, transparent);color:var(--agent)">执行中</span>
+            <span class="spacer"></span>
+            <button class="btn-mini" type="button" id="drawerClose" aria-label="关闭子代理视图">✕ 关闭</button>
+          </div>
+          <div class="drawer-meta" id="drawerMeta">
+            <span>并行代码审查</span><span>42s</span><span>12 次工具</span><span>深度 1</span>
+          </div>
+          <div class="drawer-body" id="drawerBody">
+            <div class="row assistant">
+              <div class="bubble assistant"><p>先确认改动范围，再逐文件读。</p></div>
+            </div>
+            <div class="tool-entry" style="max-width:100%">
+              <button class="tool-head" type="button" aria-expanded="true">
+                <span class="ico">↵</span><span class="tool-name">Read</span>
+                <span class="tool-sum"> · AgentMessageList.tsx</span>
+              </button>
+              <div class="tool-body">1  import { memo, useCallback … }
+2  …
+540 }</div>
+            </div>
+            <div class="tool-entry" style="max-width:100%">
+              <button class="tool-head" type="button" aria-expanded="false">
+                <span class="ico">↵</span><span class="tool-name">Grep</span>
+                <span class="tool-sum"> · subagentKey</span>
+              </button>
+            </div>
+            <div class="row assistant">
+              <div class="bubble assistant">
+                <p>子代理消息已经在正文里，缺的是状态与入口：<code>subagentKey</code> 能精确分组，但没有 running / completed 的时序。</p>
+              </div>
+            </div>
+            <div class="nested">↳ 嵌套子代理 <b style="color:var(--agent);font-weight:600">code-review</b> · 已完成</div>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="composer">
+        <!-- 任务清单卡 -->
+        <div class="todo-card" id="todoCard">
+          <button class="todo-head" type="button" id="todoHead" aria-expanded="true" aria-controls="todoList">
+            <span class="todo-ring" id="todoRing">3/7</span>
+            <span class="todo-now" id="todoNow">正在 <b>实现 TodoWrite 解析</b></span>
+            <span class="todo-meter" aria-hidden="true"><span id="todoFill" style="width:43%"></span></span>
+            <span class="chev" aria-hidden="true">›</span>
+          </button>
+          <ol class="todo-list" id="todoList">
+            <li class="todo-item done"><span class="mark">✓</span>读取 AGENTS.md 与既有会话实现</li>
+            <li class="todo-item done"><span class="mark">✓</span>核对 Claude CLI 事件契约</li>
+            <li class="todo-item done"><span class="mark">✓</span>设计 todos / agents 数据结构</li>
+            <li class="todo-item now"><span class="mark">◐</span>实现 TodoWrite 解析</li>
+            <li class="todo-item pending"><span class="mark"></span>映射 task_started / task_updated</li>
+            <li class="todo-item pending"><span class="mark"></span>实现子代理抽屉视图</li>
+            <li class="todo-item pending"><span class="mark"></span>补充单测与文档</li>
+          </ol>
+        </div>
+
+        <!-- 子代理 chip 带 -->
+        <div class="chips" id="chips">
+          <button class="chip running" type="button" data-agent="explore" aria-pressed="true">
+            <span class="dot"></span>
+            <span class="name">Explore</span>
+            <span class="meta" data-since="42" data-label="执行中 ">执行中 42s</span>
+          </button>
+          <button class="chip done" type="button" data-agent="general">
+            <span class="dot"></span>
+            <span class="name">general-purpose</span>
+            <span class="meta">已完成 1m12s</span>
+          </button>
+          <button class="chip failed" type="button" data-agent="verify">
+            <span class="dot"></span>
+            <span class="name">code-reviewer</span>
+            <span class="meta">失败</span>
+          </button>
+          <button class="chip stopped" type="button" data-agent="stopped">
+            <span class="dot"></span>
+            <span class="name">Plan</span>
+            <span class="meta">已停止</span>
+          </button>
+          <button class="chip-more" type="button" title="还有 2 个已结束的子代理">+2</button>
+        </div>
+
+        <div class="pending">
+          <span class="t">排队：把安卓端的只读清单也纳入本期</span>
+          <button class="btn-mini" type="button">插话</button>
+          <button class="btn-mini" type="button" aria-label="移出队列">✕</button>
+        </div>
+
+        <div class="input-box">
+          <div class="input-ph">输入消息，Enter 发送，Shift+Enter 换行；可直接粘贴或拖入图片</div>
+          <div class="input-bar">
+            <div class="usage">
+              <span>上下文 <b>34%</b> <span class="mini-meter" aria-hidden="true"><span></span></span> 68k / 200k</span>
+              <span>本轮 ↑12.4k ↓1.8k</span>
+              <span>累计 ↑96k ↓8.2k</span>
+            </div>
+            <button class="btn" type="button">＋ 图片</button>
+            <button class="btn primary" type="button">发送</button>
+            <button class="btn danger" type="button">■ 停止</button>
+          </div>
+        </div>
+      </footer>
+    </div>
+
+    <!-- ═══ 设计说明 ═══ -->
+    <aside class="notes">
+      <h2>设计说明</h2>
+
+      <div class="note">
+        <h3><span class="k">清单</span>输入框上方的任务卡</h3>
+        <p>折叠态一行：完成数 / 总数、当前 <code>in_progress</code> 的 <code>activeForm</code> 文案、64px 进度条。展开后逐条列出，已完成打勾并淡化，进行中是高亮加呼吸点，待办是空心圈。</p>
+        <p>数据来自 <code>TodoWrite</code> 的全量快照：每次调用整体替换，不叠加。整轮完成后收成一行「✓ 7/7 已完成」并淡出。</p>
+      </div>
+
+      <div class="note">
+        <h3><span class="k agent">代理</span>子代理 chip 带</h3>
+        <p>只列顶层代理（depth = 1），运行中的 chip 自带秒表，秒数在 chip 内部计时，不牵动整页重渲染。最多平铺 4 个，其余折叠成 <code>+N</code>。</p>
+        <div class="states">
+          <div class="state-row"><span class="dot run"></span>执行中 · 呼吸点 + 已等待秒数</div>
+          <div class="state-row"><span class="dot ok"></span>已完成 · 绿色点 + 总耗时</div>
+          <div class="state-row"><span class="dot bad"></span>失败 · 红色点</div>
+          <div class="state-row"><span class="dot st"></span>已停止 · 灰色点（用户中断）</div>
+        </div>
+      </div>
+
+      <div class="note">
+        <h3><span class="k agent">抽屉</span>只看一个子代理</h3>
+        <p>点 chip 或正文里的 Task 组头，右侧滑出抽屉，按 <code>subagentKey</code> 过滤出该子代理的全部消息，复用正文的 Markdown 与工具条目样式。</p>
+        <p>抽屉覆盖在消息区右侧，主列表不卸载、滚动位置不变。窄屏（&lt; 640px）改为定位跳转，不遮挡正文。</p>
+      </div>
+
+      <div class="note">
+        <h3><span class="k">正文</span>Task 调用改成组头</h3>
+        <p>主线程的 <code>Task</code> 调用原先显示成 <code>Task\n{json}</code> 的普通工具条目，现在渲染成紫色组头：代理名 + 派发时的 description + 状态点，点击同样打开抽屉。</p>
+      </div>
+
+      <div class="note">
+        <h3><span class="k">来源</span>事件与状态</h3>
+        <p><code>task_started</code> 建条目，<code>task_updated</code> 改状态，<code>task_notification</code> 收尾并补上耗时与工具次数；<code>background_tasks_changed</code> 作为完整快照做校准，快照里消失的标为已停止而不是删除。</p>
+        <p><code>awaited</code> 的子代理不进「后台任务是否还在跑」的计数，但要进这里——两套口径分开写。</p>
+      </div>
+
+      <div class="note">
+        <h3><span class="k">兼容</span>旧会话与旧 CLI</h3>
+        <p>两个字段都是可选的、为空时不序列化：旧会话 JSON、旧版 CLI（没有 <code>task_*</code> 事件）、从不使用 TodoWrite 的会话都不会出现空壳，界面与现在完全一致。</p>
+      </div>
+    </aside>
+  </div>
+
+  <p class="foot">模拟数据用的是一个真实会话的片段。左侧所有可点元素都会响应：清单可展开、chip 可切换、抽屉可关闭，Tab 可逐项聚焦。</p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const root = document.documentElement;
+  const drawer = document.getElementById('drawer');
+  const drawerName = document.getElementById('drawerName');
+  const drawerBadge = document.getElementById('drawerBadge');
+  const drawerMeta = document.getElementById('drawerMeta');
+  const drawerBody = document.getElementById('drawerBody');
+  const chips = document.getElementById('chips');
+  const todoCard = document.getElementById('todoCard');
+  const todoHead = document.getElementById('todoHead');
+  const todoRing = document.getElementById('todoRing');
+  const todoNow = document.getElementById('todoNow');
+  const todoFill = document.getElementById('todoFill');
+  const todoList = document.getElementById('todoList');
+  const statusBadge = document.getElementById('statusBadge');
+
+  /* ── 主题切换 ─────────────────────────────────────────── */
+  const themeBtn = document.getElementById('themeBtn');
+  try {
+    const saved = localStorage.getItem('native-chat-theme');
+    if (saved === 'light' || saved === 'dark') root.dataset.theme = saved;
+  } catch (e) { /* 私有模式下忽略 */ }
+
+  themeBtn.addEventListener('click', function () {
+    const dark = getComputedStyle(document.body).colorScheme.includes('dark');
+    const next = dark ? 'light' : 'dark';
+    root.dataset.theme = next;
+    try { localStorage.setItem('native-chat-theme', next); } catch (e) { /* 忽略 */ }
+  });
+
+  /* ── 清单卡展开 / 收起 ───────────────────────────────── */
+  todoHead.addEventListener('click', function () {
+    const open = todoHead.getAttribute('aria-expanded') === 'true';
+    todoHead.setAttribute('aria-expanded', open ? 'false' : 'true');
+  });
+
+  /* ── 三种状态 ─────────────────────────────────────────── */
+  const items = Array.from(todoList.children);
+  const chipsButtons = Array.from(chips.querySelectorAll('.chip'));
+
+  function applyVariant(name) {
+    const running = name === 'running';
+    const done = name === 'done';
+    const empty = name === 'empty';
+
+    todoCard.hidden = empty;
+    chips.hidden = empty;
+    document.querySelector('.task-head').hidden = empty;
+    todoCard.classList.toggle('done-all', done);
+    statusBadge.textContent = done ? '已完成' : empty ? '空闲' : '执行中';
+    statusBadge.classList.toggle('ok', done || empty);
+
+    if (running) {
+      items.forEach(function (li, i) {
+        li.className = 'todo-item ' + (i < 3 ? 'done' : i === 3 ? 'now' : 'pending');
+      });
+      todoRing.textContent = '3/7';
+      todoNow.innerHTML = '正在 <b>实现 TodoWrite 解析</b>';
+      todoFill.style.width = '43%';
+      todoHead.setAttribute('aria-expanded', 'true');
+      chipsButtons.forEach(function (b) { b.hidden = false; });
+      setChipState('explore', 'running', '执行中 42s');
+      setChipState('general', 'done', '已完成 1m12s');
+      setChipState('verify', 'failed', '失败');
+      setChipState('stopped', 'stopped', '已停止');
+    } else if (done) {
+      items.forEach(function (li) { li.className = 'todo-item done'; });
+      todoRing.textContent = '7/7';
+      todoNow.innerHTML = '全部完成 · 用时 6 分 12 秒';
+      todoFill.style.width = '100%';
+      todoHead.setAttribute('aria-expanded', 'false');
+      setChipState('explore', 'done', '已完成 42s');
+      chipsButtons.forEach(function (b) { b.hidden = false; });
+    } else {
+      chipsButtons.forEach(function (b) { b.hidden = true; });
+    }
+
+    if (empty) closeDrawer();
+  }
+
+  function setChipState(agent, cls, text) {
+    const btn = chips.querySelector('.chip[data-agent="' + agent + '"]');
+    if (!btn) return;
+    btn.className = 'chip ' + cls;
+    const meta = btn.querySelector('.meta');
+    meta.textContent = text;
+    if (cls === 'running') { meta.dataset.since = '42'; meta.dataset.label = '执行中 '; }
+    else { delete meta.dataset.since; delete meta.dataset.label; }
+  }
+
+  document.querySelectorAll('.segmented button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.segmented button').forEach(function (b) {
+        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+      });
+      applyVariant(btn.dataset.variant);
+    });
+  });
+
+  /* ── 子代理抽屉 ───────────────────────────────────────── */
+  const AGENTS = {
+    explore: {
+      name: 'Explore', badge: '执行中', cls: 'running',
+      meta: ['并行代码审查', '42s', '12 次工具', '深度 1'],
+      body: [
+        { kind: 'say', text: '先确认改动范围，再逐文件读。' },
+        { kind: 'tool', name: 'Read', arg: 'AgentMessageList.tsx', open: true,
+          out: '1  import { memo, useCallback … }\n2  …\n540 }' },
+        { kind: 'tool', name: 'Grep', arg: 'subagentKey' },
+        { kind: 'say', text: '子代理消息已经在正文里，缺的是状态与入口：subagentKey 能精确分组，但没有 running / completed 的时序。' },
+        { kind: 'nested', text: '嵌套子代理 code-review · 已完成' }
+      ]
+    },
+    general: {
+      name: 'general-purpose', badge: '已完成', cls: 'done',
+      meta: ['核对 Codex 事件', '1m12s', '8 次工具', '深度 1'],
+      body: [
+        { kind: 'say', text: '抓一段 app-server 的原始事件，确认 update_plan 的实际字段。' },
+        { kind: 'tool', name: 'Bash', arg: 'codex app-server --listen stdio', open: true,
+          out: '{"method":"item/started","params":{"item":{"type":"plan",…}}}' },
+        { kind: 'say', text: 'Codex 的计划是 step 数组，status 与 Claude 一致，可以直接映射到同一套 todos。' }
+      ]
+    },
+    verify: {
+      name: 'code-reviewer', badge: '失败', cls: 'failed',
+      meta: ['校验解析层', '0s', '—', '深度 1'],
+      body: [
+        { kind: 'say', text: '子代理启动失败：当前项目未登记 code-reviewer 类型，可使用 general-purpose 代替。' }
+      ]
+    },
+    stopped: {
+      name: 'Plan', badge: '已停止', cls: 'stopped',
+      meta: ['拆分实施步骤', '18s', '2 次工具', '深度 1'],
+      body: [
+        { kind: 'say', text: '已按里程碑拆分，但被用户中断。' }
+      ]
+    }
+  };
+
+  function openDrawer(key) {
+    const spec = AGENTS[key];
+    if (!spec) return;
+    drawerName.textContent = spec.name;
+    drawerBadge.textContent = spec.badge;
+    drawerBadge.style.background = 'color-mix(in srgb, var(' +
+      (spec.cls === 'failed' ? '--danger' : spec.cls === 'done' ? '--ok' : spec.cls === 'stopped' ? '--fg-3' : '--agent') +
+      ') 16%, transparent)';
+    drawerBadge.style.color = 'var(' +
+      (spec.cls === 'failed' ? '--danger' : spec.cls === 'done' ? '--ok' : spec.cls === 'stopped' ? '--fg-3' : '--agent') + ')';
+    drawerMeta.innerHTML = spec.meta.map(function (t) { return '<span>' + t + '</span>'; }).join('');
+
+    drawerBody.innerHTML = spec.body.map(function (item) {
+      if (item.kind === 'say') {
+        return '<div class="row assistant"><div class="bubble assistant"><p>' + item.text + '</p></div></div>';
+      }
+      if (item.kind === 'nested') {
+        return '<div class="nested">↳ ' + item.text + '</div>';
+      }
+      const out = item.out
+        ? '<div class="tool-body">' + escapeHtml(item.out) + '</div>'
+        : '';
+      return '<div class="tool-entry" style="max-width:100%">' +
+        '<button class="tool-head" type="button" aria-expanded="' + (item.open ? 'true' : 'false') + '">' +
+        '<span class="ico">↵</span><span class="tool-name">' + item.name + '</span>' +
+        '<span class="tool-sum"> · ' + item.arg + '</span></button>' + out + '</div>';
+    }).join('');
+
+    drawer.hidden = false;
+    drawer.classList.remove('closing');
+    chips.querySelectorAll('.chip').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.agent === key ? 'true' : 'false');
+    });
+    // 内容里的折叠按钮重新绑定
+    drawerBody.querySelectorAll('.tool-head').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        btn.setAttribute('aria-expanded', btn.getAttribute('aria-expanded') === 'true' ? 'false' : 'true');
+        const body = btn.nextElementSibling;
+        if (body && body.classList.contains('tool-body')) body.hidden = !body.hidden;
+      });
+    });
+  }
+
+  function closeDrawer() {
+    drawer.hidden = true;
+    chips.querySelectorAll('.chip').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+  }
+
+  function escapeHtml(v) {
+    return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  chips.addEventListener('click', function (e) {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    if (chip.getAttribute('aria-pressed') === 'true') { closeDrawer(); return; }
+    openDrawer(chip.dataset.agent);
+  });
+
+  document.querySelector('.task-head').addEventListener('click', function () {
+    openDrawer('explore');
+  });
+
+  document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !drawer.hidden) closeDrawer();
+  });
+
+  /* ── 运行中 chip 的秒表：只改自己那一段文字 ───────────── */
+  function tick() {
+    document.querySelectorAll('[data-since]').forEach(function (el) {
+      const base = Number(el.dataset.since) || 0;
+      const elapsed = base + Math.floor(performance.now() / 1000);
+      const m = Math.floor(elapsed / 60);
+      const s = elapsed % 60;
+      el.textContent = (el.dataset.label || '') + (m > 0 ? m + 'm' : '') + s + 's';
+    });
+  }
+  setInterval(tick, 1000);
+
+  /* 首屏：清单展开 + 打开一个子代理抽屉，两个能力都能直接看到 */
+  openDrawer('explore');
+})();
+</script>
