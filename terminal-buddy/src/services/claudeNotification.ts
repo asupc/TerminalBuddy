@@ -285,6 +285,9 @@ function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
       summary: event.summary,
       provider: event.provider,
     });
+  } else {
+    // idle：后端把 ESC 中断的回合兜底结算为「会话在场」，不再需要 running 过期定时器。
+    cancelClaudeActivityExpiry(event.terminalId);
   }
 }
 

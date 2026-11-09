@@ -6,7 +6,7 @@ import { isTerminalWorking, useAppStore, sessionReplayTabKey, type NativeAgentTa
 import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWidth, getBackendAppSettings, writeFileContent, readFileContent } from '../../services/tauri';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { getIndicatorLight, getIndicatorClassName, getIndicatorColor, getIndicatorTitle } from '../../utils/claudeIndicator';
+import { getIndicatorLight, getIndicatorClassName, getIndicatorColor, getIndicatorTitle, getNativeAgentLight } from '../../utils/claudeIndicator';
 import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { TreeItem } from '../file-explorer/TreeView';
@@ -222,10 +222,30 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           ...node.items.map(leaf => {
             if (leaf.kind === 'agent') {
               const tab = leaf.tab;
+              const light = getNativeAgentLight(tab.status);
               return {
                 id: tab.key,
                 label: tab.title,
-                icon: <AgentIcon provider={tab.provider} className="tab-nav-agent-icon" />,
+                icon: (
+                  <>
+                    <span
+                      className={`tab-nav-dot${getIndicatorClassName(light)}`}
+                      style={{ background: getIndicatorColor(light) }}
+                      title={getIndicatorTitle(light, tab.provider) || undefined}
+                      onClick={(e) => {
+                        // 错误长红点击清除（本地确认）；等待确认点击进入聊天页处理。
+                        if (light === 'failed') {
+                          e.stopPropagation();
+                          useAppStore.getState().updateAgentTab(tab.key, { status: 'idle' });
+                        } else if (light === 'attention') {
+                          e.stopPropagation();
+                          useAppStore.getState().setActiveAgentTab(tab.key);
+                        }
+                      }}
+                    />
+                    <AgentIcon provider={tab.provider} className="tab-nav-agent-icon" />
+                  </>
+                ),
                 data: { kind: 'agent' as const, tab },
               };
             }

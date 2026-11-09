@@ -397,6 +397,12 @@ export interface AppState {
 	/** 输入框上方待发送的图片：与文本草稿同生命周期保存，切换标签不丢图。 */
 	agentDraftImages: Record<string, AgentDraftImage[]>;
 	setAgentDraftImages: (key: string, images: AgentDraftImage[]) => void;
+	/** 新建会话后要给输入框补焦点的标签 key（一次性，消费即清空，不持久化）。
+	 * 聊天页在标签切换时会被 key 强制重挂载，只有新建这一路径才该抢焦点。 */
+	pendingAgentInputFocusKey: string | null;
+	requestAgentInputFocus: (key: string) => void;
+	/** 标记仍属于该标签时清空并返回 true：调用方据此决定是否聚焦。 */
+	consumeAgentInputFocus: (key: string) => boolean;
 
 	// File exclusion patterns
 	exclusionPatterns: string[];

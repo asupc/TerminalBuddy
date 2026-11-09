@@ -24,6 +24,29 @@ export function getIndicatorLight(activity: TerminalActivityState | undefined): 
   }
 }
 
+/**
+ * 原生 AI 会话（独立 CLI 进程）的指示灯：状态来自服务端 `AiSession.status`，
+ * 与终端 hook 状态机相互独立（原生会话没有 hook 的 Stop / presence 事件）。
+ * - running / background / stopping → 呼吸
+ * - approval → 黄闪「等待你的确认」
+ * - error → 红长亮
+ * - idle / interrupted / 未知 → 灰点「会话在场」
+ */
+export function getNativeAgentLight(status: string | undefined): IndicatorLight {
+  switch (status) {
+    case 'running':
+    case 'background':
+    case 'stopping':
+      return 'running';
+    case 'approval':
+      return 'attention';
+    case 'error':
+      return 'failed';
+    default:
+      return 'presence';
+  }
+}
+
 /** 灯色：running 尊重呼吸灯自定义色；attention/failed/completed 用固定语义色；presence 灰 */
 export function getIndicatorColor(light: IndicatorLight, tabColor?: string | null): string {
   switch (light) {

@@ -166,6 +166,8 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const setAgentDraftImages = useAppStore(state => state.setAgentDraftImages);
   const setDraftImages = useCallback((images: AgentDraftImage[]) => setAgentDraftImages(tab.key, images), [setAgentDraftImages, tab.key]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const consumeAgentInputFocus = useAppStore(state => state.consumeAgentInputFocus);
   const [slashIndex, setSlashIndex] = useState(0);
   const composing = useRef(false);
   const stickToBottom = useRef(true);
@@ -223,6 +225,20 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     }
     return undefined;
   }, [session?.status, tab.sessionId]);
+
+  // 新建会话后自动聚焦输入框：openNewAgentSession 写入的一次性标记，消费即清空。
+  // 用 ref 记住结论，React StrictMode 下 effect 会跑两次，第二次不能再消费（已被清空）。
+  const wantsInputFocus = useRef<boolean | null>(null);
+  useEffect(() => {
+    wantsInputFocus.current ??= consumeAgentInputFocus(tab.key);
+    if (!wantsInputFocus.current) return;
+    // 等首帧布局落定再聚焦，避免随后的渲染把焦点重置掉；期间用户若切走标签就不抢。
+    const frame = requestAnimationFrame(() => {
+      if (useAppStore.getState().activeAgentTabKey !== tab.key) return;
+      inputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [consumeAgentInputFocus, tab.key]);
 
   const messages = session?.messages ?? [];
   const messageCount = messages.length;
@@ -680,6 +696,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
             }}
           />
           <textarea
+            ref={inputRef}
             className="agent-input"
             value={draft}
             rows={3}

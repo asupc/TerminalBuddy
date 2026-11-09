@@ -4,7 +4,7 @@ import { FileText, GitBranch, History, SquareTerminal, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
-import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName } from '../../utils/claudeIndicator';
+import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName, getNativeAgentLight } from '../../utils/claudeIndicator';
 import { AgentIcon } from '../agent-chat/AgentIcon';import { parseClaudeRef } from '../../utils/claudeLaunch';
 import { parseCodexRef } from '../../utils/codexLaunch';
 import { isDockerClient } from '../../services/platform';
@@ -35,6 +35,7 @@ export const TerminalTabBar: FC = () => {
   const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
   const closeAgentTab = useAppStore(s => s.closeAgentTab);
   const setActiveAgentTab = useAppStore(s => s.setActiveAgentTab);
+  const updateAgentTab = useAppStore(s => s.updateAgentTab);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   // 原生会话标签的右键菜单（与终端标签共用 .context-menu 样式）。
   const [agentTabMenu, setAgentTabMenu] = useState<{ x: number; y: number; key: string } | null>(null);
@@ -363,6 +364,23 @@ export const TerminalTabBar: FC = () => {
             ? `${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`
             : `终端接力 · ${tab.title}`}
         >
+          {tab.shape === 'native' && (() => {
+            // 原生会话的呼吸灯由会话状态驱动（与终端 hook 指示灯同一套样式/动画）。
+            const light = getNativeAgentLight(tab.status);
+            return (
+              <span
+                className={`terminal-tab-dot${getIndicatorClassName(light)}`}
+                style={{ background: getIndicatorColor(light) }}
+                title={getIndicatorTitle(light, tab.provider) || undefined}
+                onClick={(e) => {
+                  // 错误长红点击清除（本地确认）；等待确认不拦截，点击顺带打开聊天页处理。
+                  if (light !== 'failed') return;
+                  e.stopPropagation();
+                  updateAgentTab(tab.key, { status: 'idle' });
+                }}
+              />
+            );
+          })()}
           {tab.shape === 'native'
             ? <AgentIcon provider={tab.provider} className="terminal-tab-history-icon" />
             : <SquareTerminal className="terminal-tab-history-icon" aria-hidden="true" />}

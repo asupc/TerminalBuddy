@@ -30,6 +30,8 @@ export const createAgentChatSlice = (
 	activeAgentTabKey: null,
 	agentDrafts: {},
 	agentDraftImages: {},
+	// 只活在内存里：刷新页面后不需要再补焦点。
+	pendingAgentInputFocusKey: null,
 
 	openAgentTab: (tab) => {
 		set((state) => {
@@ -60,6 +62,9 @@ export const createAgentChatSlice = (
 				activeAgentTabKey: nextActive,
 				agentDrafts,
 				agentDraftImages,
+				// 标签已关闭，一次性聚焦标记不该继续留着。
+				pendingAgentInputFocusKey:
+					state.pendingAgentInputFocusKey === key ? null : state.pendingAgentInputFocusKey,
 				activeSpecialTab:
 					state.activeSpecialTab === "agent-chat" && wasActive && nextActive === null
 						? null
@@ -81,6 +86,17 @@ export const createAgentChatSlice = (
 			if (state.agentDraftImages[key] === images) return state;
 			return { agentDraftImages: { ...state.agentDraftImages, [key]: images } };
 		});
+	},
+
+	requestAgentInputFocus: (key) => {
+		set({ pendingAgentInputFocusKey: key });
+	},
+
+	consumeAgentInputFocus: (key) => {
+		// 用 getState 而非闭包里的 state：调用方通常在 effect 里读，必须拿最新值。
+		if (get().pendingAgentInputFocusKey !== key) return false;
+		set({ pendingAgentInputFocusKey: null });
+		return true;
 	},
 
 	updateAgentTab: (key, patch) => {
