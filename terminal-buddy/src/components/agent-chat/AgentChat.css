@@ -397,6 +397,32 @@
   color: var(--text-tertiary);
 }
 
+/* 展开内容底部的收起入口：长输出滚到底后不必再回到条目顶部 */
+.agent-tool-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.agent-tool-collapse svg {
+  width: 12px;
+  height: 12px;
+}
+
+.agent-tool-collapse:hover {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  color: var(--text-secondary);
+}
+
 /* 连续工具调用合并组：默认收起，标题显示数量与工具名摘要 */
 .agent-tool-summary {
   color: var(--text-tertiary);

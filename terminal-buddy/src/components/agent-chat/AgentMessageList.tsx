@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Bot, CornerDownLeft } from 'lucide-react';
+import { Bot, ChevronUp, CornerDownLeft } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { AgentIcon } from './AgentIcon';
 import { ChatMarkdown } from './ChatMarkdown';
@@ -94,6 +94,19 @@ function rememberToggle(map: Map<string, boolean>, key: string, value: boolean) 
   map.set(key, value);
 }
 
+/** 展开内容底部的收起入口：输出很长时不必再滚回条目顶部去点标题。 */
+const CollapseRow = memo(function CollapseRow({ label = '收起', onCollapse }: {
+  label?: string;
+  onCollapse: () => void;
+}) {
+  return (
+    <button type="button" className="agent-tool-collapse" onClick={onCollapse}>
+      <ChevronUp aria-hidden="true" />
+      <span>{label}</span>
+    </button>
+  );
+});
+
 const ToolMessage = memo(function ToolMessage({ message }: { message: AiMessage }) {
   const [open, setOpen] = useState(() => toolOpenState.get(message.id) ?? false);
   const [full, setFull] = useState(() => toolFullState.get(message.id) ?? false);
@@ -102,13 +115,13 @@ const ToolMessage = memo(function ToolMessage({ message }: { message: AiMessage 
   const title = rawTitle.length > TOOL_TITLE_LIMIT ? `${rawTitle.slice(0, TOOL_TITLE_LIMIT)}…` : rawTitle;
   const body = newline >= 0 ? message.text.slice(newline + 1) : '';
   const truncated = !full && body.length > TOOL_BODY_LIMIT;
+  const toggle = (next: boolean) => {
+    setOpen(next);
+    rememberToggle(toolOpenState, message.id, next);
+  };
   return (
     <div className={`agent-tool-entry${open ? ' open' : ''}`}>
-      <button className="agent-tool-header" onClick={() => setOpen(value => {
-        const next = !value;
-        rememberToggle(toolOpenState, message.id, next);
-        return next;
-      })} aria-expanded={open}>
+      <button className="agent-tool-header" onClick={() => toggle(!open)} aria-expanded={open}>
         <CornerDownLeft aria-hidden="true" />
         <span className="agent-tool-title">{title || '工具调用'}</span>
       </button>
@@ -125,6 +138,7 @@ const ToolMessage = memo(function ToolMessage({ message }: { message: AiMessage 
           </div>
         ) : <pre className="agent-tool-body">{body}</pre>
       )}
+      {open && body && <CollapseRow onCollapse={() => toggle(false)} />}
     </div>
   );
 });
@@ -137,13 +151,13 @@ const ToolGroup = memo(function ToolGroup({ messages }: { messages: AiMessage[] 
   const [open, setOpen] = useState(() => toolOpenState.get(`group-${messages[0]?.id}`) ?? false);
   const names = Array.from(new Set(messages.map(toolTitle).filter(Boolean)));
   const summary = names.slice(0, 3).join('、');
+  const toggle = (next: boolean) => {
+    setOpen(next);
+    if (messages[0]) rememberToggle(toolOpenState, `group-${messages[0].id}`, next);
+  };
   return (
     <div className={`agent-tool-entry agent-tool-group${open ? ' open' : ''}`}>
-      <button className="agent-tool-header" onClick={() => setOpen(value => {
-        const next = !value;
-        if (messages[0]) rememberToggle(toolOpenState, `group-${messages[0].id}`, next);
-        return next;
-      })} aria-expanded={open}>
+      <button className="agent-tool-header" onClick={() => toggle(!open)} aria-expanded={open}>
         <CornerDownLeft aria-hidden="true" />
         <span className="agent-tool-title">
           {messages.length} 个工具调用
@@ -155,6 +169,7 @@ const ToolGroup = memo(function ToolGroup({ messages }: { messages: AiMessage[] 
           {messages.map(message => <ToolMessage key={message.id} message={message} />)}
         </div>
       )}
+      {open && <CollapseRow label="收起本组" onCollapse={() => toggle(false)} />}
     </div>
   );
 }, (prev, next) => prev.messages.length === next.messages.length
@@ -211,13 +226,13 @@ const SubagentGroup = memo(function SubagentGroup({ name, messages }: { name: st
   const [open, setOpen] = useState(() => toolOpenState.get(`sub-${messages[0]?.id}`) ?? false);
   const toolCount = messages.filter(message => message.role === 'tool').length;
   const textCount = messages.length - toolCount;
+  const toggle = (next: boolean) => {
+    setOpen(next);
+    if (messages[0]) rememberToggle(toolOpenState, `sub-${messages[0].id}`, next);
+  };
   return (
     <div className={`agent-tool-entry agent-subagent-entry${open ? ' open' : ''}`}>
-      <button className="agent-tool-header" onClick={() => setOpen(value => {
-        const next = !value;
-        if (messages[0]) rememberToggle(toolOpenState, `sub-${messages[0].id}`, next);
-        return next;
-      })} aria-expanded={open}>
+      <button className="agent-tool-header" onClick={() => toggle(!open)} aria-expanded={open}>
         <Bot aria-hidden="true" />
         <span className="agent-tool-title">
           子代理 {name}
@@ -235,6 +250,7 @@ const SubagentGroup = memo(function SubagentGroup({ name, messages }: { name: st
             ))}
         </div>
       )}
+      {open && <CollapseRow label="收起子代理" onCollapse={() => toggle(false)} />}
     </div>
   );
 }, (prev, next) => prev.name === next.name
