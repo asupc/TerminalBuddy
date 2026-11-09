@@ -1976,6 +1976,16 @@
   color: var(--text-primary);
 }
 
+/* 子代理模型：chip 空间有限，长模型名截断并保留 title 查看全名。 */
+.agent-chip-model {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
 .agent-chip-meta {
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;

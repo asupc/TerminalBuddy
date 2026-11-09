@@ -3,7 +3,7 @@ import { CircleStop, ImagePlus, Send, X } from 'lucide-react';
 import { AgentIcon } from './AgentIcon';
 import { ChatNodeRail, type ChatNode } from './ChatNodeRail';
 import { ModelSwitcher } from './ModelSwitcher';
-import { UsagePanel, cacheHitRate, compact } from './UsagePanel';
+import { UsagePanel, cacheHitRate, compact, contextPercent } from './UsagePanel';
 import {
   AI_SESSION_REMOVED_EVENT,
   AI_SESSION_UPDATE_EVENT,
@@ -32,6 +32,7 @@ import { AgentChips } from './AgentChips';
 import { AgentDrawer } from './AgentDrawer';
 import { PendingItem } from './PendingItem';
 import { filterSlashCommands, SlashCompletions } from './SlashCompletions';
+import { SessionStatusBar } from './SessionStatusBar';
 import './AgentChat.css';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -561,9 +562,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const context = session?.usage?.context;
   const lastTurn = session?.usage?.lastTurn;
   const usage = session?.usage;
-  const contextPercent = context?.usedTokens && context.windowTokens
-    ? Math.min(100, Math.round((context.usedTokens / context.windowTokens) * 100))
-    : null;
+  const contextUsagePercent = contextPercent(context);
   // 上下文摘要点击后打开与手机端同源的用量明细（输入/输出/缓存/命中率）。
   const [usageOpen, setUsageOpen] = useState(false);
   // 思考强度：会话本身不返回 effort，按 providerId + model 到目录里匹配（与手机端同一数据源）。
@@ -751,16 +750,22 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
                 <span className="agent-usage-value">
                   {context?.updating && !context.usedTokens
                     ? '待更新'
-                    : contextPercent != null
-                      ? `${contextPercent}%`
-                      : context?.usedTokens ? compact(context.usedTokens) : '—'}
+                    : contextUsagePercent != null
+                      ? `${contextUsagePercent}%`
+                      : context?.usedTokens
+                        ? (context.windowTokens
+                          ? `${compact(context.usedTokens)} / ${compact(context.windowTokens)}`
+                          : compact(context.usedTokens))
+                        : context?.windowTokens ? compact(context.windowTokens) : '—'}
                 </span>
-                {contextPercent != null && (
-                  <span className="agent-context-bar"><span style={{ width: `${contextPercent}%` }} /></span>
+                {contextUsagePercent != null && (
+                  <>
+                    <span className="agent-context-bar"><span style={{ width: `${contextUsagePercent}%` }} /></span>
+                    <span className="agent-usage-sub">
+                      {compact(context?.usedTokens)} / {compact(context?.windowTokens)}
+                    </span>
+                  </>
                 )}
-                <span className="agent-usage-sub">
-                  {context?.usedTokens ? compact(context.usedTokens) : '—'} / {compact(context?.windowTokens)}
-                </span>
               </span>
               <span className="agent-usage-sep" />
               <span className="agent-usage-group">
@@ -775,6 +780,12 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
                 <span className="agent-usage-value">↑{compact(usage?.sessionTotal.inputTokens)}</span>
                 <span className="agent-usage-value">↓{compact(usage?.sessionTotal.outputTokens)}</span>
                 <span className="agent-usage-sub">缓存命中 {cacheHitRate(usage?.sessionTotal)}</span>
+                {(usage?.sessionTotal.cacheReadInputTokens ?? 0) > 0 && (
+                  <span className="agent-usage-sub">读 {compact(usage?.sessionTotal.cacheReadInputTokens)}</span>
+                )}
+                {(usage?.sessionTotal.cacheCreationInputTokens ?? 0) > 0 && (
+                  <span className="agent-usage-sub">写 {compact(usage?.sessionTotal.cacheCreationInputTokens)}</span>
+                )}
               </span>
             </button>
             <div className="agent-input-actions">
@@ -804,6 +815,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
             </div>
           </div>
         </div>
+        {session && <SessionStatusBar session={session} running={running} />}
       </footer>
       {usageOpen && (
         <UsagePanel

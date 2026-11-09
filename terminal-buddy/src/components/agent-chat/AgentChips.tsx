@@ -101,13 +101,14 @@ export const AgentChips = memo(function AgentChips({ agents, selectedKey, onSele
             type="button"
             className={`agent-chip ${state}`}
             aria-pressed={selectedKey != null && agent.toolUseId === selectedKey}
-            aria-label={`${agent.name}，${state === 'running' ? '执行中' : state === 'completed' ? '已完成' : state === 'failed' ? '失败' : '已停止'}，${state === 'running' ? '实时计时' : duration}`}
+            aria-label={`${agent.name}${agent.model ? `，模型 ${agent.model}` : ''}，${state === 'running' ? '执行中' : state === 'completed' ? '已完成' : state === 'failed' ? '失败' : '已停止'}，${state === 'running' ? '实时计时' : duration}`}
             title={agent.description ?? agent.summary ?? agent.name}
             onClick={() => onSelect(agent)}
             data-task-id={agent.taskId}
           >
             <span className="agent-chip-dot" aria-hidden="true" />
             <span className="agent-chip-name">{agent.name}</span>
+            {agent.model && <span className="agent-chip-model" title={agent.model}>{agent.model}</span>}
             <span className="agent-chip-meta">
               {state === 'running' ? <>执行中 <ChipClock since={agent.startedAt} /></> : null}
               {state === 'completed' ? <>已完成 {duration}</> : null}

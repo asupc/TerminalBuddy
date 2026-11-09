@@ -44,6 +44,8 @@ export interface AiAgent {
   /** 关联的 Task tool_use id；与消息的 subagentKey（`{turn}:{parent}`）同源。 */
   toolUseId?: string | null;
   name: string;
+  /** 子代理实际使用的模型（CLI 提供时显示）。 */
+  model?: string | null;
   description?: string | null;
   status: 'running' | 'completed' | 'failed' | 'stopped' | 'killed' | 'paused' | string;
   /** CLI 任务类型：`local_agent`（子代理）、`local_bash`（后台命令）等。
@@ -114,7 +116,7 @@ export interface AiContextUsage {
 
 export interface AiUsage {
   context: AiContextUsage;
-  lastTurn?: (AiTokenUsage & { state: string }) | null;
+  lastTurn?: (AiTokenUsage & { state: string; startedAt?: number | null; endedAt?: number | null }) | null;
   sessionTotal: AiTokenUsage & { coverage: string };
 }
 
@@ -137,6 +139,8 @@ export interface AiSession {
   messages: AiMessage[];
   approvals: AiApproval[];
   error?: string | null;
+  /** 会话创建时刻（毫秒）：底部状态栏据此显示运行时长。旧会话为 0。 */
+  createdAt?: number;
   updatedAt: number;
   revision: number;
   resultRevision: number;
@@ -149,6 +153,10 @@ export interface AiSession {
   agents?: AiAgent[];
   /** 主线程当前思考的实时快照；无思考或回合结束时为 null。 */
   thinking?: AiThinking | null;
+  /** 本会话发生过的上下文压缩次数。 */
+  compactions?: number;
+  /** 桌面端是否正打开着该会话（服务端运行时标记，不落盘）；手机端「已打开」据此展示。 */
+  desktopOpen?: boolean;
 }
 
 export interface AiProviderOption {
@@ -223,6 +231,9 @@ export const AI_SESSION_UPDATE_EVENT = 'ai-session-update';
 export const AI_SESSION_REMOVED_EVENT = 'ai-session-removed';
 
 export const aiSessionList = () => invoke<AiSession[]>('ai_session_list');
+/** 桌面端上报当前打开着的原生会话标签（整体替换）；手机「已打开」据此同步服务端。 */
+export const setDesktopOpenSessions = (ids: string[]) =>
+  invoke<void>('set_desktop_open_sessions', { ids });
 export const aiSessionGet = (id: string) => invoke<AiSession>('ai_session_get', { id });
 export const aiSessionCreate = (input: CreateAiSession) => invoke<AiSession>('ai_session_create', { input });
 export const aiSessionSend = (id: string, input: SendAiMessage) => invoke<AiSession>('ai_session_send', { id, input });

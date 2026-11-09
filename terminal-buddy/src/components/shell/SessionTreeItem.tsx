@@ -180,7 +180,6 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
             >
               {child.icon}
               <span className="tree-name" title={tab.title}>{tab.title}</span>
-              <span className="tab-nav-agent-chip">{tab.provider === 'codex' ? 'Codex' : 'Claude'}</span>
               <span className="tree-item-end">
                 <button
                   className="tree-item-close"
