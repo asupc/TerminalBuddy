@@ -35,7 +35,7 @@ data class AiUiState(
     val server: String = "", val username: String = "admin", val authenticated: Boolean = false,
     val authenticating: Boolean = false, val loading: Boolean = false, val loadingSession: Boolean = false,
     val sessions: List<AiSession> = emptyList(), val projects: List<AiProject> = emptyList(),
-    /** 本机打开过的原生会话 id（按账号持久化）；简版「已打开」据此列出生效中的原生会话。 */
+    /** 本机本次运行打开过的原生会话 id（仅内存，不持久化）；简版「已打开」据此展示手机端打开的会话。 */
     val openedSessionIds: Set<String> = emptySet(),
     /** 首页最近任务独立恢复，避免将两条展示缓存当成完整会话列表。 */
     val recentSessions: List<AiSession> = emptyList(),
@@ -69,10 +69,13 @@ data class AiUiState(
 ) {
     /** 仅首次取数限制操作，后续刷新保留已有内容并保持页面可操作。 */
     val initialLoading get() = loading && !homeLoaded
-    /** 「已打开」中的原生会话：本机打开过且仍在会话列表里，按最近更新排序。 */
+    /**
+     * 「已打开」中的原生会话：电脑端正打开着的（服务端 `desktopOpen` 标记）
+     * 与本机本次运行打开过的会话，按最近更新排序。
+     */
     val openedSessions get() = (sessions + listOfNotNull(selected))
         .distinctBy { it.id }
-        .filter { it.id in openedSessionIds }
+        .filter { it.desktopOpen || it.id in openedSessionIds }
         .sortedByDescending { it.updatedAt }
     val launchProject get() = projects.find { it.path == projectPath }
     /** 只列出当前项目启用的 Agent 对应供应商。 */
@@ -426,7 +429,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             homeLoaded = cached != null,
             accounts = accounts.accounts, activeAccountId = accounts.activeId,
             serverName = accounts.accounts.find { it.id == accounts.activeId }?.name.orEmpty(),
-            openedSessionIds = accounts.activeId?.let { accounts.openedSessionIds(it) }.orEmpty(),
+            // 手机端打开记录只活在本进程内：切换账号/重连接时清空，避免沿用上一个账号的会话。
+            openedSessionIds = emptySet(),
             connectionRevision = revision,
             sendSteer = repository.sendSteer,
         )
@@ -510,11 +514,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         if (epoch != generation) return@launch
                         val unviewed = recordSessions(sessions)
-                        // 「已打开」只保留服务端仍存在的会话，避免本地记录无限增长。
+                        // 服务端列表刷新后清理已不存在的本机打开记录，避免内存无限增长。
                         val aliveOpened = mutable.value.openedSessionIds.intersect(sessions.mapTo(mutableSetOf()) { it.id })
-                        if (aliveOpened.size != mutable.value.openedSessionIds.size) {
-                            repository.accounts.replaceOpenedSessions(mutable.value.activeAccountId, aliveOpened)
-                        }
                         mutable.update {
                             reconcile(
                                 it.copy(
@@ -996,11 +997,12 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         startRealtime(refreshImmediately = true)
     }
 
-    /** 打开原生会话时登记到「已打开」，按当前账号持久化，返回首页后仍可继续。 */
+    /**
+     * 打开原生会话时登记到「已打开」。只记在内存：App 重启后以服务端
+     * `desktopOpen` 标记为准，不再沿用手机历史上点开过的会话。
+     */
     private fun rememberOpened(id: String) {
         if (id.isBlank() || id.startsWith("local-")) return
-        val accountId = mutable.value.activeAccountId ?: return
-        repository.accounts.markSessionOpened(accountId, id)
         if (id !in mutable.value.openedSessionIds) {
             mutable.update { it.copy(openedSessionIds = it.openedSessionIds + id) }
         }
@@ -1297,7 +1299,6 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 repository.delete(session.id)
                 if (epoch == generation) {
                     if (mutable.value.selected?.id == session.id) closeSession()
-                    repository.accounts.forgetOpenedSession(mutable.value.activeAccountId, session.id)
                     mutable.update {
                         it.copy(
                             sessions = it.sessions.filterNot { item -> item.id == session.id },
@@ -1346,7 +1347,6 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                         continue
                     }
                     if (epoch != generation) return@launch
-                    repository.accounts.forgetOpenedSession(mutable.value.activeAccountId, session.id)
                     mutable.update {
                         it.copy(
                             sessions = it.sessions.filterNot { item -> item.id == session.id },

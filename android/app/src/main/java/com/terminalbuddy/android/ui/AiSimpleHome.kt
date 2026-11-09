@@ -57,7 +57,7 @@ private enum class SimpleHomeTab(val title: String) {
  * 「开始对话」按服务端「新会话形态」设置分流：原生会话直接进入与桌面端一致的聊天页；
  * 终端接力则在服务端创建真实终端，手机打开的 Agent 与电脑终端完全同一会话。
  * 「已打开」平铺仍在服务端运行的对象：终端 Agent 会话与已打开的普通终端，
- * 再加上本机打开过的原生会话（按账号持久化，删除后移除）；
+ * 再加上电脑端正打开着的原生会话（服务端 `desktopOpen` 标记）与手机本次运行打开过的会话；
  * 不再展示其余原生最近会话；已绑定 Agent 的终端由 Agent 行代表，不重复列出。
  * 历史会话按当前工作项目汇总全部已启用助手，不跟随快速开始里的助手选择。
  * 支持下拉刷新：手动补齐终端与 Agent 列表（实时推送之外的自救入口）。
@@ -95,7 +95,7 @@ internal fun AiSimpleHome(
     val currentAgentUi = if (agentVm.isCurrentAccount() && agentUi.connection == agentVm.state.value.connection) {
         agentUi
     } else TerminalAgentUiState()
-    // 已打开 = 正在运行的终端 Agent 会话 + 本机打开过的原生会话 + 已打开的普通终端。
+    // 已打开 = 正在运行的终端 Agent 会话 + 电脑端/本机打开的原生会话 + 已打开的普通终端。
     val agentSessions = remember(currentAgentUi.sessions) {
         currentAgentUi.sessions.sortedByDescending { it.lastActivityAt ?: it.phaseAt ?: 0L }
     }
@@ -104,7 +104,7 @@ internal fun AiSimpleHome(
         val agentTerminalIds = agentSessions.mapTo(HashSet()) { it.terminalId }
         terminalUi.terminals.filterNot { it.id in agentTerminalIds }
     }
-    // 本机打开过的原生会话：普通终端/Agent 形态之外，原生会话也可继续。
+    // 原生会话以服务端为准：电脑端打开着的 + 手机本次运行打开过的，不再读本机持久记录。
     val openedNative = ui.openedSessions
     val openedEmpty = agentSessions.isEmpty() && openTerminals.isEmpty() && openedNative.isEmpty()
     // 两侧都成功加载后才展示计数；任一侧失败时按已拿到的数据展示，不阻塞另一侧。

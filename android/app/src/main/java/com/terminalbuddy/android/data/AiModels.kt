@@ -99,6 +99,8 @@ data class AiSession(
     val slashCatalog: AiSlashCatalog? = null,
     /** 主线程当前思考的实时快照；无思考或回合结束时为 null。 */
     val thinking: AiThinking? = null,
+    /** 桌面端是否正打开着该会话（服务端运行时标记）；手机「已打开」据此与服务端同步。 */
+    val desktopOpen: Boolean = false,
 ) {
     /** 服务端仍在该会话执行任务（含等待用户确认）。 */
     val running get() = status == "running" || status == "approval" || status == "background" || status == "stopping"

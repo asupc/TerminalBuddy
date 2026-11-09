@@ -27,11 +27,6 @@ internal data class AiConnection(val server: String, val username: String, val t
 
 /** 账号索引与令牌分开保存，每个账号沿用 Android Keystore 加密的 SessionStore。 */
 class AiAccountStore(context: Context, private val active: SessionStore) {
-    private companion object {
-        /** 「已打开」页签记录的原生会话 id；按账号隔离，随账号 prefs 一并删除。 */
-        const val OPENED_SESSION_IDS_KEY = "opened_session_ids"
-    }
-
     @Serializable private data class Record(val id: String, val server: String, val username: String, val name: String = "")
 
     private val context = context.applicationContext
@@ -94,40 +89,6 @@ class AiAccountStore(context: Context, private val active: SessionStore) {
         check(preferences.edit().putString("accounts", ApiJson.encodeToString(value)).commit()) { "无法保存 AI 账号列表" }
         records = value
     }
-
-    /** 本机打开过的原生会话 id；简版「已打开」用它把原生会话与终端/Agent 会话并列展示。 */
-    fun openedSessionIds(accountId: String?): Set<String> {
-        val id = accountId ?: return emptySet()
-        return accountPreferences(id).getStringSet(OPENED_SESSION_IDS_KEY, emptySet()).orEmpty().toSet()
-    }
-
-    /** 记录一次原生会话打开；本地未落盘的临时会话（local-）不记录。 */
-    fun markSessionOpened(accountId: String?, sessionId: String) {
-        val id = accountId ?: return
-        if (sessionId.isBlank() || sessionId.startsWith("local-")) return
-        val prefs = accountPreferences(id)
-        val current = prefs.getStringSet(OPENED_SESSION_IDS_KEY, emptySet()).orEmpty()
-        if (sessionId in current) return
-        prefs.edit().putStringSet(OPENED_SESSION_IDS_KEY, current + sessionId).apply()
-    }
-
-    /** 会话被删除或已不存在时移出「已打开」。 */
-    fun forgetOpenedSession(accountId: String?, sessionId: String) {
-        val id = accountId ?: return
-        val prefs = accountPreferences(id)
-        val current = prefs.getStringSet(OPENED_SESSION_IDS_KEY, emptySet()).orEmpty()
-        if (sessionId !in current) return
-        prefs.edit().putStringSet(OPENED_SESSION_IDS_KEY, current - sessionId).apply()
-    }
-
-    /** 服务端会话列表刷新后只保留仍存在的 id，避免记录无限增长。 */
-    fun replaceOpenedSessions(accountId: String?, ids: Set<String>) {
-        val id = accountId ?: return
-        accountPreferences(id).edit().putStringSet(OPENED_SESSION_IDS_KEY, ids).apply()
-    }
-
-    private fun accountPreferences(id: String) =
-        context.getSharedPreferences(namespace(id), Context.MODE_PRIVATE)
 
     private fun session(record: Record): SessionStore = sessions.getOrPut(record.id) {
         SessionStore(context, namespace(record.id), AI_SESSION_KEY)
