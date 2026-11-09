@@ -46,6 +46,9 @@ export interface AiAgent {
   name: string;
   description?: string | null;
   status: 'running' | 'completed' | 'failed' | 'stopped' | 'killed' | 'paused' | string;
+  /** CLI 任务类型：`local_agent`（子代理）、`local_bash`（后台命令）等。
+   * 只有代理类任务才会产生子代理消息，chip 带与抽屉据此过滤。 */
+  taskType?: string | null;
   background: boolean;
   parentTaskId?: string | null;
   depth: number;
@@ -54,6 +57,21 @@ export interface AiAgent {
   summary?: string | null;
   durationMs?: number | null;
   toolUses?: number | null;
+}
+
+/** 主线程当前思考的实时快照（Claude thinking 块）。不落盘、不进聊天记录：
+ * 长回合里模型可能思考几十分钟才输出一句正文，界面靠它证明模型仍在推进。 */
+export interface AiThinking {
+  /** 思考正文（服务端只保留尾部若干字符）。 */
+  text: string;
+  startedAt: number;
+  updatedAt: number;
+  /** 是否仍在输出：思考块结束后为 false。 */
+  active: boolean;
+  /** 本回合已开始的思考段数。 */
+  blocks: number;
+  /** 本回合思考累计字符数（截断前统计）。 */
+  totalChars: number;
 }
 
 /** 会话中途切换模型的记录；分段位置即切换发生的时间点。 */
@@ -129,6 +147,8 @@ export interface AiSession {
   todos?: AiTodo[];
   /** 本轮派发过的子代理状态。 */
   agents?: AiAgent[];
+  /** 主线程当前思考的实时快照；无思考或回合结束时为 null。 */
+  thinking?: AiThinking | null;
 }
 
 export interface AiProviderOption {

@@ -5,7 +5,8 @@ import { AgentIcon } from './AgentIcon';
 import { ChatMarkdown } from './ChatMarkdown';
 import { SkillEntry } from './SkillEntry';
 import { ApprovalCard } from './ApprovalCard';
-import type { AiApproval, AiChatImage, AiMessage, AiModelSwitch, AnswerAiApproval } from '../../services/tauri';
+import { ThinkingPanel } from './ThinkingPanel';
+import type { AiApproval, AiChatImage, AiMessage, AiModelSwitch, AiThinking, AnswerAiApproval } from '../../services/tauri';
 
 /**
  * 虚拟化消息列表：长会话（数千条消息、超大工具输出）全量常驻 DOM 是内存暴涨的主因，
@@ -41,6 +42,10 @@ interface Props {
   /** 思考开始时刻（毫秒）：已等待秒数由内部 ElapsedBadge 自行计时渲染，
    * 避免 clock 状态住在父组件、busy 期间每秒整页重渲染（审查 V-16）。 */
   thinkingSince: number | null;
+  /** 主线程当前思考的实时快照：长回合里唯一能说明「模型在推进」的信息。 */
+  thinking?: AiThinking | null;
+  /** 会话项目根目录：工具组标题里的绝对路径按它缩成相对路径。 */
+  projectPath?: string;
   /** 是否粘住底部：由父组件持有，用户上滚后置 false。 */
   stickRef: { current: boolean };
   onAnswer: (approval: AnswerAiApproval) => void;
@@ -77,6 +82,36 @@ function toolTitle(message: AiMessage): string {
   return raw.length > TOOL_TITLE_LIMIT ? `${raw.slice(0, TOOL_TITLE_LIMIT)}…` : raw;
 }
 
+/** 工具调用的「动作描述」：命令 / 文件路径等，用来回答「它现在在干什么」。
+ * 工具的 input 是 JSON，`description` 是最贴近人话的字段；没有时依次回落
+ * 到命令、文件路径、查询串。解析失败就返回空串（标题只显示工具名）。 */
+function toolAction(message: AiMessage): string {
+  const newline = message.text.indexOf('\n');
+  if (newline < 0) return '';
+  const json = message.text.slice(newline + 1).trim();
+  if (!json.startsWith('{')) return '';
+  let input: Record<string, unknown>;
+  try {
+    input = JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return '';
+  }
+  const pick = (key: string) => {
+    const value = input[key];
+    return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  };
+  const action = pick('description') || pick('command') || pick('file_path')
+    || pick('path') || pick('pattern') || pick('query') || pick('url') || pick('prompt');
+  return action.length > TOOL_TITLE_LIMIT ? `${action.slice(0, TOOL_TITLE_LIMIT)}…` : action;
+}
+
+/** 库里常见的绝对路径：折叠态只保留仓库内相对路径，省一半宽度。 */
+function shortenPath(action: string, projectPath?: string): string {
+  if (!projectPath) return action;
+  const prefix = projectPath.endsWith('/') ? projectPath : `${projectPath}/`;
+  return action.includes(prefix) ? action.split(prefix).join('') : action;
+}
+
 /** 工具输出的渲染上限：巨型日志整段进 DOM 同样会撑爆内存，默认截断、可手动展开。 */
 const TOOL_BODY_LIMIT = 20000;
 
@@ -94,15 +129,16 @@ function rememberToggle(map: Map<string, boolean>, key: string, value: boolean) 
   map.set(key, value);
 }
 
-/** 展开内容底部的收起入口：输出很长时不必再滚回条目顶部去点标题。 */
+/** 展开内容底部的收起入口：输出很长时不必再滚回条目顶部去点标题。
+ * 只留箭头图标，不写文字——展开区域已经很长，底部再加一行字反而多占高度。 */
 const CollapseRow = memo(function CollapseRow({ label = '收起', onCollapse }: {
+  /** 无障碍名称：按钮没有可见文字，读屏仍需要知道它做什么。 */
   label?: string;
   onCollapse: () => void;
 }) {
   return (
-    <button type="button" className="agent-tool-collapse" onClick={onCollapse}>
+    <button type="button" className="agent-tool-collapse" onClick={onCollapse} title={label} aria-label={label}>
       <ChevronUp aria-hidden="true" />
-      <span>{label}</span>
     </button>
   );
 });
@@ -146,8 +182,15 @@ const ToolMessage = memo(function ToolMessage({ message }: { message: AiMessage 
 /**
  * 连续的工具调用合并成一个可展开条目：多轮命令不再把对话刷成一长串工具名。
  * 比较器按消息对象引用判断：流式更新未触及的消息引用稳定，可整组跳过重渲染。
+ *
+ * 折叠态标题不只要有「多少次」，还要有「此刻在干什么」——长回合里用户扫一眼
+ * 消息列表就能知道模型在读哪个文件、跑什么命令，而不必点开或滚进抽屉。
+ * 展示的是**最后一次**调用：它代表当前正在推进的动作。
  */
-const ToolGroup = memo(function ToolGroup({ messages }: { messages: AiMessage[] }) {
+const ToolGroup = memo(function ToolGroup({ messages, projectPath }: {
+  messages: AiMessage[];
+  projectPath?: string;
+}) {
   const [open, setOpen] = useState(() => toolOpenState.get(`group-${messages[0]?.id}`) ?? false);
   const names = Array.from(new Set(messages.map(toolTitle).filter(Boolean)));
   const summary = names.slice(0, 3).join('、');
@@ -155,13 +198,24 @@ const ToolGroup = memo(function ToolGroup({ messages }: { messages: AiMessage[] 
     setOpen(next);
     if (messages[0]) rememberToggle(toolOpenState, `group-${messages[0].id}`, next);
   };
+  // 倒序找最近一次带动作描述的调用：最后几条往往是 TodoWrite 之类的状态同步，
+  // 没有可读的动作，直接跳过它们就能对上用户看到的「正在做什么」。
+  const latest = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const action = toolAction(messages[index]);
+      if (action) return { name: toolTitle(messages[index]), action: shortenPath(action, projectPath) };
+    }
+    return null;
+  }, [messages, projectPath]);
   return (
     <div className={`agent-tool-entry agent-tool-group${open ? ' open' : ''}`}>
       <button className="agent-tool-header" onClick={() => toggle(!open)} aria-expanded={open}>
         <CornerDownLeft aria-hidden="true" />
         <span className="agent-tool-title">
           {messages.length} 个工具调用
-          {summary && <span className="agent-tool-summary"> · {summary}{names.length > 3 ? ' 等' : ''}</span>}
+          {latest
+            ? <span className="agent-tool-summary"> · {latest.name} {latest.action}</span>
+            : summary && <span className="agent-tool-summary"> · {summary}{names.length > 3 ? ' 等' : ''}</span>}
         </span>
       </button>
       {open && (
@@ -173,6 +227,7 @@ const ToolGroup = memo(function ToolGroup({ messages }: { messages: AiMessage[] 
     </div>
   );
 }, (prev, next) => prev.messages.length === next.messages.length
+  && prev.projectPath === next.projectPath
   && prev.messages.every((message, index) => message === next.messages[index]));
 
 /** 模型切换分隔线：明示从这一段开始会话换用了哪个供应商与模型。 */
@@ -260,7 +315,12 @@ const SubagentGroup = memo(function SubagentGroup({ name, messages }: { name: st
 /**
  * 主线程 Task 工具调用的组头：不再显示 `Task\n{json}` 原文，改为
  * 「代理名 — 描述」，点击打开同一个子代理抽屉（规格见实施计划 6.4）。
+ * 新版 CLI 把该工具改名为 `Agent`，旧会话里仍是 `Task`，两者都要识别。
  */
+function isSubagentToolMessage(text: string): boolean {
+  return text.startsWith('Task\n') || text.startsWith('Agent\n');
+}
+
 const TaskHead = memo(function TaskHead({ message, onOpen }: {
   message: AiMessage;
   onOpen?: (toolUseId: string) => void;
@@ -276,6 +336,7 @@ const TaskHead = memo(function TaskHead({ message, onOpen }: {
     }
   }, [message.text]);
   // 工具消息 id 形如 `{turn}-tool-{tool_use_id}`，后半段即子代理关联键。
+  // turn 本身是 UUID，可能含 `-tool-` 片段，因此取最后一段才稳妥。
   const toolUseId = message.id.split('-tool-').pop() ?? '';
   const name = parsed.name || '子代理';
   return (
@@ -331,6 +392,8 @@ export function AgentMessageList({
   busy,
   busyText,
   thinkingSince,
+  thinking,
+  projectPath,
   stickRef,
   onAnswer,
   onActiveUserChange,
@@ -553,8 +616,8 @@ export function AgentMessageList({
             {visible ? (
               block.kind === 'tools'
                 ? (block.messages.length > 1
-                  ? <ToolGroup messages={block.messages} />
-                  : (block.messages[0].text.startsWith('Task\n')
+                  ? <ToolGroup messages={block.messages} projectPath={projectPath} />
+                  : (isSubagentToolMessage(block.messages[0].text)
                     ? <TaskHead message={block.messages[0]} onOpen={onOpenTask} />
                     : <ToolMessage message={block.messages[0]} />))
                 : block.kind === 'subagent'
@@ -582,11 +645,16 @@ export function AgentMessageList({
       {busy && (
         <div className="agent-bubble-row assistant agent-thinking-row" role="status" aria-live="polite">
           <div className="agent-bubble assistant agent-thinking-bubble">
-            <span className="agent-thinking-dots" aria-hidden="true"><span /><span /><span /></span>
-            <span>
-              {busyText}…
-              {thinkingSince != null && <ElapsedBadge since={thinkingSince} />}
+            <span className="agent-thinking-head">
+              <span className="agent-thinking-dots" aria-hidden="true"><span /><span /><span /></span>
+              <span>
+                {busyText}…
+                {thinkingSince != null && <ElapsedBadge since={thinkingSince} />}
+              </span>
             </span>
+            {/* 思考内容贴在状态行下方：折叠态一行跟随最新思考，展开可看尾部全文。
+                没有思考（如纯工具执行）时面板自身返回 null，不影响原有观感。 */}
+            {thinking && <ThinkingPanel thinking={thinking} running />}
           </div>
         </div>
       )}

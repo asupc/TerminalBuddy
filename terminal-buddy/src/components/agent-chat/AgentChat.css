@@ -224,14 +224,102 @@
   white-space: normal;
 }
 
-/* 思考中：三个跳动的点 + 已等待秒数，避免长回合看起来像卡死 */
+/* 思考中：三个跳动的点 + 已等待秒数，避免长回合看起来像卡死。
+   新版把思考内容贴在状态行下方（见 .agent-thinking-panel），因此气泡改为
+   纵向布局；仍然是左对齐的小气泡，不抢正文宽度。 */
 .agent-thinking-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  max-width: min(760px, 90%);
+}
+
+.agent-thinking-head {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-secondary);
-  font-size: 12px;
 }
+
+/* ── 思考内容面板（ThinkingPanel） ─────────────────────────── */
+.agent-thinking-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  padding-left: 8px;
+}
+
+.agent-thinking-panel.active { border-left-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+.agent-thinking-peek {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-thinking-peek:hover { color: var(--text-secondary); }
+
+.agent-thinking-peek svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.agent-thinking-peek .agent-thinking-label {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 最新一句：单行省略。思考是持续抖动的过程量，多行会把「思考中」气泡撑成正文高度。 */
+.agent-thinking-peek .agent-thinking-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.agent-thinking-panel.open .agent-thinking-peek .agent-thinking-text { display: none; }
+
+.agent-thinking-body {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.agent-thinking-foot {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.agent-thinking-age,
+.agent-thinking-hint { font-variant-numeric: tabular-nums; }
 
 .agent-thinking-dots {
   display: inline-flex;
@@ -397,14 +485,14 @@
   color: var(--text-tertiary);
 }
 
-/* 展开内容底部的收起入口：长输出滚到底后不必再回到条目顶部 */
+/* 展开内容底部的收起入口：长输出滚到底后不必再回到条目顶部。
+   只留箭头图标（不写文字），但保留通栏可点区域——命中区域是整条而不是箭头本身。 */
 .agent-tool-collapse {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
   width: 100%;
-  padding: 5px 10px;
+  padding: 4px 10px;
   border: 0;
   border-top: 1px solid var(--border-subtle);
   background: transparent;
@@ -414,8 +502,8 @@
 }
 
 .agent-tool-collapse svg {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
 }
 
 .agent-tool-collapse:hover {
@@ -530,6 +618,13 @@
   height: 15px;
 }
 
+.agent-approval-hint {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+
 .agent-approval-command {
   margin: 0;
   padding: 8px;
@@ -577,6 +672,11 @@
   text-align: left;
 }
 
+.agent-approval-option:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
 .agent-approval-option.selected {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -615,6 +715,38 @@
   color: var(--text-tertiary);
 }
 
+.agent-approval-custom-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-approval-custom-row > span {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.agent-approval-custom {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.agent-approval-custom::placeholder {
+  color: var(--text-tertiary);
+}
+
+.agent-approval-custom:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
 .agent-approval-actions {
   display: flex;
   gap: 8px;
@@ -647,6 +779,53 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* 编辑态：输入框占满整行，操作按钮换到下一行右对齐——
+   有多行文本时按钮列不会把输入区挤成窄条。 */
+.agent-pending-item.editing {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+/* 第一个按钮吃掉左侧空间把整组推到右边，后续按钮自然跟随。 */
+.agent-pending-item.editing .agent-btn:first-of-type {
+  margin-left: auto;
+}
+
+.agent-pending-item.editing .agent-btn {
+  flex-shrink: 0;
+}
+
+.agent-pending-edit {
+  order: -1;
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  max-height: 140px;
+}
+
+.agent-pending-edit:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.agent-pending-edit:disabled {
+  opacity: 0.6;
+}
+
+.agent-pending-error {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--danger);
 }
 
 .agent-pending-text {

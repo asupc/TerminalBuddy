@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleStop, ImagePlus, Send, Trash2, X, Zap } from 'lucide-react';
+import { CircleStop, ImagePlus, Send, X } from 'lucide-react';
 import { AgentIcon } from './AgentIcon';
 import { ChatNodeRail, type ChatNode } from './ChatNodeRail';
 import { ModelSwitcher } from './ModelSwitcher';
@@ -12,6 +12,7 @@ import {
   aiSessionGet,
   aiSessionList,
   aiSessionPendingDelete,
+  aiSessionPendingUpdate,
   aiSessionSend,
   aiSessionStop,
   aiSessionSwitchModel,
@@ -29,6 +30,7 @@ import { AgentMessageList, type AgentMessageListHandle, type ChatBlock } from '.
 import { TodoCard } from './TodoCard';
 import { AgentChips } from './AgentChips';
 import { AgentDrawer } from './AgentDrawer';
+import { PendingItem } from './PendingItem';
 import { filterSlashCommands, SlashCompletions } from './SlashCompletions';
 import './AgentChat.css';
 
@@ -476,6 +478,19 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     }
   }, [tab.sessionId]);
 
+  // 编辑排队消息：只改队列里的文本，不影响已在执行的本回合。
+  // 返回布尔值而不是抛错——失败提示显示在那一行里，不把整页错误条拉出来。
+  const editPending = useCallback(async (requestId: string, text: string): Promise<boolean> => {
+    try {
+      const snapshot = await aiSessionPendingUpdate(tab.sessionId, requestId, text);
+      setSession(previous => (previous && previous.revision > snapshot.revision ? previous : stripAnswered(snapshot)));
+      return true;
+    } catch (reason) {
+      setError(String(reason));
+      return false;
+    }
+  }, [tab.sessionId, stripAnswered]);
+
   // 空闲时切换供应商与模型：后端结束常驻进程并写入切换分段，下一条消息以新配置 --resume 续接。
   const switchModel = useCallback(async (providerId: string, model: string) => {
     setError(null);
@@ -620,6 +635,8 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
           busy={busy}
           busyText={busyText}
           thinkingSince={thinkingSince}
+          thinking={session?.thinking ?? null}
+          projectPath={tab.projectPath}
           stickRef={stickToBottom}
           onAnswer={answer}
           onActiveUserChange={setActiveNodeId}
@@ -652,17 +669,13 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
           <div className="agent-pending-list">
             <div className="agent-pending-title">{pending.length} 条排队中</div>
             {pending.map(item => (
-              <div key={item.requestId} className="agent-pending-item">
-                <span className="agent-pending-text" title={item.text}>{item.text}</span>
-                <button className="agent-btn small" title="立即插话"
-                  onClick={() => { void aiSessionFlush(tab.sessionId, item.requestId).catch(reason => setError(String(reason))); }}>
-                  <Zap aria-hidden="true" />插话
-                </button>
-                <button className="agent-btn small" title="移出队列"
-                  onClick={() => { void aiSessionPendingDelete(tab.sessionId, item.requestId).catch(reason => setError(String(reason))); }}>
-                  <Trash2 aria-hidden="true" />
-                </button>
-              </div>
+              <PendingItem
+                key={item.requestId}
+                item={item}
+                onSave={editPending}
+                onFlush={requestId => { void aiSessionFlush(tab.sessionId, requestId).catch(reason => setError(String(reason))); }}
+                onDelete={requestId => { void aiSessionPendingDelete(tab.sessionId, requestId).catch(reason => setError(String(reason))); }}
+              />
             ))}
           </div>
         )}

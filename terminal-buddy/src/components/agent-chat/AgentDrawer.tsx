@@ -6,7 +6,8 @@ import type { AiAgent, AiMessage } from '../../services/tauri';
 /**
  * 子代理抽屉：展示单个子代理的完整工作过程。
  *
- * 只按 `subagentKey` 过滤父组件已持有的 `messages`，不触碰 AgentMessageList 的虚拟化窗口；
+ * 按 `subagentKey` 过滤父组件已持有的 `messages`（旧会话无分组键时按子代理名回落），
+ * 不触碰 AgentMessageList 的虚拟化窗口；
  * 无全屏遮罩，主列表保持可见可滚动。窄屏（< 640px）由 CSS 铺满宽度。
  * 规格见 docs/原生会话任务清单与子代理面板实施计划.md 第 6.3 节。
  */
@@ -66,9 +67,11 @@ export const AgentDrawer = memo(function AgentDrawer({ agent, subagentKey, messa
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const own = useMemo(() => {
-    if (!subagentKey) return [];
-    return messages.filter(message => message.subagentKey === subagentKey);
-  }, [messages, subagentKey]);
+    // 有分组键时精确筛选（同名代理不误并组）；旧会话没有 subagentKey 时回落按名字，
+    // 与主列表的分组回落规则保持一致，避免抽屉永远是空态。
+    if (subagentKey) return messages.filter(message => message.subagentKey === subagentKey);
+    return messages.filter(message => !message.subagentKey && message.subagent === agent.name);
+  }, [messages, subagentKey, agent.name]);
 
   // 打开时聚焦关闭按钮：Esc 关闭后焦点回到触发它的 chip（父组件负责回焦）。
   useEffect(() => { closeRef.current?.focus(); }, [agent.taskId]);

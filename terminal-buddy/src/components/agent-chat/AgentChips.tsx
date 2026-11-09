@@ -69,7 +69,9 @@ export const AgentChips = memo(function AgentChips({ agents, selectedKey, onSele
   }, [hasFinished]);
 
   const visible = useMemo(() => {
-    const alive = agents.filter(agent => agent.depth === 1).filter(agent => {
+    // 后台 Bash 命令（taskType=local_bash）与子代理共用 task_* 事件，但不是子代理：
+    // 没有可展示的子代理消息，点开只会是空抽屉，因此不进 chip 带。
+    const alive = agents.filter(agent => agent.depth === 1 && agent.taskType !== 'local_bash' && agent.taskType !== 'background_shell').filter(agent => {
       if (chipState(agent) === 'running') return true;
       return sweep - (agent.endedAt ?? agent.startedAt) < LINGER_MS;
     });

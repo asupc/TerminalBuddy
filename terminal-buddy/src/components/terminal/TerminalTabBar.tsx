@@ -384,9 +384,8 @@ export const TerminalTabBar: FC = () => {
           {tab.shape === 'native'
             ? <AgentIcon provider={tab.provider} className="terminal-tab-history-icon" />
             : <SquareTerminal className="terminal-tab-history-icon" aria-hidden="true" />}
-          <span className="terminal-tab-agent-badge">
-            {tab.shape === 'native' ? (tab.provider === 'codex' ? 'CODEX' : 'CLAUDE') : 'AGENT'}
-          </span>
+          {/* 原生会话已有 Agent Logo，无需再显示 CLAUDE / CODEX 名称角标 */}
+          {tab.shape !== 'native' && <span className="terminal-tab-agent-badge">AGENT</span>}
           <span className="terminal-tab-name">{tab.title}</span>
           <button className="terminal-tab-close" onClick={event => { event.stopPropagation(); closeAgentTab(tab.key); }}
             title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>
