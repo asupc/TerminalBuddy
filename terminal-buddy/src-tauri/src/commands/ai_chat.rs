@@ -20,6 +20,14 @@ pub async fn ai_session_list() -> Result<Vec<AiSession>, String> {
     claude_task(|| service::list(&desktop_owner())).await
 }
 
+/// 桌面端上报当前打开着的原生会话标签（整体替换）。
+/// 手机端「已打开」据此展示与桌面端一致的会话，而不是手机本地的打开记录。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn set_desktop_open_sessions(ids: Vec<String>) -> Result<(), String> {
+    service::set_desktop_open(ids);
+    Ok(())
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn ai_session_get(id: String) -> Result<AiSession, String> {
     claude_task(move || service::get(&id, &desktop_owner())).await

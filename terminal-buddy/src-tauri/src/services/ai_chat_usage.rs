@@ -69,10 +69,21 @@ fn ensure(data: &mut AiSession) -> &mut AiUsage {
 }
 pub(super) fn begin_turn(data: &mut AiSession) {
     let usage = ensure(data);
-    usage.last_turn = Some(AiTurnUsage { state: "provisional".into(), ..Default::default() });
+    usage.last_turn = Some(AiTurnUsage {
+        state: "provisional".into(),
+        started_at: Some(chrono::Utc::now().timestamp_millis()),
+        ..Default::default()
+    });
     // 新一轮开始时上次的上下文数字仍然有效（只是待刷新）：不要清成 0，
     // 否则界面会在 0 → 实际值 之间来回跳。
     usage.context.updating = true;
+}
+/// 标记本轮已收尾：只补结束时刻，用于底部状态栏估算平均输出速度。
+pub(super) fn end_turn(data: &mut AiSession) {
+    let now = chrono::Utc::now().timestamp_millis();
+    if let Some(turn) = data.usage.as_mut().and_then(|usage| usage.last_turn.as_mut()) {
+        turn.ended_at.get_or_insert(now);
+    }
 }
 pub(super) fn finish_turn(data: &mut AiSession) {
     let Some(usage) = data.usage.as_mut() else { return; };
@@ -82,6 +93,8 @@ pub(super) fn finish_turn(data: &mut AiSession) {
             if usage.session_total.coverage == "complete" { usage.session_total.coverage = "partial".into(); }
         }
     }
+    // 无 result（中断/进程退出）的回合也要有结束时刻，否则状态栏永远算不出速度。
+    end_turn(data);
 }
 pub(super) fn configured_window(data: &mut AiSession, window: Option<u64>) {
     let context = &mut ensure(data).context;
@@ -95,7 +108,12 @@ pub(super) fn configured_window(data: &mut AiSession, window: Option<u64>) {
 fn store_turn(data: &mut AiSession, base: &AiTokenUsage, tokens: AiTokenUsage, state: &str) {
     let usage = ensure(data);
     usage.session_total.tokens = base.plus(&tokens);
-    usage.last_turn = Some(AiTurnUsage { tokens, state: state.into() });
+    // 流式过程中 store_turn 会反复调用：保留本轮开始时刻（以及已经落定的结束时刻），
+    // 否则速度统计的计时起点会被每次快照重置。
+    let (started_at, ended_at) = usage.last_turn.as_ref()
+        .map(|turn| (turn.started_at, turn.ended_at))
+        .unwrap_or((None, None));
+    usage.last_turn = Some(AiTurnUsage { tokens, state: state.into(), started_at, ended_at });
 }
 pub(super) fn invalidate_context(data: &mut AiSession) {
     let context = &mut ensure(data).context;
@@ -145,6 +163,11 @@ impl ClaudeUsageTracker {
         let kind = value["type"].as_str().unwrap_or("");
         if value["parent_tool_use_id"].as_str().unwrap_or("").is_empty() && kind == "system" && matches!(value["subtype"].as_str(), Some("compact_boundary" | "status")) {
             if value["subtype"] == "compact_boundary" || value["status"] == "compacting" {
+                // 同一次压缩会先来 status=compacting、再来 compact_boundary：
+                // 只在边界事件计数，避免一次压缩被算两次。
+                if value["subtype"] == "compact_boundary" {
+                    data.compactions = data.compactions.saturating_add(1);
+                }
                 invalidate_context(data);
                 self.compacted = true;
                 self.latest_main = None;
@@ -202,6 +225,8 @@ impl ClaudeUsageTracker {
                     }
                 }
                 self.final_received = true;
+                // 本轮收尾：记录结束时刻，供状态栏估算平均输出速度。
+                end_turn(data);
                 if tokens.reported() {
                     let base = self.base.get_or_insert_with(|| ensure(data).session_total.tokens.clone()).clone();
                     let state = if tokens.complete() { "final" } else { "partial" };
@@ -260,7 +285,13 @@ impl CodexUsageTracker {
     pub(super) fn submitted(&mut self) { self.started = true; }
     pub(super) fn observe(&mut self, data: &mut AiSession, value: &Value) -> bool {
         let method = value["method"].as_str().unwrap_or("");
-        if method == "thread/compacted" || (method == "item/started" && value["params"]["item"]["type"] == "contextCompaction") {
+        if method == "thread/compacted" {
+            data.compactions = data.compactions.saturating_add(1);
+            invalidate_context(data);
+            return true;
+        }
+        if method == "item/started" && value["params"]["item"]["type"] == "contextCompaction" {
+            // 与 thread/compacted 成对出现，只由后者计数，避免重复。
             invalidate_context(data);
             return true;
         }
@@ -323,6 +354,7 @@ impl CodexUsageTracker {
         true
     }
     pub(super) fn completed(&self, data: &mut AiSession) {
+        end_turn(data);
         if let Some(turn) = ensure(data).last_turn.as_mut() {
             if self.observed && !self.missing_turn_base && turn.tokens.complete() { turn.state = "final".into(); }
         }
@@ -338,9 +370,10 @@ mod tests {
             id: "usage-test".into(), title: "t".into(), provider: "claude".into(),
             provider_id: None, provider_name: None, project_path: "/tmp".into(), model: None,
             status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
-            updated_at: 0, revision: 1, result_revision: 0, usage: Some(initial()),
+            created_at: 0, updated_at: 0, revision: 1, result_revision: 0, usage: Some(initial()),
             usage_checkpoint: None, owner: "o".into(), thread_id: None, request_ids: Vec::new(),
             pending_inputs: Vec::new(), slash_catalog: None, todos: Vec::new(), agents: Vec::new(), thinking: None,
+            compactions: 0, desktop_open: false,
         }
     }
 
@@ -360,6 +393,38 @@ mod tests {
         assert_eq!(context.used_tokens, Some(328_000), "上一轮的数字应保留");
         assert!(context.updating, "保留数字但标记为待刷新");
         assert_eq!(context.window_tokens, Some(500_000));
+    }
+
+    /// 流式过程中反复写本轮统计时，必须保留开始时刻，速度计时才有效。
+    #[test]
+    fn store_turn_preserves_started_at_and_end_turn_stamps_end() {
+        let mut data = session();
+        begin_turn(&mut data);
+        let started = data.usage.as_ref().unwrap().last_turn.as_ref().unwrap().started_at;
+        assert!(started.is_some(), "开局应记录本轮开始时刻");
+        store_turn(&mut data, &AiTokenUsage::default(),
+            AiTokenUsage { input_tokens: Some(100), output_tokens: Some(20), ..Default::default() }, "provisional");
+        let turn = data.usage.as_ref().unwrap().last_turn.as_ref().unwrap();
+        assert_eq!(turn.started_at, started, "流式快照不能重置开始时刻");
+        assert_eq!(turn.ended_at, None, "未收尾时不应有结束时刻");
+        end_turn(&mut data);
+        let turn = data.usage.as_ref().unwrap().last_turn.as_ref().unwrap();
+        assert!(turn.ended_at.is_some(), "收尾后应补结束时刻");
+    }
+
+    /// 一次压缩会先来 status=compacting、再来 compact_boundary，只能计一次。
+    #[test]
+    fn compact_boundary_counts_once_per_compaction() {
+        let mut data = session();
+        let mut tracker = ClaudeUsageTracker::default();
+        tracker.observe(&mut data, &serde_json::json!({
+            "type": "system", "subtype": "status", "status": "compacting"
+        }));
+        assert_eq!(data.compactions, 0, "进入压缩中不计数");
+        tracker.observe(&mut data, &serde_json::json!({
+            "type": "system", "subtype": "compact_boundary"
+        }));
+        assert_eq!(data.compactions, 1, "压缩边界事件计一次");
     }
 
     /// 压缩后旧数字不准确，但保留并标记待更新，好过闪成 0。

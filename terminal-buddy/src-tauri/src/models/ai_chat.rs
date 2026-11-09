@@ -85,6 +85,9 @@ pub struct AiAgent {
     pub tool_use_id: Option<String>,
     /// subagent_type，缺失时回落 description 或 "subagent"。
     pub name: String,
+    /// 子代理实际使用的模型（CLI task 事件提供时展示）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// running | completed | failed | stopped | killed | paused
@@ -193,6 +196,9 @@ pub struct AiSession {
     pub messages: Vec<AiMessage>,
     pub approvals: Vec<AiApproval>,
     pub error: Option<String>,
+    /// 会话创建时刻（毫秒）：底部状态栏据此显示运行时长。旧会话缺省为 0。
+    #[serde(default)]
+    pub created_at: i64,
     pub updated_at: i64,
     pub revision: u64,
     /// 最近一次任务结束的版本；客户端断线后仍能识别已经错过的完整回合。
@@ -225,7 +231,16 @@ pub struct AiSession {
     /// 主线程当前思考的实时快照（不落盘、不入聊天记录）：见 [`AiThinking`]。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<AiThinking>,
+    /// 本会话发生过的上下文压缩次数（Claude compact / Codex thread compact）。
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub compactions: u32,
+    /// 桌面端是否正打开着该会话（运行时状态，不落盘）：手机「已打开」据此同步服务端。
+    /// 生产路径由 `ai_chat_service::list` / `get` 按桌面端上报的集合实时填充。
+    #[serde(default)]
+    pub desktop_open: bool,
 }
+
+fn is_zero_u32(value: &u32) -> bool { *value == 0 }
 
 impl AiSession {
     /// 通知连接只读取元数据，不复制或传输整段对话历史。
@@ -235,6 +250,7 @@ impl AiSession {
             provider_id: self.provider_id.clone(), provider_name: self.provider_name.clone(),
             project_path: self.project_path.clone(), model: self.model.clone(), status: self.status.clone(),
             messages: Vec::new(), approvals: self.approvals.clone(), error: self.error.clone(),
+            created_at: self.created_at,
             updated_at: self.updated_at, revision: self.revision, result_revision: self.result_revision,
             usage: self.usage.clone(), usage_checkpoint: None, owner: self.owner.clone(),
             thread_id: None, request_ids: Vec::new(),
@@ -246,6 +262,8 @@ impl AiSession {
             todos: self.todos.clone(),
             agents: self.agents.clone(),
             thinking: self.thinking.clone(),
+            compactions: self.compactions,
+            desktop_open: self.desktop_open,
         }
     }
 }
@@ -360,6 +378,12 @@ pub struct AiTurnUsage {
     #[serde(flatten)]
     pub tokens: AiTokenUsage,
     pub state: String,
+    /// 本轮开始与结束时刻（毫秒）。结束时刻只有在本轮真正收尾后才写入，
+    /// 前端据此计算平均输出速度；运行中不显示速度。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<i64>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

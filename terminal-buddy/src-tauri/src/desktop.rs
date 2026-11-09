@@ -443,7 +443,7 @@ pub fn run() {
             ai_session_list, ai_session_get, ai_session_create, ai_session_send,
             ai_session_stop, ai_session_switch_model, ai_session_answer, ai_session_delete,
             ai_session_pending_update, ai_session_pending_delete, ai_session_flush,
-            ai_catalog, ai_session_history, ai_session_resume_history,
+            ai_catalog, ai_session_history, ai_session_resume_history, set_desktop_open_sessions,
             get_all_profiles, get_projects, save_projects,
             get_profile,
             get_ssh_temp_directory,

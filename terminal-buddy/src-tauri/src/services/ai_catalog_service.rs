@@ -136,8 +136,33 @@ fn enable_task_tools(env: &mut serde_json::Map<String, Value>) {
     }
 }
 
-fn inherited_context_window(agent: &str) -> Option<u64> {    if agent != "claude" { return None; }
-    std::env::var("CLAUDE_CODE_MAX_CONTEXT_TOKENS").ok()?.parse::<u64>().ok().filter(|n| *n > 0 && *n <= i64::MAX as u64)
+fn inherited_context_window(agent: &str) -> Option<u64> {
+    if agent != "claude" { return None; }
+    env_context_window().or_else(user_settings_context_window)
+}
+
+fn env_context_window() -> Option<u64> {
+    std::env::var("CLAUDE_CODE_MAX_CONTEXT_TOKENS").ok()?.parse::<u64>().ok()
+        .filter(|n| *n > 0 && *n <= i64::MAX as u64)
+}
+
+/// 用户级 `~/.claude/settings.json` 里的窗口配置。原生会话带 `--settings`
+/// 启动时，临时文件未写的 env 键会穿透到用户级配置，CLI 实际按它执行；
+/// 例如供应商模型没有配置窗口、但用户级设置了 600k 时，启动阶段也应显示 600k。
+fn user_settings_context_window() -> Option<u64> {
+    let dir = super::claude_hook_settings::resolve_claude_config_dir(None).ok()?;
+    let bytes = fs::read(dir.join("settings.json")).ok()?;
+    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    let raw = value.pointer("/env/CLAUDE_CODE_MAX_CONTEXT_TOKENS")?;
+    raw.as_u64().or_else(|| raw.as_str()?.parse().ok())
+        .filter(|n| *n > 0 && *n <= i64::MAX as u64)
+}
+
+/// 创建会话时即可确定的上下文窗口。复用 `prepare()` 的完整优先级
+/// （供应商模型配置 → 供应商 settings 的 env → 用户级 settings / 进程环境变量），
+/// 与真正启动 CLI 时的取值保持一致，不必等第一份用量报告。
+pub(crate) fn configured_context_window(agent: &str, provider_id: Option<&str>, model: Option<&str>) -> Option<u64> {
+    prepare(agent, provider_id, model).ok().and_then(|launch| launch.context_window)
 }
 
 #[cfg(test)]

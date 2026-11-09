@@ -214,7 +214,7 @@ pub async fn notifications_socket(ws: WebSocketUpgrade, State(state): State<AppS
     Ok(ws.max_message_size(AI_WS_MAX_MESSAGE_SIZE).max_frame_size(AI_WS_MAX_MESSAGE_SIZE).on_upgrade(move |socket| async move {
         let (mut sender, mut receiver) = socket.split();
         let send_updates = async {
-            let mut previous: Vec<_> = initial.iter().map(|s| (s.id.clone(), s.revision)).collect();
+            let mut previous: Vec<_> = initial.iter().map(|s| (s.id.clone(), s.revision, s.desktop_open)).collect();
             if !send_notification_frame(&mut sender, Message::Text(json!({"type":"sessions","sessions":initial}).to_string().into())).await { return; }
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -226,7 +226,8 @@ pub async fn notifications_socket(ws: WebSocketUpgrade, State(state): State<AppS
                 if heartbeat_due && !send_notification_frame(&mut sender, Message::Ping(Vec::new().into())).await { break; }
                 let current = { let owner = owner.clone(); tokio::task::spawn_blocking(move || service::list(&owner)).await };
                 let Ok(Ok(sessions)) = current else { break; };
-                let versions: Vec<_> = sessions.iter().map(|s| (s.id.clone(), s.revision)).collect();
+                // 桌面端开关会话标签也会改变「已打开」列表，必须纳入版本比较。
+                let versions: Vec<_> = sessions.iter().map(|s| (s.id.clone(), s.revision, s.desktop_open)).collect();
                 // 保留应用层心跳，兼容旧客户端的最后接收时间与摘要补偿。
                 if versions != previous || heartbeat_due {
                     if !send_notification_frame(&mut sender, Message::Text(json!({"type":"sessions","sessions":sessions}).to_string().into())).await { break; }

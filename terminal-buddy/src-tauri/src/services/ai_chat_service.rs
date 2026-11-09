@@ -17,6 +17,22 @@ use uuid::Uuid;
 type Result<T> = std::result::Result<T, String>;
 // 仅记录运行任务以便退出时收尾，不限制任务并发数。
 static RUNNING: AtomicUsize = AtomicUsize::new(0);
+
+/// 桌面端当前打开着的原生会话标签（由桌面端实时上报，服务重启即清空）。
+/// 只用于给会话元数据打 `desktopOpen` 标记，不参与会话持久化。
+static DESKTOP_OPEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+fn desktop_open_set() -> &'static Mutex<HashSet<String>> {
+    DESKTOP_OPEN.get_or_init(|| Mutex::new(HashSet::new()))
+}
+/// 整体替换桌面端打开集合：打开/关闭标签、启动恢复标签页都会触发一次上报。
+pub fn set_desktop_open(ids: Vec<String>) {
+    let ids = ids.into_iter().filter(|id| !id.trim().is_empty()).collect();
+    if let Ok(mut open) = desktop_open_set().lock() { *open = ids; }
+}
+fn is_desktop_open(id: &str) -> bool {
+    desktop_open_set().lock().map(|open| open.contains(id)).unwrap_or(false)
+}
+
 struct RunningTask;
 impl Drop for RunningTask { fn drop(&mut self) { RUNNING.fetch_sub(1, Ordering::Relaxed); } }
 
@@ -109,6 +125,8 @@ fn persist_data(cell: &Cell, data: &AiSession) -> Result<()> {
     // 思考快照只是「此刻在做什么」的实时状态：既不进聊天记录，也不落盘
     // （否则每批 delta 都要重写整个会话文件，长回合下磁盘写放大非常可观）。
     if let Some(object) = value.as_object_mut() { object.remove("thinking"); }
+    // 桌面端打开状态由客户端实时上报，落盘后会变成过期标记。
+    if let Some(object) = value.as_object_mut() { object.remove("desktopOpen"); }
     atomic_write_private(&cell.path, &serde_json::to_vec(&value).map_err(|e| e.to_string())?)
         .map_err(|e| format!("保存 AI 会话失败：{e}"))
 }
@@ -151,7 +169,8 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
 }
 pub fn get(id: &str, owner: &str) -> Result<AiSession> {
     let cell = load(id, owner)?;
-    let snapshot = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
+    let mut snapshot = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
+    snapshot.desktop_open = is_desktop_open(&snapshot.id);
     Ok(snapshot)
 }
 pub fn list(owner: &str) -> Result<Vec<AiSession>> {
@@ -161,7 +180,11 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
             if let Some(id) = entry.path().file_stem().and_then(|id| id.to_str()) {
                 if let Ok(cell) = load(id, owner) {
                     refresh_title(&cell, false);
-                    if let Ok(data) = cell.data.lock() { sessions.push(data.metadata()); };
+                    if let Ok(data) = cell.data.lock() {
+                        let mut meta = data.metadata();
+                        meta.desktop_open = is_desktop_open(&meta.id);
+                        sessions.push(meta);
+                    };
                 }
             }
         }
@@ -177,16 +200,26 @@ fn new_session(owner: &str, input: CreateAiSession) -> Result<AiSession> {
     }
     let selection = super::ai_catalog_service::selection(&input.provider, input.provider_id.as_deref(), input.model.as_deref())?;
     let id = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp_millis();
     let data = AiSession { id: id.clone(), title: "新对话".into(), provider: input.provider,
         provider_id: selection.as_ref().map(|(id, _)| id.clone()), provider_name: selection.map(|(_, name)| name),
         project_path: input.project_path, model: input.model.filter(|m| !m.trim().is_empty()),
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
-        updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new(),
-        slash_catalog: None, todos: Vec::new(), agents: Vec::new(), thinking: None };
+        created_at: now, updated_at: now, revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new(),
+        slash_catalog: None, todos: Vec::new(), agents: Vec::new(), thinking: None, compactions: 0, desktop_open: false };
     Ok(data)
 }
-fn save_new_session(data: AiSession) -> Result<AiSession> {
+/// 创建/恢复会话时就把配置里已知的上下文窗口写进用量：首条消息发出前，
+/// 界面也能显示最大上下文，不必等 CLI 的第一份用量报告。
+fn seed_context_window(data: &mut AiSession) {
+    if data.usage.is_none() { return; }
+    let window = super::ai_catalog_service::configured_context_window(
+        &data.provider, data.provider_id.as_deref(), data.model.as_deref());
+    usage::configured_window(data, window);
+}
+fn save_new_session(mut data: AiSession) -> Result<AiSession> {
+    seed_context_window(&mut data);
     let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{}.json", data.id)) });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
@@ -251,6 +284,7 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
             data.provider_name = selection.map(|(_, name)| name);
             data.model = model;
             if let Some(usage) = data.usage.as_mut() { usage.context = AiContextUsage::default(); }
+            seed_context_window(&mut data);
             touch(&mut data);
             if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
         }
@@ -277,14 +311,15 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
     let messages = prefill_history_messages(provider, resume_id, first.total.max(0) as usize)?;
     // 历史预填里可能带 TodoWrite 摘要：据此还原底部清单（agents 不回填，历史子代理已结束）。
     let todos = todos_from_messages(&messages);
-    let data = AiSession { id: id.clone(), title, provider: provider.to_string(),
+    let mut data = AiSession { id: id.clone(), title, provider: provider.to_string(),
         provider_id, provider_name: selection.map(|(_, name)| name),
         project_path: first.project_dir, model,
         status: "idle".into(), messages, approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
-        updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0,
+        created_at: chrono::Utc::now().timestamp_millis(), updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0,
         owner: owner.into(), thread_id: Some(resume_id.to_string()), request_ids: Vec::new(), pending_inputs: Vec::new(),
-        slash_catalog: None, todos, agents: Vec::new(), thinking: None };
+        slash_catalog: None, todos, agents: Vec::new(), thinking: None, compactions: 0, desktop_open: false };
+    seed_context_window(&mut data);
     let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
@@ -421,6 +456,8 @@ pub fn stop(id: &str, owner: &str) -> Result<()> {
             data.status = "stopping".into();
             // 子代理随进程一起被杀：就地置终态，避免界面上残留「执行中」。
             settle_agents(data, "stopped");
+            // 中断也算本轮收尾：状态栏不必等 result 事件才能显示速度。
+            usage::end_turn(data);
         });
     }
     Ok(())
@@ -1940,6 +1977,7 @@ impl ClaudeAgents {
             }
             data.agents.push(AiAgent {
                 task_id, tool_use_id, name, description,
+                model: text_field(value, "model"),
                 status: "running".into(), task_type: text_field(value, "task_type"),
                 background, parent_task_id, depth,
                 started_at: now, ended_at: None, summary: None, duration_ms: None, tool_uses: None,
@@ -1992,6 +2030,7 @@ impl ClaudeAgents {
                     .or_else(|| summary.clone()).unwrap_or_else(|| "subagent".into());
                 data.agents.push(AiAgent {
                     task_id, tool_use_id, name, description: summary.clone(), status: status.into(),
+                    model: text_field(value, "model"),
                     task_type: text_field(value, "task_type"),
                     background: false, parent_task_id: None, depth: 1,
                     started_at: now.saturating_sub(duration_ms.unwrap_or(0)), ended_at: Some(now),
@@ -2031,6 +2070,7 @@ impl ClaudeAgents {
             Some(AiAgent {
                 task_id, tool_use_id,
                 description: text_field(task, "description"), name,
+                model: text_field(task, "model"),
                 status, task_type: text_field(task, "task_type"), background: task["is_backgrounded"] == true || task["awaited"] != true,
                 parent_task_id: text_field(task, "parent_task_id"),
                 depth: task["spawn_depth"].as_u64().map(|depth| depth as u32).unwrap_or(1),
@@ -3983,10 +4023,10 @@ mod todo_agent_tests {
     fn settle_agents_only_closes_running_entries() {
         let mut data = cell().data.lock().map(|guard| guard.clone()).unwrap();
         data.agents = vec![
-            AiAgent { task_id: "a".into(), tool_use_id: None, name: "A".into(), description: None,
+            AiAgent { task_id: "a".into(), tool_use_id: None, name: "A".into(), description: None, model: None,
                 status: "running".into(), task_type: None, background: false, parent_task_id: None, depth: 1,
                 started_at: 0, ended_at: None, summary: None, duration_ms: None, tool_uses: None },
-            AiAgent { task_id: "b".into(), tool_use_id: None, name: "B".into(), description: None,
+            AiAgent { task_id: "b".into(), tool_use_id: None, name: "B".into(), description: None, model: None,
                 status: "completed".into(), task_type: None, background: false, parent_task_id: None, depth: 1,
                 started_at: 0, ended_at: Some(5), summary: None, duration_ms: Some(5), tool_uses: None },
         ];
