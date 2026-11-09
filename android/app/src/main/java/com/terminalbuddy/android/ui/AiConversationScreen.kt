@@ -1,5 +1,8 @@
 package com.terminalbuddy.android.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
@@ -207,7 +210,7 @@ private fun AiConversation(
                     items(entries, key = { it.id }) { entry ->
                         when (entry) {
                             is AiConversationEntry.Message -> AiMessageBubble(entry.message, session.providerLabel,
-                                sending = ui.sending && entry.message.id.startsWith("local-"))
+                                sending = ui.sending && entry.message.id.startsWith("local-"), imageUrl = vm::imageUrl)
                             is AiConversationEntry.Tools -> AiToolGroup(entry.messages, Modifier) { scroll.following = false }
                         }
                     }
@@ -351,11 +354,16 @@ private fun AiQueuedMessages(
 private fun AiComposer(
     ui: AiUiState, session: AiSession, vm: AiViewModel, send: () -> Unit, stop: () -> Unit, draft: (String) -> Unit,
 ) {
-    // 回复中输入了草稿就显示发送（按发送方式排队等待或原生插话）；空白才显示中断。
-    val showStop = session.running && ui.draft.isBlank()
-    val actionEnabled = if (showStop) !ui.working && session.status != "stopping" else session.canSend && ui.draft.isNotBlank() && !ui.sending && !ui.loadingSession
+    // 回复中输入了草稿或图片就显示发送（按发送方式排队等待或原生插话）；两者都空才显示中断。
+    val hasInput = ui.draft.isNotBlank() || ui.attachments.isNotEmpty()
+    val showStop = session.running && !hasInput
+    val actionEnabled = if (showStop) !ui.working && session.status != "stopping"
+        else session.canSend && hasInput && !ui.sending && !ui.loadingSession
     // `/` 补全：候选由服务端 system/init 清单驱动，移动端不硬编码命令名。
     val slashItems = remember(ui.draft, session.slashCatalog, session.provider) { vm.slashItems(ui.draft) }
+    val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        vm.addImages(uris)
+    }
     AiMessageComposer(
         value = ui.draft, onValueChange = draft,
         placeholder = "给 ${session.providerLabel} 发消息…", enabled = !ui.loadingSession,
@@ -369,6 +377,11 @@ private fun AiComposer(
         },
         showStop = showStop,
         slashItems = slashItems, onPickSlash = { draft("/$it ") },
+        attachments = ui.attachments,
+        onPickImages = {
+            pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        },
+        onRemoveImage = vm::removeAttachment,
     )
 }
 
@@ -425,6 +438,8 @@ internal fun AiMessageComposer(
     enabled: Boolean, actionEnabled: Boolean, onAction: () -> Unit, actionLabel: String,
     showStop: Boolean = false,
     slashItems: List<AiSlashItem> = emptyList(), onPickSlash: (String) -> Unit = {},
+    attachments: List<AiDraftImage> = emptyList(),
+    onPickImages: (() -> Unit)? = null, onRemoveImage: (String) -> Unit = {},
 ) {
     Surface(color = TbColors.Surface) {
         Box(
@@ -433,6 +448,27 @@ internal fun AiMessageComposer(
         ) {
             Column(Modifier.widthIn(max = 760.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 AiSlashSuggestions(slashItems, onPickSlash)
+                // 与 ZCode 一致的附件区：选择后的图片缩略图排在输入框上方，可逐张移除。
+                if (attachments.isNotEmpty()) {
+                    androidx.compose.foundation.lazy.LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.semantics { contentDescription = "待发送图片" },
+                    ) {
+                        items(attachments, key = { it.id }) { image ->
+                            Box(Modifier.size(64.dp)) {
+                                AiImageThumb(image.dataUrl, Modifier.fillMaxSize())
+                                IconButton(
+                                    { onRemoveImage(image.id) },
+                                    modifier = Modifier.align(Alignment.TopEnd).size(24.dp),
+                                ) {
+                                    Surface(Modifier.size(18.dp), color = Color.Black.copy(alpha = .55f), shape = CircleShape) {
+                                        Icon(Icons.Outlined.Close, "移除图片", Modifier.size(12.dp), tint = Color.White)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 Surface(
                     Modifier.fillMaxWidth(), color = TbColors.CanvasSoft,
                     border = BorderStroke(1.dp, TbColors.Border), shape = RoundedCornerShape(14.dp),
@@ -458,6 +494,15 @@ internal fun AiMessageComposer(
                                 }
                             },
                         )
+                        // 图片按钮紧贴发送按钮，点开系统相册多选；图片随消息以 base64 提交。
+                        onPickImages?.let { pick ->
+                            IconButton(pick, enabled = enabled, modifier = Modifier.size(40.dp)) {
+                                Icon(
+                                    Icons.Outlined.Image, "添加图片", Modifier.size(20.dp),
+                                    tint = if (enabled) TbColors.TextMuted else TbColors.TextMuted.copy(alpha = .4f),
+                                )
+                            }
+                        }
                         IconButton(
                             onAction, enabled = actionEnabled, modifier = Modifier.size(48.dp)
                                 .semantics { contentDescription = actionLabel },
@@ -488,6 +533,7 @@ private val AiAvatarSize = 28.dp
 @Composable
 internal fun AiMessageBubble(
     message: AiAnimatedMessage, provider: String, modifier: Modifier = Modifier, sending: Boolean = false,
+    imageUrl: (String) -> String = { it },
 ) {
     val mine = message.role == "user"
     val entrance by animateFloatAsState(
@@ -512,11 +558,24 @@ internal fun AiMessageBubble(
                 color = TbColors.Accent.copy(alpha = .14f),
                 shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomEnd = 3.dp, bottomStart = 12.dp),
             ) {
-                SelectionContainer {
-                    Text(
-                        message.text, Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
-                    )
+                Column(
+                    Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    // 图片在文字上方：本地占位是 data: URL，服务端确认后换成落盘路径。
+                    if (message.images.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            message.images.forEach { image ->
+                                AiImageThumb(imageUrl(image.path), Modifier.size(160.dp))
+                            }
+                        }
+                    }
+                    if (message.text.isNotEmpty()) SelectionContainer {
+                        Text(
+                            message.text,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
+                        )
+                    }
                 }
             }
         }

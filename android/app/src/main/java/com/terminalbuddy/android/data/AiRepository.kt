@@ -308,13 +308,26 @@ class AiRepository(context: Context) {
         )
 
     /** requestId 由调用方生成并持久化在内存里；失败重试复用同一个值，服务端据此去重。
-     *  steer 为「原生插话」：回复进行中发送时，服务端把消息直接交给当前 CLI 进程。 */
-    suspend fun send(id: String, text: String, requestId: String, steer: Boolean = false): AiSession =
+     *  steer 为「原生插话」：回复进行中发送时，服务端把消息直接交给当前 CLI 进程。
+     *  images 为 base64 图片：服务端校验、落盘后随消息交给多模态模型。 */
+    suspend fun send(
+        id: String, text: String, requestId: String, steer: Boolean = false,
+        images: List<AiSendImage> = emptyList(),
+    ): AiSession =
         ApiJson.decodeFromJsonElement(
             request("POST", listOf("ai", "sessions", id, "messages"), jsonBody {
                 put("text", text)
                 put("requestId", requestId)
                 if (steer) put("steer", true)
+                if (images.isNotEmpty()) put("images", buildJsonArray {
+                    images.forEach { image ->
+                        addJsonObject {
+                            put("data", image.data)
+                            put("mediaType", image.mediaType)
+                            put("name", image.name)
+                        }
+                    }
+                })
             })
         )
 

@@ -8,14 +8,39 @@ import kotlinx.serialization.json.JsonObject
  * 字段全部为 camelCase；服务端不返回内部线程、账户归属和请求去重信息。
  */
 @Serializable
-data class AiMessage(val id: String, val role: String, val text: String, val createdAt: Long = 0)
+data class AiMessage(
+    val id: String, val role: String, val text: String, val createdAt: Long = 0,
+    /** 用户消息附带的图片：服务端落盘后只返回路径与元数据。 */
+    val images: List<AiChatImage> = emptyList(),
+)
+
+/** 服务端已落盘的聊天图片；本地待发送预览用 `data:` URL 装在 path 里。 */
+@Serializable
+data class AiChatImage(
+    val path: String = "",
+    val mediaType: String = "image/png",
+    val name: String = "",
+)
+
+/** 发送给服务端的图片：base64 正文，服务端校验后落盘并转换为 [AiChatImage]。 */
+@Serializable
+data class AiSendImage(val data: String, val mediaType: String, val name: String)
+
+/** 输入框上方待发送的图片：dataUrl 用于即时预览，data 是交给服务端的 base64。 */
+data class AiDraftImage(
+    val id: String, val dataUrl: String, val data: String, val mediaType: String, val name: String,
+)
 
 @Serializable
 data class AiApproval(val id: String, val method: String, val details: JsonObject = JsonObject(emptyMap()))
 
 /** 回合进行中排队的消息：当前回合结束后按序自动发送。 */
 @Serializable
-data class AiPendingInput(val text: String = "", val requestId: String = "")
+data class AiPendingInput(
+    val text: String = "", val requestId: String = "",
+    /** 排队期间保留图片附件，出队时与文本一起交给 CLI。 */
+    val images: List<AiChatImage> = emptyList(),
+)
 
 /** `/` 补全清单，来自 CLI 的 `system/init`；Codex 没有该机制，字段为 null。 */
 @Serializable

@@ -4,8 +4,11 @@ import android.app.Application
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.OpenableColumns
+import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.terminalbuddy.android.data.*
@@ -37,6 +40,8 @@ data class AiUiState(
     val providers: List<AiProvider> = emptyList(),
     val projectPath: String = "", val providerId: String = "", val modelId: String = "",
     val selected: AiSession? = null, val draft: String = "", val sending: Boolean = false,
+    /** 输入框上方待发送的图片：与草稿一起在发送成功后清空。 */
+    val attachments: List<AiDraftImage> = emptyList(),
     val connected: Boolean = false, val working: Boolean = false, val error: String? = null,
     val answeringApprovalIds: Set<String> = emptySet(),
     val reconnecting: Boolean = false,
@@ -90,6 +95,11 @@ data class AiUiState(
 }
 
 class AiViewModel(application: Application) : AndroidViewModel(application) {
+    private companion object {
+        /** 与服务端保持一致的单条消息图片数量与体积上限。 */
+        const val MAX_ATTACHMENTS = 8
+        const val MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+    }
     private val repository = (application as TerminalBuddyApplication).aiRepository
     private val store = repository.store
     private val taskNotifications = (application as TerminalBuddyApplication).taskNotifications
@@ -130,10 +140,12 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private var slashFallback: Pair<String, AiSlashCatalog?>? = null
     private data class OutgoingMessage(
         val sessionId: String, val message: AiMessage, val draft: String, val queued: Boolean,
+        /** 发送失败/取消时放回输入框上方的图片。 */
+        val attachments: List<AiDraftImage> = emptyList(),
     ) {
         val requestId get() = message.id.removePrefix("local-")
         fun display(session: AiSession): AiSession = if (queued) {
-            session.copy(pendingInputs = session.pendingInputs + AiPendingInput(message.text, message.id))
+            session.copy(pendingInputs = session.pendingInputs + AiPendingInput(message.text, message.id, message.images))
         } else session.copy(messages = session.messages + message)
     }
     /** 未确认消息按发送时的任务状态展示在队列或正文，实时快照不会覆盖占位。 */
@@ -954,7 +966,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update {
             it.copy(
                 selected = initial, loading = false, loadingSession = cached == null,
-                draft = drafts[id].orEmpty(), sending = false, working = false, error = null,
+                draft = drafts[id].orEmpty(), attachments = emptyList(), sending = false, working = false, error = null,
             )
         }
         selectJob = viewModelScope.launch restoreCache@{
@@ -975,7 +987,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         selectJob?.cancel(); cancelSend(); stopRealtime(); repository.lastSession = ""
         pending = null
         mutable.update {
-            it.copy(selected = null, draft = "", loadingSession = false, sending = false, working = false, error = null)
+            it.copy(selected = null, draft = "", attachments = emptyList(), loadingSession = false, sending = false, working = false, error = null)
         }
         refresh()
     }
@@ -1007,7 +1019,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update {
             it.copy(
                 selected = session, loading = false, loadingSession = false,
-                draft = "", sending = false, working = false, connected = false,
+                draft = "", attachments = emptyList(), sending = false, working = false, connected = false,
                 reconnecting = false, error = null,
             )
         }
@@ -1017,6 +1029,56 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.value.selected?.id?.let { drafts[it] = text }
         mutable.update { it.copy(draft = text) }
     }
+
+    /** 从系统相册 / 文件选择器添加图片：读取为 base64 并生成即时预览。 */
+    fun addImages(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val room = (MAX_ATTACHMENTS - mutable.value.attachments.size).coerceAtLeast(0)
+        if (room == 0) {
+            mutable.update { it.copy(error = "一次最多发送 $MAX_ATTACHMENTS 张图片") }
+            return
+        }
+        if (uris.size > room) mutable.update { it.copy(error = "一次最多发送 $MAX_ATTACHMENTS 张图片") }
+        val selected = uris.take(room)
+        viewModelScope.launch {
+            val images = withContext(Dispatchers.IO) {
+                selected.mapNotNull { uri -> runCatching { readDraftImage(uri) }.getOrNull() }
+            }
+            if (images.isEmpty()) {
+                mutable.update { it.copy(error = "图片读取失败，请选择 10MB 以内的 PNG / JPEG / GIF / WebP 图片") }
+                return@launch
+            }
+            mutable.update { current ->
+                current.copy(attachments = (current.attachments + images).take(MAX_ATTACHMENTS))
+            }
+        }
+    }
+
+    fun removeAttachment(id: String) {
+        mutable.update { it.copy(attachments = it.attachments.filterNot { image -> image.id == id }) }
+    }
+
+    private fun readDraftImage(uri: Uri): AiDraftImage {
+        val resolver = getApplication<Application>().contentResolver
+        val mediaType = resolver.getType(uri)?.lowercase()
+            ?.takeIf { it.startsWith("image/") }
+            ?: throw IllegalArgumentException("仅支持图片文件")
+        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw IllegalArgumentException("无法读取图片")
+        if (bytes.isEmpty() || bytes.size > MAX_ATTACHMENT_BYTES) throw IllegalArgumentException("图片超过 10MB")
+        val data = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        val name = runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull() ?: "图片"
+        return AiDraftImage(UUID.randomUUID().toString(), "data:$mediaType;base64,$data", data, mediaType, name)
+    }
+
+    /** 服务端图片预览地址：本地 data: URL 直接返回，落盘附件走带 JWT 的只读文件接口。 */
+    fun imageUrl(path: String): String =
+        if (path.startsWith("data:")) path
+        else ServerAddress.endpoint(store.server, listOf("desktop", "file"), mapOf("path" to path, "token" to store.token)).toString()
 
     /**
      * `/` 补全候选：优先使用会话自身的 `system/init` 清单；
@@ -1058,6 +1120,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     pendingInputs = selected.pendingInputs.filterNot { it.requestId == message.message.id },
                 ),
                 draft = restored,
+                // 失败/取消时把待发送图片放回输入框上方；成功确认时当前列表已为空。
+                attachments = if (restoreDraft && current.attachments.isEmpty()) message.attachments else current.attachments,
             )
         }
     }
@@ -1066,24 +1130,34 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val ui = mutable.value
         val session = ui.selected ?: return
         val text = ui.draft.trim()
-        if (text.isEmpty() || !session.canSend || ui.sending || ui.loadingSession || sendJob?.isActive == true) return
+        val attachments = ui.attachments
+        if ((text.isEmpty() && attachments.isEmpty()) || !session.canSend || ui.sending || ui.loadingSession || sendJob?.isActive == true) return
         val launch = if (pending?.id == session.id) {
             val project = ui.launchProject ?: return
             val provider = ui.launchProvider ?: return
             val model = ui.launchModel ?: return
             Triple(project, provider, model)
         } else null
-        val request = requests[session.id]?.takeIf { it.first == text }
-            ?: (text to UUID.randomUUID().toString()).also { requests[session.id] = it }
+        // 文本 + 图片共同构成幂等键：只改图片时不能复用旧的 requestId。
+        val signature = text + "\u0000" + attachments.joinToString("\u0000") { it.id }
+        val request = requests[session.id]?.takeIf { it.first == signature }
+            ?: (signature to UUID.randomUUID().toString()).also { requests[session.id] = it }
         val message = OutgoingMessage(
-            session.id, AiMessage("local-${request.second}", "user", text, System.currentTimeMillis()), ui.draft,
+            session.id,
+            AiMessage(
+                "local-${request.second}", "user", text, System.currentTimeMillis(),
+                // 本地占位用 dataUrl 直接预览；服务端确认后会被落盘路径替换。
+                images = attachments.map { AiChatImage(it.dataUrl, it.mediaType, it.name) },
+            ),
+            ui.draft,
             queued = session.running || session.pendingInputs.isNotEmpty(),
+            attachments = attachments,
         )
         outgoing = message
         drafts[session.id] = ""
         // 任务未结束时只在下方队列显示，发送确认后即可继续添加下一条。
         mutable.update {
-            it.copy(selected = message.display(session), draft = "", sending = true, error = null)
+            it.copy(selected = message.display(session), draft = "", attachments = emptyList(), sending = true, error = null)
         }
         val notificationAccountId = repository.accounts.activeId
         notificationAccountId?.let { taskNotifications.expectTask(it, session) }
@@ -1113,7 +1187,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 repository.accounts.activeId?.let { taskNotifications.expectTask(it, target) }
                 startRealtime()
                 // 回复进行中：排队模式等当前回合任务完成后由服务端续发；插话模式直接交给当前 CLI 进程。
-                val result = repository.send(target.id, text, request.second, ui.sendSteer)
+                val result = repository.send(
+                    target.id, text, request.second, ui.sendSteer,
+                    attachments.map { AiSendImage(it.data, it.mediaType, it.name) },
+                )
                 if (epoch != generation || mutable.value.selected?.id != target.id) return@launch
                 requests.remove(target.id)
                 // 幂等重试可能返回历史消息；成功响应本身即可确认，不能只按新增消息判断。

@@ -30,11 +30,15 @@ internal class AiAnimatedMessage(message: AiMessage, animate: Boolean) {
     private var targetText by mutableStateOf(message.text)
     var entered by mutableStateOf(!animate)
     val isRevealing get() = text.length < targetText.length
+    /** 用户消息附带的图片：本地占位是 data: URL，服务端确认后替换为落盘路径。 */
+    var images by mutableStateOf(message.images)
+        private set
 
     fun update(message: AiMessage, animate: Boolean) {
         // 服务端替换整段文本或缩短回复时必须立即对齐，不能装作还在增长。
         if (!animate || role != "assistant" || !message.text.startsWith(text)) text = message.text
         targetText = message.text
+        images = message.images
     }
 
     fun revealNext() {
