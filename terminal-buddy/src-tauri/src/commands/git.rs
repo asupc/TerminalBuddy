@@ -19,8 +19,6 @@ use std::time::{Duration, Instant};
 use crate::runtime::{Emitter};
 
 #[cfg(windows)]
-use std::os::windows::io::AsRawHandle;
-#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 #[cfg(windows)]
@@ -252,99 +250,13 @@ struct GitRunOutput {
     combined: String,
 }
 
-/// git 子进程树的生命周期控制。
+/// git 子进程树的生命周期控制（实现见 `services::process_tree`，与 AI CLI 共用）。
 ///
 /// git 会派生 ssh / git-remote-https / credential helper 等后代进程，它们继承了
 /// stdout/stderr 管道写端：只 kill 直接子进程，管道不会关闭，reader 线程就永远读不到
 /// EOF。此前用 `taskkill /PID <pid> /T /F` 按 PID 杀树，而 PID 在子进程退出后会被系统
 /// 复用——父进程先退出时 `/T` 会沿着已复用的 PID 找错对象，可能杀掉无关进程。
-///
-/// Windows 改用 Job Object：spawn 后立刻把子进程加入 job，`TerminateJobObject` 一次性
-/// 结束整棵树，`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 保证 Drop 关闭句柄时残留后代也被
-/// 回收（管道随之关闭，detach 的 reader 线程能退出）。已知固有窗口：spawn 到
-/// AssignProcessToJobObject 之间派生的后代会逃出 job；消除它需要 CREATE_SUSPENDED +
-/// 恢复主线程的额外机制，这里按可接受的残余风险处理。
-struct GitProcessTree {
-    #[cfg(windows)]
-    job: Option<windows::Win32::Foundation::HANDLE>,
-}
-
-impl GitProcessTree {
-    /// spawn 之后立即调用。失败（老系统、权限受限）时退化为 `child.kill()`。
-    fn attach(child: &std::process::Child) -> Self {
-        #[cfg(windows)]
-        {
-            use windows::Win32::System::JobObjects::{
-                AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
-                JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            };
-
-            let job = unsafe { CreateJobObjectW(None, None) }.ok();
-            let Some(job) = job else {
-                return Self { job: None };
-            };
-
-            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            let configured = unsafe {
-                SetInformationJobObject(
-                    job,
-                    JobObjectExtendedLimitInformation,
-                    &info as *const _ as *const std::ffi::c_void,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                )
-            }
-            .is_ok();
-            // Windows 8 起支持嵌套 job，子进程已在别的 job 里也能加入成功。
-            let assigned = unsafe {
-                AssignProcessToJobObject(
-                    job,
-                    windows::Win32::Foundation::HANDLE(child.as_raw_handle()),
-                )
-            }
-            .is_ok();
-
-            if configured && assigned {
-                Self { job: Some(job) }
-            } else {
-                unsafe {
-                    let _ = windows::Win32::Foundation::CloseHandle(job);
-                }
-                Self { job: None }
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = child;
-            Self {}
-        }
-    }
-
-    /// 终止整棵进程树。
-    fn terminate(&self, child: &mut std::process::Child) {
-        #[cfg(windows)]
-        if let Some(job) = self.job {
-            use windows::Win32::System::JobObjects::TerminateJobObject;
-            if unsafe { TerminateJobObject(job, 1) }.is_ok() {
-                return;
-            }
-        }
-        let _ = child.kill();
-    }
-}
-
-impl Drop for GitProcessTree {
-    fn drop(&mut self) {
-        #[cfg(windows)]
-        if let Some(job) = self.job.take() {
-            // KILL_ON_JOB_CLOSE：最后一个句柄关闭即回收所有仍存活的后代。
-            unsafe {
-                let _ = windows::Win32::Foundation::CloseHandle(job);
-            }
-        }
-    }
-}
+type GitProcessTree = crate::services::process_tree::ProcessTree;
 
 /// 进程输出块：stdout/stderr 共用一条通道，保留跨流到达序（push 流式展示依赖此顺序）。
 enum GitChunk {
@@ -453,7 +365,7 @@ fn run_git_process(
     cmd.creation_flags(CREATE_NO_WINDOW);
 
     let mut child = cmd.spawn().map_err(|e| format!("无法运行 git：{}", e))?;
-    let process_tree = GitProcessTree::attach(&child);
+    let mut process_tree = GitProcessTree::attach(&child);
     let (tx, rx) = mpsc::channel::<GitChunk>();
     if let Some(stdout) = child.stdout.take() {
         spawn_git_output_reader(stdout, tx.clone(), GitChunk::Stdout);

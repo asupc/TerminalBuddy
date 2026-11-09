@@ -5,7 +5,7 @@ use crate::models::ai_chat::*;
 use crate::runtime::Emitter;
 use super::{ai_chat_approval::{self as approval, ClaudeApproval}, ai_chat_usage as usage};
 use super::ai_chat_claude_hooks::{NativeClaudeHooks, NativeHookEvent};
-use super::{atomic_file::atomic_write_private, terminal_task_service::SessionSummaryTracker, PathService};
+use super::{atomic_file::atomic_write_private, process_tree::ProcessTree, terminal_task_service::SessionSummaryTracker, PathService};
 use base64::Engine;
 use serde::Deserialize as _;
 use serde_json::{json, Value};
@@ -323,7 +323,9 @@ fn prefill_history_messages(provider: &str, session_id: &str, total: usize) -> R
             offset += 1; advanced = true;
             if !matches!(item.role.as_str(), "user" | "assistant" | "tool") { continue; }
             if !item.text.trim().is_empty() {
-                messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role.clone(), text: item.text.clone(), created_at: item.timestamp.unwrap_or(0), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new(), todo: false });
+                // Skill 展开在历史里已被解析成 `skill_name`：沿用该标记，恢复后渲染成
+                // 可折叠的 skill 卡片，而不是把整段技能原文当成用户发送的消息。
+                messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role.clone(), text: item.text.clone(), created_at: item.timestamp.unwrap_or(0), skill_name: item.skill_name.clone(), model_switch: None, subagent_key: None, subagent: None, images: Vec::new(), todo: false });
             }
             // 任务类工具的入参在历史里以工具摘要形式保留：单独成条并打标记供回填清单。
             for (index, tool) in item.tools.iter().enumerate() {
@@ -347,7 +349,7 @@ fn history_messages(session_id: &str, history: &crate::models::session_history::
         if !message.text.trim().is_empty() {
             result.push(AiMessage { id: format!("history-{session_id}-{}", message.seq), role: message.role.clone(),
                 text: message.text.clone(), created_at: message.timestamp.unwrap_or(history.updated_at),
-                skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new(), todo: false });
+                skill_name: message.skill_name.clone(), model_switch: None, subagent_key: None, subagent: None, images: Vec::new(), todo: false });
         }
         // 每个工具单独成一条 `工具名\n入参摘要`：任务类工具据此打标记并回填清单，
         // 与实时链路的正文格式完全一致（此前 join 进同一条消息会让回填无从识别）。
@@ -1130,14 +1132,25 @@ fn message_sub_quiet(cell: &Cell, key: &str, group: &str, text: &str, agent: &st
         touch(&mut data);
     }
 }
-struct Process(Child);
+/// 常驻 CLI 子进程 + 它的进程树。退出时整棵树一起回收：CLI 会派生 node / shell /
+/// 子代理等后代，只杀直接子进程会留下孤儿。Windows 走 Job Object（不再 spawn
+/// `taskkill`：GUI 子系统下它会弹控制台并打报错，且 PID 复用后可能杀错进程），
+/// Unix 走进程组信号 + `child.kill()` 兜底。
+struct Process(Child, ProcessTree);
+impl Process {
+    fn spawn(command: &mut Command, provider: &str) -> Result<Self> {
+        let child = command.spawn()
+            .map_err(|e| format!("无法启动 {}，请确认服务端已安装并配置该 CLI：{e}", provider))?;
+        let tree = ProcessTree::attach(&child);
+        Ok(Self(child, tree))
+    }
+}
 impl Drop for Process {
     fn drop(&mut self) {
         #[cfg(unix)]
         { let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", self.0.id())]).stdout(Stdio::null()).stderr(Stdio::null()).status(); }
-        #[cfg(windows)]
-        { let _ = Command::new("taskkill").args(["/T", "/F", "/PID", &self.0.id().to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status(); }
-        let _ = self.0.kill(); let _ = self.0.wait();
+        self.1.terminate(&mut self.0);
+        let _ = self.0.wait();
     }
 }
 fn cli_command(provider: &str) -> Command {
@@ -1230,7 +1243,7 @@ fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control
         // 新旧对话均优先使用普通模式的标准提问工具；动态工具仅作补充。
         command.args(&permissions.codex_args).args(["-c", "features.default_mode_request_user_input=true"]).arg("app-server");
     }
-    let mut process = Process(command.spawn().map_err(|e| format!("无法启动 {}，请确认服务端已安装并配置该 CLI：{e}", session.provider))?);
+    let mut process = Process::spawn(&mut command, &session.provider)?;
     let mut stdin = process.0.stdin.take().ok_or("AI 输入通道不可用")?;
     let stdout = process.0.stdout.take().ok_or("AI 输出通道不可用")?;
     let stderr = process.0.stderr.take().ok_or("AI 错误通道不可用")?;

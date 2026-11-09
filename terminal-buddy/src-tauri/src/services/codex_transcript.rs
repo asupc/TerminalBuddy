@@ -191,6 +191,7 @@ pub(super) fn parse(content: &str) -> CodexTranscript {
             text: String::new(),
             tools: Vec::new(),
             tool_name: None,
+            skill_name: None,
         };
         if kind == "response_item" || kind == "message" {
             match payload_kind {

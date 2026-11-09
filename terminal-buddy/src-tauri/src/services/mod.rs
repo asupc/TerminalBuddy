@@ -37,6 +37,7 @@ pub mod handoff_server;
 pub mod llm_provider_service;
 pub mod path_service;
 pub mod platform_service;
+pub(crate) mod process_tree;
 pub mod profile_service;
 pub mod settings_service;
 pub mod ssh_session_service;

@@ -2363,6 +2363,7 @@ mod tests {
             text: text.to_string(),
             tools: Vec::new(),
             tool_name: None,
+            skill_name: None,
         }
     }
 
@@ -2473,6 +2474,7 @@ mod tests {
             text: "内容".to_string(),
             tools: vec![SessionReplayTool { name: "Bash".to_string(), summary: "ls".to_string() }],
             tool_name: None,
+            skill_name: None,
         }]);
         let changed_timestamp = vec![SessionReplayMessage {
             seq: 0,
@@ -2481,6 +2483,7 @@ mod tests {
             text: "内容".to_string(),
             tools: vec![SessionReplayTool { name: "Bash".to_string(), summary: "ls".to_string() }],
             tool_name: None,
+            skill_name: None,
         }];
         assert_eq!(diff_content(&old, &changed_timestamp, 1, false), ContentDiff::Rotated);
         let changed_tools = vec![SessionReplayMessage {
@@ -2490,6 +2493,7 @@ mod tests {
             text: "内容".to_string(),
             tools: vec![SessionReplayTool { name: "Bash".to_string(), summary: "pwd".to_string() }],
             tool_name: None,
+            skill_name: None,
         }];
         assert_eq!(diff_content(&old, &changed_tools, 1, false), ContentDiff::Rotated);
         let changed_tool_name = vec![SessionReplayMessage {
@@ -2499,6 +2503,7 @@ mod tests {
             text: "内容".to_string(),
             tools: Vec::new(),
             tool_name: Some("Read".to_string()),
+            skill_name: None,
         }];
         assert_eq!(diff_content(&old, &changed_tool_name, 1, false), ContentDiff::Rotated);
         // total 变小 → rotated。

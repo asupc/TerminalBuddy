@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::models::AgentDownloadSource;
+use crate::services::process_tree::ProcessTree;
 use crate::services::SettingsService;
 use crate::services::cli_update_service::{check_update, compare_versions, refresh_update_state, CliUpdate};
 
@@ -208,32 +209,30 @@ fn version_command(path: &Path) -> Command {
     }
 }
 
-fn stop_process(child: &mut Child) {
+fn stop_process(child: &mut Child, tree: &mut ProcessTree) {
     // 官方安装器会启动 curl 等子进程，超时或服务退出不能留下孤儿下载任务。
+    // Unix 额外按进程组发一次信号，Windows 由 job 句柄一次性结束整棵树
+    // （不再 spawn `taskkill`：GUI 子系统下会弹控制台并打报错）。
     #[cfg(unix)]
     let _ = Command::new("bash")
         .args(["-c", "kill -KILL -- -\"$1\"", "cli-install", &child.id().to_string()])
         .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
-    #[cfg(windows)]
-    let _ = Command::new("taskkill")
-        .args(["/T", "/F", "/PID", &child.id().to_string()])
-        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
-    let _ = child.kill();
+    tree.terminate(child);
     let _ = child.wait();
 }
 
-fn wait_for_child(child: &mut Child, timeout: Duration) -> Result<(), String> {
+fn wait_for_child(child: &mut Child, tree: &mut ProcessTree, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(_)) => return Ok(()),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
             Ok(None) => {
-                stop_process(child);
+                stop_process(child, tree);
                 return Err("操作超时，请检查网络后重试".into());
             }
             Err(error) => {
-                stop_process(child);
+                stop_process(child, tree);
                 return Err(format!("读取安装进程状态失败：{error}"));
             }
         }
@@ -401,7 +400,8 @@ fn detect_candidates(tool: CliTool, candidates: Vec<PathBuf>) -> Option<String> 
         let mut command = version_command(&path);
         prepare_command(&mut command);
         let Ok(mut child) = command.stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { continue; };
-        if wait_for_child(&mut child, Duration::from_secs(5)).is_err() { continue; }
+        let mut tree = ProcessTree::attach(&child);
+        if wait_for_child(&mut child, &mut tree, Duration::from_secs(5)).is_err() { continue; }
         if let Ok(output) = child.wait_with_output() {
             if let Some(version) = version_from_output(tool, &output) {
                 return Some(version);
@@ -617,7 +617,8 @@ fn run_logged(name: &str, command: &mut Command, log: &Path, timeout: Duration) 
     prepare_command(command);
     command.stdout(file.try_clone().map_err(|error| error.to_string())?).stderr(file);
     let mut child = command.spawn().map_err(|error| format!("无法启动安装程序：{error}"))?;
-    let waited = wait_for_child(&mut child, timeout);
+    let mut tree = ProcessTree::attach(&child);
+    let waited = wait_for_child(&mut child, &mut tree, timeout);
     let status = child.wait().map_err(|error| error.to_string())?;
     if let Err(error) = waited {
         return Err(install_failure(name, &error, log));
@@ -953,7 +954,8 @@ mod tests {
             let mut command = Command::new("sh");
             prepare_command(&mut command);
             let mut child = command.args(["-c", "sleep 30"]).spawn().unwrap();
-            assert!(wait_for_child(&mut child, Duration::from_millis(50)).is_err());
+            let mut tree = ProcessTree::attach(&child);
+            assert!(wait_for_child(&mut child, &mut tree, Duration::from_millis(50)).is_err());
             assert!(child.try_wait().unwrap().is_some());
         }
     }

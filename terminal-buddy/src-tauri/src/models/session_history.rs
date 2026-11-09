@@ -51,6 +51,12 @@ pub struct SessionReplayMessage {
     pub tools: Vec<SessionReplayTool>,
     /// tool 结果对应的工具名（多个用「、」连接）
     pub tool_name: Option<String>,
+    /// Skill 展开条目：正文是 Skill 全文，值为技能名（如 `code-review`）。
+    /// 与实时链路 `AiMessage::skill_name` 同义，用于把展开正文渲染成可折叠卡片，
+    /// 而不是误当成用户发出的消息。普通消息为 None。
+    /// `#[serde(default)]` 保证旧客户端与旧落盘数据的兼容。
+    #[serde(default)]
+    pub skill_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

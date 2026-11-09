@@ -104,6 +104,18 @@ pub(super) fn invalidate_context(data: &mut AiSession) {
     context.updating = true;
 }
 
+/// 写入上下文占用。0 不是有效的上下文占用量：部分供应商 / 代理会在流式的
+/// `message_start` 先报 `input_tokens: 0`（真实输入要到 `message_delta`
+/// 或完整消息才出现），直接写入会让界面在回复过程中闪成 0%。
+/// 遇到 0 时保留上一次的已知值并继续标记待更新。
+fn store_context_used(context: &mut AiContextUsage, used: Option<u64>, basis: &str, source: &str) {
+    let Some(used) = used.filter(|n| *n > 0) else { return; };
+    context.used_tokens = Some(used);
+    context.basis = basis.into();
+    context.used_source = Some(source.into());
+    context.updating = false;
+}
+
 fn claude_tokens(value: &Value) -> AiTokenUsage {
     let fresh = number(value, &["input_tokens", "inputTokens"]);
     let cached = number(value, &["cache_read_input_tokens", "cacheReadInputTokens"]);
@@ -208,13 +220,8 @@ impl ClaudeUsageTracker {
         if main && !self.compacted {
             if self.latest_main.as_deref() == Some(id.as_str()) {
                 if let Some(model) = model.filter(|model| !model.is_empty()) { self.main_model = Some(model.into()); }
-                if let Some(input) = record.input_tokens {
-                    let context = &mut ensure(data).context;
-                    context.used_tokens = Some(input);
-                    context.basis = "input".into();
-                    context.used_source = Some("cliUsage".into());
-                    context.updating = false;
-                }
+                let context = &mut ensure(data).context;
+                store_context_used(context, record.input_tokens, "input", "cliUsage");
             }
         }
         let total = self.messages.values().fold(AiTokenUsage::default(), |sum, usage| sum.plus(usage));
@@ -307,12 +314,8 @@ impl CodexUsageTracker {
         let used = number(latest, &["totalTokens", "total_tokens"])
             .or_else(|| add(latest_tokens.input_tokens, latest_tokens.output_tokens));
         let context = &mut ensure(data).context;
-        if let Some(used) = used {
-            context.used_tokens = Some(used);
-            context.basis = "inputAndOutput".into();
-            context.used_source = Some("calculated".into());
-            context.updating = false;
-        }
+        // 空回合或恢复通知里的 0 不能覆盖已知上下文（同 Claude 侧，避免闪 0）。
+        store_context_used(context, used, "inputAndOutput", "calculated");
         if let Some(window) = number(reported, &["modelContextWindow", "model_context_window"]).filter(|n| *n > 0) {
             context.window_tokens = Some(window);
             context.window_source = Some("cli".into());
@@ -337,7 +340,7 @@ mod tests {
             status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
             updated_at: 0, revision: 1, result_revision: 0, usage: Some(initial()),
             usage_checkpoint: None, owner: "o".into(), thread_id: None, request_ids: Vec::new(),
-            pending_inputs: Vec::new(), slash_catalog: None,
+            pending_inputs: Vec::new(), slash_catalog: None, todos: Vec::new(), agents: Vec::new(),
         }
     }
 
@@ -372,6 +375,71 @@ mod tests {
         let context = &data.usage.as_ref().unwrap().context;
         assert_eq!(context.used_tokens, Some(120_000));
         assert!(context.updating);
+    }
+
+    /// 流式起步阶段代理先报 input_tokens: 0，不能把已知上下文冲成 0。
+    #[test]
+    fn claude_zero_input_keeps_known_context() {
+        let mut data = session();
+        {
+            let context = &mut data.usage.as_mut().unwrap().context;
+            context.used_tokens = Some(200_000);
+            context.updating = true;
+        }
+        let mut tracker = ClaudeUsageTracker::default();
+        tracker.observe(&mut data, &serde_json::json!({
+            "type": "stream_event",
+            "event": {
+                "type": "message_start",
+                "message": { "id": "msg-1", "model": "claude-test",
+                    "usage": { "input_tokens": 0, "output_tokens": 0 } }
+            }
+        }));
+        let context = &data.usage.as_ref().unwrap().context;
+        assert_eq!(context.used_tokens, Some(200_000), "0 不能覆盖已知上下文");
+        assert!(context.updating, "仍等待真实值，保持待更新标记");
+    }
+
+    /// 同一消息后续报告真实输入时，正常替换并结束待更新状态。
+    #[test]
+    fn claude_nonzero_input_replaces_context() {
+        let mut data = session();
+        let mut tracker = ClaudeUsageTracker::default();
+        let start = serde_json::json!({
+            "type": "stream_event",
+            "event": { "type": "message_start",
+                "message": { "id": "msg-2", "model": "claude-test",
+                    "usage": { "input_tokens": 0, "output_tokens": 0 } } }
+        });
+        tracker.observe(&mut data, &start);
+        tracker.observe(&mut data, &serde_json::json!({
+            "type": "assistant",
+            "message": { "id": "msg-2", "model": "claude-test",
+                "usage": { "input_tokens": 150_000, "output_tokens": 12 } }
+        }));
+        let context = &data.usage.as_ref().unwrap().context;
+        assert_eq!(context.used_tokens, Some(150_000));
+        assert!(!context.updating);
+    }
+
+    /// Codex 的 0 用量同样不能覆盖已知上下文。
+    #[test]
+    fn codex_zero_usage_keeps_known_context() {
+        let mut data = session();
+        {
+            let context = &mut data.usage.as_mut().unwrap().context;
+            context.used_tokens = Some(90_000);
+        }
+        let mut tracker = CodexUsageTracker::default();
+        tracker.observe(&mut data, &serde_json::json!({
+            "method": "thread/tokenUsage/updated",
+            "params": { "tokenUsage": {
+                "total": { "inputTokens": 0, "outputTokens": 0 },
+                "last": { "totalTokens": 0 }
+            } }
+        }));
+        let context = &data.usage.as_ref().unwrap().context;
+        assert_eq!(context.used_tokens, Some(90_000));
     }
 
     /// 未配置显式容量时，不要抹掉 CLI 已报告过的窗口大小。

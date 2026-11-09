@@ -33,7 +33,7 @@ const INDEX_BATCH_FILES: usize = 60;
 const INDEXED_EVENT: &str = "claude-history-indexed";
 /// 解析规则版本。改动标题/消息的解析口径就 +1：索引里存量行是旧规则算出来的，
 /// 而文件 mtime+size 没变就不会被增量判断捞出来，必须整体作废重建一次才生效。
-const ANALYZER_VERSION: i64 = 2;
+const ANALYZER_VERSION: i64 = 3;
 
 // ---------------------------------------------------------------------------
 // 对外数据结构
@@ -186,6 +186,74 @@ fn truncate_unicode(text: &str, max_chars: usize) -> String {
     result
 }
 
+// ---------------------------------------------------------------------------
+// Skill 展开识别（与实时链路 `ai_chat_service::expanded_skill` 同一口径）
+// ---------------------------------------------------------------------------
+
+/// Skill 展开正文的首行前缀：`Base directory for this skill: <技能目录>`。
+const SKILL_EXPANSION_PREFIX: &str = "Base directory for this skill:";
+
+/// `parent_tool_use_id` 的 Skill 前缀：CLI 把斜杠命令展开成串并写入转录时带这个标记。
+const SKILL_PARENT_PREFIX: &str = "forked-command-";
+
+/// 从命令展开文本里取 `<command-name>`：`/git-commit-helper` → `git-commit-helper`。
+fn command_name(text: &str) -> Option<String> {
+    let name = tagged_text(text, "command-name")?;
+    let name = name.trim_start_matches('/');
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// 本次 Skill 调用的名称：优先取同一回合里前一条斜杠命令，缺失时用技能目录名兜底。
+fn skill_name_before(lines: &[&str], line_index: usize, body: &str) -> String {
+    // 只回看最近若干行：命令与展开紧邻，过远的 `<command-name>` 属于更早的回合。
+    let start = line_index.saturating_sub(SKILL_LOOKBACK_LINES);
+    for line in lines[start..line_index].iter().rev() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else { continue; };
+        if value.get("type").and_then(Value::as_str) != Some("user") { continue; }
+        if let Some(name) = command_name(&extract_text(&value.get("message").and_then(|m| m.get("content")).unwrap_or(&Value::Null))) {
+            return name;
+        }
+    }
+    skill_directory_name(body).unwrap_or_else(|| "skill".to_string())
+}
+
+/// 从展开正文首行取技能目录名（`Base directory for this skill: .../skills/git-commit-helper`）。
+fn skill_directory_name(body: &str) -> Option<String> {
+    let first = body.lines().next()?.trim();
+    let path = first.strip_prefix(SKILL_EXPANSION_PREFIX)?.trim();
+    let name = path.rsplit(['/', '\\']).next()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// 判断一条 user 事件是否为 Skill 展开，是则返回（技能名、展开正文）。
+///
+/// 判定顺序与实时链路一致：`parent_tool_use_id` 的 `forked-command-` 前缀最可靠；
+/// 转录里更常见的是 `isMeta: true` 且正文以「Base directory for this skill:」开头的
+/// 注入消息。两者都不满足时不做猜测——普通提问的正文里也可能出现同样的句子。
+fn skill_expansion(value: &Value, text: &str) -> Option<(String, String)> {
+    let flagged = value.get("parent_tool_use_id").and_then(Value::as_str)
+        .and_then(|parent| parent.strip_prefix(SKILL_PARENT_PREFIX).map(str::to_string));
+    if flagged.is_none() && value.get("isMeta").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    if !text.trim_start().starts_with(SKILL_EXPANSION_PREFIX) {
+        return None;
+    }
+    Some((flagged.unwrap_or_default(), text.trim().to_string()))
+}
+
+/// 回看斜杠命令的行数上限。
+const SKILL_LOOKBACK_LINES: usize = 20;
+
+/// 一行 transcript 是否属于回放要忽略的注入消息：`isMeta: true` 的 user 消息是 CLI
+/// 写给模型的提示（Skill 展开、Stop hook 条件、系统提醒等），不是用户发出的内容。
+/// Skill 展开由 `skill_expansion` 另行处理成可展开条目，其余注入内容整条丢弃——
+/// 否则恢复历史会话时它们会被当成用户提问显示出来。
+fn is_injected_user(value: &Value) -> bool {
+    value.get("type").and_then(Value::as_str) == Some("user")
+        && value.get("isMeta").and_then(Value::as_bool) == Some(true)
+}
+
 /// 解析整份 transcript 文本，产出索引摘要与消息列表。
 /// 无法解析的行直接跳过（内部格式会演化）。
 pub fn analyze_transcript(content: &str) -> TranscriptAnalysis {
@@ -245,6 +313,9 @@ pub fn analyze_transcript(content: &str) -> TranscriptAnalysis {
                                 timestamp,
                             });
                         }
+                    } else if is_injected_user(&value) {
+                        // isMeta 注入消息（Skill 展开、hook 提示等）不是用户的提问：
+                        // 既不进索引正文，也不参与首条提问标题的推导。
                     } else {
                         let text = extract_text(content);
                         if !text.trim().is_empty() {
@@ -335,8 +406,9 @@ pub fn parse_replay_messages(content: &str) -> Vec<ClaudeReplayMessage> {
 
     let mut messages = Vec::new();
     let mut seq = 0_i64;
-    for line in content.lines() {
-        let line = line.trim();
+    // 保留原始行切片：Skill 展开要回看同一回合的斜杠命令来取名。
+    let lines: Vec<&str> = content.lines().map(str::trim).collect();
+    for (line_index, line) in lines.iter().copied().enumerate() {
         if line.is_empty() {
             continue;
         }
@@ -358,6 +430,26 @@ pub fn parse_replay_messages(content: &str) -> Vec<ClaudeReplayMessage> {
         seq += 1;
 
         if kind == "user" {
+            // Skill 展开：标记成 skill 条目，前端渲染为可展开卡片而不是用户气泡。
+            if let Some((flagged, text)) = skill_expansion(&value, &extract_text(content)) {
+                let name = if flagged.is_empty() {
+                    skill_name_before(&lines, line_index, &text)
+                } else { flagged };
+                messages.push(ClaudeReplayMessage {
+                    seq: current,
+                    role: "user".to_string(),
+                    timestamp,
+                    text,
+                    tools: Vec::new(),
+                    tool_name: None,
+                    skill_name: Some(name),
+                });
+                continue;
+            }
+            // isMeta 注入消息（Stop hook 条件、系统提醒等）不是用户发出的内容，整条丢弃。
+            if is_injected_user(&value) {
+                continue;
+            }
             if has_tool_result(content) {
                 let Some(blocks) = content.as_array() else {
                     continue;
@@ -404,6 +496,7 @@ pub fn parse_replay_messages(content: &str) -> Vec<ClaudeReplayMessage> {
                     } else {
                         Some(names.join("、"))
                     },
+                    skill_name: None,
                 });
             } else {
                 let text = extract_text(content);
@@ -417,6 +510,7 @@ pub fn parse_replay_messages(content: &str) -> Vec<ClaudeReplayMessage> {
                     text,
                     tools: Vec::new(),
                     tool_name: None,
+                    skill_name: None,
                 });
             }
         } else {
@@ -435,6 +529,7 @@ pub fn parse_replay_messages(content: &str) -> Vec<ClaudeReplayMessage> {
                 text,
                 tools,
                 tool_name: None,
+                skill_name: None,
             });
         }
     }
@@ -1668,6 +1763,57 @@ mod tests {
         assert_eq!(messages[1].tools.len(), 1);
         assert_eq!(messages[1].tools[0].name, "Bash");
         assert_eq!(messages[1].tools[0].summary, "cargo check");
+    }
+
+    #[test]
+    fn replay_marks_skill_expansion_instead_of_user_bubble() {
+        // 真实 transcript 形态：user 发斜杠命令 → CLI 回一条 isMeta 的技能全文。
+        let content = [
+            r#"{"type":"user","sessionId":"s1","timestamp":"2026-09-24T06:00:00.000Z","message":{"role":"user","content":"<command-name>/code-review</command-name>\n<command-message>code-review</command-message>\n<command-args>src</command-args>"}}"#,
+            r#"{"type":"user","sessionId":"s1","isMeta":true,"timestamp":"2026-09-24T06:00:01.000Z","message":{"role":"user","content":"Base directory for this skill: /home/u/.claude/skills/code-review\n\n# Code Review\n\n逐文件审查。"}}"#,
+            r#"{"type":"assistant","sessionId":"s1","timestamp":"2026-09-24T06:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"开始审查"}]}}"#,
+        ]
+        .join("\n");
+        let messages = parse_replay_messages(&content);
+        assert_eq!(messages.len(), 3, "三条都应保留");
+        // 斜杠命令本身仍是用户消息
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].skill_name, None);
+        // 技能全文标记为 Skill 条目，名字取自同一回合的 <command-name>
+        assert_eq!(messages[1].skill_name.as_deref(), Some("code-review"));
+        assert!(messages[1].text.starts_with("Base directory for this skill:"));
+        // 名称缺失时用技能目录名兜底
+        let fallback = parse_replay_messages(
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"Base directory for this skill: /tmp/x/bundled-skills/dataviz\n\n# Data"}}"#,
+        );
+        assert_eq!(fallback[0].skill_name.as_deref(), Some("dataviz"));
+    }
+
+    #[test]
+    fn replay_drops_non_skill_meta_injections() {
+        // isMeta 的 hook 条件、系统提醒不属于用户发言，不能当气泡渲染。
+        let content = [
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"A session-scoped Stop hook is now active with condition: \"x\""}}"#,
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"[Your previous response had no visible output.]"}}"#,
+            r#"{"type":"user","timestamp":"2026-09-24T06:00:00.000Z","message":{"role":"user","content":"真正提问"}}"#,
+        ]
+        .join("\n");
+        let messages = parse_replay_messages(&content);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "真正提问");
+        assert_eq!(messages[0].skill_name, None);
+    }
+
+    #[test]
+    fn analyze_ignores_meta_injection_for_first_prompt_and_index() {
+        let content = [
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"A session-scoped Stop hook is now active"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"真正提问"}}"#,
+        ]
+        .join("\n");
+        let analysis = analyze_transcript(&content);
+        assert_eq!(analysis.first_prompt.as_deref(), Some("真正提问"));
+        assert_eq!(analysis.messages.len(), 1);
     }
 
     #[test]
