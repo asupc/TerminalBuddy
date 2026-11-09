@@ -2169,17 +2169,41 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
             }
             checkpoint = Instant::now();
         }
-        if output_closed {
-            if let Some(status) = process.0.try_wait().map_err(|e| format!("读取 Claude 进程状态失败：{e}"))? {
-                let details = errors.lock().map(|e| e.clone()).unwrap_or_default();
-                if !status.success() {
-                    return Err(if !details.trim().is_empty() { format!("Claude 进程已退出：{}", details.trim()) }
-                        else { format!("Claude 进程异常结束（{status}），可以继续发送消息") });
+        // 主进程已退出就立刻收尾，不等 output_closed。
+        // stdout 是否 EOF 依赖管道写端全部关闭，但 CLI 派生的子进程（bash、子代理）
+        // 会继承写端并可能在主进程死后继续存活——此时读取线程永远等不到 EOF，
+        // 旧实现只能靠 600 秒停滞超时兜底，用户看到的是「10 分钟没有任何输出」，
+        // 实际任务早就结束了（服务重启、进程被杀等场景尤其常见）。
+        if let Some(status) = process.0.try_wait().map_err(|e| format!("读取 Claude 进程状态失败：{e}"))? {
+            // 进程已回收：先尽力排空已就绪的输出，避免丢掉最后几条事件。
+            let mut drained = Vec::new();
+            while let Ok(ready) = output.try_recv() { drained.push(ready); }
+            for ready in drained {
+                let value = ready?;
+                if value["type"] == "control_request" { continue; }
+                tasks.observe(cell, &turn, &value);
+                agents.observe(cell, &value);
+                if apply_claude_event(cell, &turn, &mut state, &value)? {
+                    pending_results = pending_results.saturating_sub(1);
+                    update(cell, |data| usage::finish_turn(data));
                 }
-                if pending_results > 0 { return Err("Claude 进程已退出，未收到完成事件，可以继续发送消息".into()); }
-                if !tasks.tasks.is_empty() { return Err("Claude 进程已退出，但仍有后台任务未完成，可以继续发送消息".into()); }
-                return Ok(WorkerExit::Completed);
             }
+            let details = errors.lock().map(|e| e.clone()).unwrap_or_default();
+            if !status.success() {
+                let hint = if details.trim().is_empty() { format!("Claude 进程异常结束（{status}），可以继续发送消息") }
+                    else { format!("Claude 进程已退出：{}", details.trim()) };
+                // 进程被外部杀掉时给出更贴近事实的提示：任务没有输出不是模型卡住。
+                return Err(if pending_results > 0 && last_event.elapsed() > Duration::from_secs(30) {
+                    format!("{hint}；上次输出已过去 {} 秒，任务可能被执行环境中断（如服务重启）",
+                        last_event.elapsed().as_secs())
+                } else { hint });
+            }
+            if pending_results > 0 { return Err("Claude 进程已退出，未收到完成事件，可以继续发送消息".into()); }
+            if !tasks.tasks.is_empty() { return Err("Claude 进程已退出，但仍有后台任务未完成，可以继续发送消息".into()); }
+            return Ok(WorkerExit::Completed);
+        }
+        if output_closed {
+            // 进程仍在但输出通道已关闭：稍等它退出，不要空转占满 CPU。
             thread::sleep(Duration::from_millis(100));
             continue;
         }
