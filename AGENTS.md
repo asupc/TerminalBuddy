@@ -74,14 +74,3 @@ cd src-tauri && cargo test --lib   # Rust 单元测试（25 个文件、约 164 
 PC 端与 Web 端的会话隔离由 `webApiShareSessions` 设置控制，权限判定统一走 `src-tauri/src/models/terminal_access.rs` 里的权限矩阵 —— 永远不要在 handler 里硬编码 `owner` 比较，调用 `TerminalService::authorize(id, actor, action)` 即可。关闭共享时，Web 只能看到 Web 自己创建的终端，PC 终端在 WS 握手阶段就会被拒绝（403）；此时 PC 可以只读查看 Web 终端。Web 永远不能关闭 PC 的终端。终端 WS 在 `on_upgrade` **之前**就完成鉴权（未知返回 404，无权返回 403），并每 5 秒复查一次权限，因此会话中途关掉共享开关会立刻断掉在飞的连接。
 
 REST 接口还覆盖项目启动（带启动参数预设）、Claude 会话历史（列表/详情/搜索/重命名/收藏/归档/删除/导出/批量删除 + 回放）、只读的项目文件树、Git 状态与分支/操作，以及机器人回调。文件树与 Git 访问由 `handlers::ensure_project_scope` 把关（只允许已登记的项目目录，越界返回 403）；耗时较长的 Git 操作采用「发起即返回 + 轮询」模式，同一仓库互斥（忙时返回 409），Web 端提交走的是 `git add -A`（按文件提交和高级 push 选项仅限桌面端）。Web 端创建终端复用桌面端路径（`create_terminal` / `create_blank_terminal`）。服务端终端任务的完成 / 失败与待决策事件还会通过 `/ws/notifications` 推送给安卓 App，决策列表与回答接口为 `/api/notifications/decisions`，与原有微信 / 飞书机器人通知同源（`services/app_notification_service.rs`）。
-
-<!-- CODEGRAPH_START -->
-## CodeGraph
-
-在已被 CodeGraph 索引的仓库中（仓库根目录存在 `.codegraph/` 目录），需要理解或定位代码时，**先**用 CodeGraph，不要直接 grep/find 或读文件：
-
-- **MCP 工具**（可用时）：`codegraph_explore` 一次调用基本能回答所有代码问题 —— 返回相关符号的逐字源码以及它们之间的调用路径，包括 grep 追不到的动态分发环节。查询里带上文件名或符号名，就能读到它当前带行号的源码。如果列出来了但暂缓加载，用工具搜索按名字载入。
-- **Shell**（总是可用）：`codegraph explore "<符号名或问题>"`，输出同上。
-
-如果没有 `.codegraph/` 目录，完全跳过 CodeGraph —— 是否建立索引由用户决定。
-<!-- CODEGRAPH_END -->
