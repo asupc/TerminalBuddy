@@ -39,6 +39,8 @@ export interface RelayReplayMessage {
   text: string;
   tools: RelayReplayTool[];
   toolName: string | null;
+  /** Skill 展开条目：正文为技能全文，值为技能名。普通消息为 null / 缺省。 */
+  skillName?: string | null;
 }
 
 export interface TerminalAgentPage {

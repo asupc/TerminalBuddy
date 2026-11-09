@@ -14,6 +14,7 @@ import {
 } from '../../services/tauri';
 import { useAppStore, type RelayAgentTab } from '../../stores/appStore';
 import { ChatMarkdown } from './ChatMarkdown';
+import { SkillEntry } from './SkillEntry';
 import './AgentChat.css';
 
 const REPLY_LIMIT = 2000;
@@ -235,9 +236,12 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
             {messages.length === 0 && !error && <div className="agent-chat-empty">暂无对话内容</div>}
             {messages.map(message => (
               message.role === 'user' ? (
-                <div key={message.seq} className="agent-bubble-row user">
-                  <div className="agent-bubble user">{message.text}</div>
-                </div>
+                // Skill 展开是 CLI 注入的提示词，渲染成可折叠卡片而不是用户气泡。
+                message.skillName
+                  ? <SkillEntry key={message.seq} name={message.skillName} text={message.text} />
+                  : <div key={message.seq} className="agent-bubble-row user">
+                    <div className="agent-bubble user">{message.text}</div>
+                  </div>
               ) : message.role === 'assistant' ? (
                 <div key={message.seq} className="agent-bubble-row assistant">
                   <div className="agent-bubble assistant"><ChatMarkdown text={message.text} /></div>

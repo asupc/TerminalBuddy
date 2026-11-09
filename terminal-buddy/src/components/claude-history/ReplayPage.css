@@ -154,6 +154,17 @@
 .claude-replay-long-text summary span { color: var(--accent); white-space: nowrap; }
 .claude-replay-long-text[open] summary { margin-bottom: 8px; }
 
+/* Skill 展开条目：与原生会话的 skill 卡片同一视觉语言（虚线强调色边框）。 */
+.claude-replay-skill {
+  border: 1px dashed color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  padding: 6px 10px;
+  margin-top: 4px;
+}
+.claude-replay-skill summary { color: var(--accent); font-family: var(--font-mono, ui-monospace, monospace); }
+.claude-replay-skill .claude-replay-text { max-height: 420px; overflow: auto; }
+
 .claude-replay-tool-result {
   border: 1px solid var(--border-subtle);
   border-radius: 6px;

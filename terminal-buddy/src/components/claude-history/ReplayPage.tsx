@@ -171,7 +171,7 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
             className={`claude-replay-msg role-${message.role}${tab.focusSeq === message.seq ? ' focused' : ''}`}
           >
             <div className="claude-replay-msg-head">
-              <span className="claude-replay-role">● {message.role === 'assistant' ? (provider === 'codex' ? 'Codex' : 'Claude') : ROLE_LABEL[message.role] ?? message.role}</span>
+              <span className="claude-replay-role">● {message.skillName ? 'Skill' : message.role === 'assistant' ? (provider === 'codex' ? 'Codex' : 'Claude') : ROLE_LABEL[message.role] ?? message.role}</span>
               {formatTime(message.timestamp) && <span className="claude-replay-time">{formatTime(message.timestamp)}</span>}
               {message.toolName && <span className="claude-replay-toolname">{message.toolName}</span>}
             </div>
@@ -179,6 +179,12 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
               <details className="claude-replay-tool-result">
                 <summary>工具结果{message.toolName ? ` · ${message.toolName}` : ''}</summary>
                 <pre className="claude-replay-text">{message.text}</pre>
+              </details>
+            ) : message.skillName ? (
+              // Skill 展开：正文是技能全文，折叠展示，避免整段原文撑满回放页。
+              <details className="claude-replay-long-text claude-replay-skill">
+                <summary>skill:{message.skillName} <span>展开技能内容（{message.text.length} 字）</span></summary>
+                <div className="claude-replay-text">{message.text}</div>
               </details>
             ) : (
               <>

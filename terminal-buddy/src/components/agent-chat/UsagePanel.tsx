@@ -24,10 +24,10 @@ export function contextPercent(context: AiContextUsage | null | undefined): numb
 
 /** 输入栏中显示的一句话摘要，跳变修复后这里不会在 0 与真实值之间闪烁。 */
 export function contextSummary(context: AiContextUsage | null | undefined): string {
-  if (context?.updating && context.usedTokens == null) return '上下文待更新';
+  if (context?.updating && !context.usedTokens) return '上下文待更新';
   const percent = contextPercent(context);
   if (percent != null) return `上下文 ${percent}%（${compact(context!.usedTokens)} / ${compact(context!.windowTokens)}）`;
-  if (context?.usedTokens != null) return `上下文 ${compact(context.usedTokens)}`;
+  if (context?.usedTokens) return `上下文 ${compact(context.usedTokens)}`;
   return '上下文 —';
 }
 
@@ -138,13 +138,13 @@ export function UsagePanel({ usage, modelLabel, effortLabel, running, onClose }:
               <Section title="当前上下文">
                 <Row
                   label="占用"
-                  value={context?.updating && context.usedTokens == null
+                  value={context?.updating && !context.usedTokens
                     ? '等待下一次模型调用更新'
                     : contextPercent(context) != null
                       ? `${contextPercent(context)}%（${compact(context?.usedTokens)} / ${compact(context?.windowTokens)}）`
-                      : context?.usedTokens != null ? compact(context.usedTokens) : '占用率未知'}
+                      : context?.usedTokens ? compact(context.usedTokens) : '占用率未知'}
                 />
-                <Row label="已用 / 容量" value={`${precise(context?.usedTokens)} / ${precise(context?.windowTokens)} token`} />
+                <Row label="已用 / 容量" value={`${context?.usedTokens ? precise(context.usedTokens) : '—'} / ${precise(context?.windowTokens)} token`} />
                 <Row
                   label="容量来源"
                   value={context?.windowSource === 'cli' ? '模型报告'
