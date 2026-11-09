@@ -236,10 +236,21 @@
   max-width: min(760px, 90%);
 }
 
+/* 有思考面板时宽度固定：折叠态是 nowrap + 省略号，展开态是长段落，
+   宽度若由内容决定，思考每追加一句话气泡就伸缩一次——整页看起来在抖。
+   width 钉死在和正文同一条栏宽上；max-width 与 .agent-bubble 的默认值同属性，
+   后写的这条直接接管。 */
+.agent-thinking-bubble.has-thinking {
+  width: 100%;
+  max-width: min(760px, 90%);
+}
+
 .agent-thinking-head {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  /* 状态行自身也可能变长（秒数从 9 变 10、出现千分位），同样不该推宽度。 */
+  min-width: 0;
 }
 
 /* ── 思考内容面板（ThinkingPanel） ─────────────────────────── */
@@ -276,8 +287,11 @@
   flex-shrink: 0;
 }
 
+/* 段数与字数会随思考推进变化（「186 字」→「1.2 千字」），
+   给一个固定下限让后面那句话的起点不左右跳。 */
 .agent-thinking-peek .agent-thinking-label {
   flex-shrink: 0;
+  min-width: 9em;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -462,6 +476,7 @@
   text-align: left;
 }
 
+/* 图标排在标题文字之后（紧随其后），标题过长时先截断、图标始终可见。 */
 .agent-tool-header svg {
   width: 13px;
   height: 13px;
@@ -469,6 +484,8 @@
 }
 
 .agent-tool-title {
+  min-width: 0;
+  flex: 0 1 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -905,9 +922,19 @@
   margin-bottom: 6px;
 }
 
+/* 缩略图现在是按钮：清掉浏览器默认的按钮外观，保留纯图片观感。 */
 .agent-message-image {
   display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   line-height: 0;
+  cursor: zoom-in;
+}
+
+.agent-message-image:hover img {
+  filter: brightness(1.08);
 }
 
 .agent-message-image img {
@@ -916,6 +943,126 @@
   border-radius: 7px;
   object-fit: cover;
   display: block;
+}
+
+/* ── 图片预览弹窗 ─────────────────────────────────────────── */
+/* fixed 定位：弹窗渲染在滚动容器内部，靠 fixed 覆盖整个窗口而不受滚动影响。 */
+.agent-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: rgba(8, 10, 12, 0.86);
+  backdrop-filter: blur(6px);
+  animation: agent-lightbox-in 0.12s ease;
+}
+
+.agent-image-lightbox:focus {
+  outline: none;
+}
+
+@keyframes agent-lightbox-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.agent-lightbox-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.agent-lightbox-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.agent-lightbox-counter {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 右侧动作组：计数器跟着一起靠右，只有一张图（无计数器）时也靠右。
+   不能用 :first-of-type —— 下载是 <a>、关闭是 <button>，类型不同取不到「第一个动作」。 */
+.agent-lightbox-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.agent-lightbox-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.agent-lightbox-action:hover {
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  color: var(--text-primary);
+}
+
+.agent-lightbox-action svg {
+  width: 15px;
+  height: 15px;
+}
+
+.agent-lightbox-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
+.agent-lightbox-image {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+
+.agent-lightbox-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-radius: 50%;
+  background: rgba(20, 22, 26, 0.7);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.agent-lightbox-nav:hover {
+  background: rgba(40, 44, 50, 0.9);
+}
+
+.agent-lightbox-nav svg {
+  width: 20px;
+  height: 20px;
 }
 
 .agent-input {

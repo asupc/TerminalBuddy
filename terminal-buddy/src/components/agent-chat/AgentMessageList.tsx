@@ -6,6 +6,7 @@ import { ChatMarkdown } from './ChatMarkdown';
 import { SkillEntry } from './SkillEntry';
 import { ApprovalCard } from './ApprovalCard';
 import { ThinkingPanel } from './ThinkingPanel';
+import { ImageLightbox } from './ImageLightbox';
 import type { AiApproval, AiChatImage, AiMessage, AiModelSwitch, AiThinking, AnswerAiApproval } from '../../services/tauri';
 
 /**
@@ -158,8 +159,8 @@ const ToolMessage = memo(function ToolMessage({ message }: { message: AiMessage 
   return (
     <div className={`agent-tool-entry${open ? ' open' : ''}`}>
       <button className="agent-tool-header" onClick={() => toggle(!open)} aria-expanded={open}>
-        <CornerDownLeft aria-hidden="true" />
         <span className="agent-tool-title">{title || '工具调用'}</span>
+        <CornerDownLeft aria-hidden="true" />
       </button>
       {open && body && (
         truncated ? (
@@ -210,13 +211,13 @@ const ToolGroup = memo(function ToolGroup({ messages, projectPath }: {
   return (
     <div className={`agent-tool-entry agent-tool-group${open ? ' open' : ''}`}>
       <button className="agent-tool-header" onClick={() => toggle(!open)} aria-expanded={open}>
-        <CornerDownLeft aria-hidden="true" />
         <span className="agent-tool-title">
           {messages.length} 个工具调用
           {latest
             ? <span className="agent-tool-summary"> · {latest.name} {latest.action}</span>
             : summary && <span className="agent-tool-summary"> · {summary}{names.length > 3 ? ' 等' : ''}</span>}
         </span>
+        <CornerDownLeft aria-hidden="true" />
       </button>
       {open && (
         <div className="agent-tool-group-body">
@@ -246,7 +247,13 @@ const ModelSwitchDivider = memo(function ModelSwitchDivider({ at, info }: { at: 
   );
 });
 
-const UserBubble = memo(function UserBubble({ text, skillName, images }: { text: string; skillName?: string; images?: AiChatImage[] }) {
+const UserBubble = memo(function UserBubble({ text, skillName, images, onPreview }: {
+  text: string;
+  skillName?: string;
+  images?: AiChatImage[];
+  /** 点击缩略图：交给上层打开预览弹窗（不再新开浏览器标签页）。 */
+  onPreview?: (images: AiChatImage[], index: number) => void;
+}) {
   if (skillName) return <SkillEntry name={skillName} text={text} />;
   return (
     <div className="agent-bubble-row user">
@@ -254,16 +261,15 @@ const UserBubble = memo(function UserBubble({ text, skillName, images }: { text:
         {images && images.length > 0 && (
           <div className="agent-message-images">
             {images.map((image, index) => (
-              <a
+              <button
                 key={`${image.path}-${index}`}
+                type="button"
                 className="agent-message-image"
-                href={convertFileSrc(image.path)}
-                target="_blank"
-                rel="noreferrer"
                 title={image.name || `图片 ${index + 1}`}
+                onClick={() => onPreview?.(images, index)}
               >
                 <img src={convertFileSrc(image.path)} alt={image.name || `图片 ${index + 1}`} loading="lazy" />
-              </a>
+              </button>
             ))}
           </div>
         )}
@@ -406,6 +412,13 @@ export function AgentMessageList({
   const frameRef = useRef(0);
   const [range, setRange] = useState<[number, number]>([0, 0]);
   const [highlight, setHighlight] = useState<string | null>(null);
+  // 图片预览：记录被点击的那组图片与下标，点击缩略图时打开弹窗而不是新开标签页。
+  const [preview, setPreview] = useState<{ images: AiChatImage[]; index: number } | null>(null);
+  const openPreview = useCallback((images: AiChatImage[], index: number) => setPreview({ images, index }), []);
+  const previewImages = useMemo(
+    () => preview?.images.map(image => ({ url: convertFileSrc(image.path), name: image.name })) ?? [],
+    [preview],
+  );
 
   // 块高实测：占位与真身共用 wrapper，观察 wrapper 即可拿到两种状态的真实高度。
   useEffect(() => {
@@ -628,7 +641,7 @@ export function AgentMessageList({
                     return <ModelSwitchDivider at={message.createdAt} info={message.modelSwitch} />;
                   }
                   if (message.role === 'user') {
-                    return <UserBubble text={message.text} skillName={message.skillName} images={message.images} />;
+                    return <UserBubble text={message.text} skillName={message.skillName} images={message.images} onPreview={openPreview} />;
                   }
                   if (message.role === 'assistant') {
                     return <AssistantBubble text={message.text} streaming={message.id === streamingTailId} />;
@@ -644,13 +657,15 @@ export function AgentMessageList({
       ))}
       {busy && (
         <div className="agent-bubble-row assistant agent-thinking-row" role="status" aria-live="polite">
-          <div className="agent-bubble assistant agent-thinking-bubble">
+          {/* 带思考面板时固定宽度：折叠态那一行是 nowrap + 省略号，宽度若跟着内容走，
+              思考文字每跳动一次气泡就伸缩一次，看起来像整页在抖。 */}
+          <div className={`agent-bubble assistant agent-thinking-bubble${thinking ? ' has-thinking' : ''}`}>
             <span className="agent-thinking-head">
-              <span className="agent-thinking-dots" aria-hidden="true"><span /><span /><span /></span>
               <span>
                 {busyText}…
                 {thinkingSince != null && <ElapsedBadge since={thinkingSince} />}
               </span>
+              <span className="agent-thinking-dots" aria-hidden="true"><span /><span /><span /></span>
             </span>
             {/* 思考内容贴在状态行下方：折叠态一行跟随最新思考，展开可看尾部全文。
                 没有思考（如纯工具执行）时面板自身返回 null，不影响原有观感。 */}
@@ -660,6 +675,15 @@ export function AgentMessageList({
       )}
       {sessionError && <div className="agent-chat-error">{sessionError}</div>}
       {localError && <div className="agent-chat-error">{localError}</div>}
+      {/* 预览弹窗挂在滚动容器外层的末尾：不参与虚拟化窗口，也不会随消息块卸载。 */}
+      {preview && previewImages.length > 0 && (
+        <ImageLightbox
+          images={previewImages}
+          index={preview.index}
+          onIndexChange={index => setPreview(current => (current ? { ...current, index } : current))}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
   );
 }
