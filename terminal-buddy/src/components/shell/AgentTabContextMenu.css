@@ -1,0 +1,20 @@
+/* 原生会话标签右键菜单：定位与配色沿用 .context-menu，这里只补标题与备注。 */
+.agent-tab-menu-head {
+  padding: 4px 10px 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tab-menu-note {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}

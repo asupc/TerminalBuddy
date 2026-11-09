@@ -24,6 +24,8 @@ interface SessionTreeItemProps {
   renameInputRef: React.RefObject<HTMLInputElement | null>;
   onCloseSession: (sessionId: string) => void;
   onContextMenu: (e: React.MouseEvent, sessionId: string) => void;
+  /** 原生会话叶子（聊天标签）的右键菜单；与终端会话的菜单分开，因为数据源不同。 */
+  onAgentContextMenu: (e: React.MouseEvent, tab: NativeAgentTab) => void;
 }
 
 /** 原生 AI 会话标签的叶子数据；与终端会话共用项目分组。 */
@@ -47,6 +49,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
   renameInputRef,
   onCloseSession,
   onContextMenu,
+  onAgentContextMenu,
 }) => {
   const sessions = useAppStore(s => s.sessions);
   const profiles = useAppStore(s => s.profiles);
@@ -148,6 +151,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
               renameInputRef={renameInputRef}
               onCloseSession={onCloseSession}
               onContextMenu={onContextMenu}
+              onAgentContextMenu={onAgentContextMenu}
             />
           );
         }
@@ -167,6 +171,10 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                 const store = useAppStore.getState();
                 store.setLastClickRegion('tab');
                 store.setActiveAgentTab(tab.key);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                onAgentContextMenu(e, tab);
               }}
               onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useAppStore.getState().closeAgentTab(tab.key); } }}
             >

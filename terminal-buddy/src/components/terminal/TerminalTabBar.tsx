@@ -1,14 +1,15 @@
 import { terminalTabTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
 import { FileText, GitBranch, History, SquareTerminal, X } from 'lucide-react';
-import { isTerminalWorking, useAppStore, sessionReplayTabKey, relayAgentTabKey } from '../../stores/appStore';
-import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation, terminalAgentList, type TerminalAgentSession } from '../../services/tauri';
+import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
+import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName } from '../../utils/claudeIndicator';
 import { AgentIcon } from '../agent-chat/AgentIcon';import { parseClaudeRef } from '../../utils/claudeLaunch';
 import { parseCodexRef } from '../../utils/codexLaunch';
 import { isDockerClient } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
+import { AgentTabContextMenu } from '../shell/AgentTabContextMenu';
 import './TerminalTabBar.css';
 
 export const TerminalTabBar: FC = () => {
@@ -35,23 +36,8 @@ export const TerminalTabBar: FC = () => {
   const closeAgentTab = useAppStore(s => s.closeAgentTab);
   const setActiveAgentTab = useAppStore(s => s.setActiveAgentTab);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
-  // 终端里可接力的 Agent 会话（右键打开菜单时刷新）。
-  const [agentSessions, setAgentSessions] = useState<Record<string, TerminalAgentSession>>({});
-  const openAgentChat = (terminalId: string) => {
-    const info = agentSessions[terminalId];
-    if (!info) return;
-    const store = useAppStore.getState();
-    const key = relayAgentTabKey(terminalId);
-    store.openAgentTab({
-      key,
-      shape: 'relay',
-      terminalId,
-      title: info.title || info.profileName || 'Agent 会话',
-      provider: info.provider === 'codex' ? 'codex' : 'claude',
-      openedAt: Date.now(),
-    });
-    store.setActiveAgentTab(key);
-  };
+  // 原生会话标签的右键菜单（与终端标签共用 .context-menu 样式）。
+  const [agentTabMenu, setAgentTabMenu] = useState<{ x: number; y: number; key: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   // 打开重命名时的初始值：未改动就不落库，避免把摘要原样固化成名称
@@ -273,9 +259,6 @@ export const TerminalTabBar: FC = () => {
           onContextMenu={(e) => {
             e.preventDefault();
             setContextMenu({ x: e.clientX, y: e.clientY, sessionId: session.id });
-            void terminalAgentList()
-              .then(list => setAgentSessions(Object.fromEntries(list.map(item => [item.terminalId, item]))))
-              .catch(() => {});
           }}
         >
           {session.sessionType === 'editor' ? (
@@ -364,6 +347,11 @@ export const TerminalTabBar: FC = () => {
           key={tab.key}
           className={`terminal-tab ${activeSpecialTab === 'agent-chat' && activeAgentTabKey === tab.key ? 'active' : ''}`}
           onClick={() => setActiveAgentTab(tab.key)}
+          onContextMenu={tab.shape === 'native' ? (e) => {
+            e.preventDefault();
+            // 原生会话标签的右键菜单（含「以此配置新建终端」）；接力标签的菜单在终端上。
+            setAgentTabMenu({ x: e.clientX, y: e.clientY, key: tab.key });
+          } : undefined}
           onAuxClick={(e) => {
             if (e.button === 1) {
               e.preventDefault();
@@ -445,12 +433,6 @@ export const TerminalTabBar: FC = () => {
               }
               setContextMenu(null);
             }}>重命名</div>
-            {agentSessions[contextMenu.sessionId] && (
-              <div className="context-menu-item" onClick={() => {
-                openAgentChat(contextMenu.sessionId);
-                setContextMenu(null);
-              }}>查看 Agent 对话</div>
-            )}
             <div
               className={`context-menu-item ${sessionIdx(contextMenu.sessionId) <= 0 ? 'disabled' : ''}`}
               onClick={() => {
@@ -493,6 +475,18 @@ export const TerminalTabBar: FC = () => {
           </div>
         </>
       )}
+      {agentTabMenu && (() => {
+        const tab = agentTabs.find(item => item.key === agentTabMenu.key && item.shape === 'native');
+        if (!tab || tab.shape !== 'native') return null;
+        return (
+          <AgentTabContextMenu
+            x={agentTabMenu.x}
+            y={agentTabMenu.y}
+            tab={tab}
+            onClose={() => setAgentTabMenu(null)}
+          />
+        );
+      })()}
       {confirmDialog && (
         <ConfirmDialog
           title={confirmDialog.title}

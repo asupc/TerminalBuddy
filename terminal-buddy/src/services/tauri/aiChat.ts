@@ -1,6 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 
 /** 原生 AI 会话：与后端 `models/ai_chat.rs` 对应（camelCase 序列化）。 */
+/** 会话消息里的图片附件：服务端已落盘，客户端只拿路径与元数据。 */
+export interface AiChatImage {
+  path: string;
+  mediaType: string;
+  name: string;
+}
+
 export interface AiMessage {
   id: string;
   role: 'user' | 'assistant' | 'tool' | string;
@@ -15,6 +22,8 @@ export interface AiMessage {
   subagentKey?: string;
   /** 模型切换分段（role = system）：切换前后的供应商与模型，前端渲染为分隔线。 */
   modelSwitch?: AiModelSwitch;
+  /** 用户消息附带的图片：输入框上方与消息气泡内都据此显示缩略图。 */
+  images?: AiChatImage[];
 }
 
 /** 会话中途切换模型的记录；分段位置即切换发生的时间点。 */
@@ -34,6 +43,8 @@ export interface AiApproval {
 export interface PendingInput {
   text: string;
   requestId: string;
+  /** 排队消息附带的图片：出队时随文本一起交给 CLI。 */
+  images?: AiChatImage[];
 }
 
 export interface AiTokenUsage {
@@ -112,6 +123,15 @@ export interface SendAiMessage {
   requestId: string;
   /** 原生插话：直接把消息交给运行中的 CLI 进程，由它选择合适节点接收。 */
   steer?: boolean;
+  /** 随消息发送的图片（base64）：服务端落盘后转为消息里的 AiChatImage。 */
+  images?: SendAiChatImage[];
+}
+
+/** 发送时的图片：只传 base64 正文，服务端负责校验、落盘与格式转换。 */
+export interface SendAiChatImage {
+  data: string;
+  mediaType: string;
+  name: string;
 }
 
 export interface AnswerAiApproval {

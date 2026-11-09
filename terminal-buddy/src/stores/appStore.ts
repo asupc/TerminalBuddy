@@ -334,6 +334,15 @@ export async function initFileTreeNav() {
 	} catch {}
 }
 
+/** 待发送的图片：dataUrl 用于即时预览，data 是随消息提交的 base64 正文。 */
+export interface AgentDraftImage {
+	id: string;
+	dataUrl: string;
+	data: string;
+	mediaType: string;
+	name: string;
+}
+
 export interface AppState {
 	// Profiles
 	profiles: Profile[];
@@ -381,6 +390,13 @@ export interface AppState {
 	closeAgentTab: (key: string) => void;
 	updateAgentTab: (key: string, patch: Partial<NativeAgentTab> & Partial<RelayAgentTab>) => void;
 	setActiveAgentTab: (key: string) => void;
+	/** 会话式聊天的输入草稿：按标签 key 保存。聊天页在切换标签时会被整页卸载
+	 * （容器用 key 强制重挂载），草稿必须留在 store 里才不会丢。 */
+	agentDrafts: Record<string, string>;
+	setAgentDraft: (key: string, text: string) => void;
+	/** 输入框上方待发送的图片：与文本草稿同生命周期保存，切换标签不丢图。 */
+	agentDraftImages: Record<string, AgentDraftImage[]>;
+	setAgentDraftImages: (key: string, images: AgentDraftImage[]) => void;
 
 	// File exclusion patterns
 	exclusionPatterns: string[];

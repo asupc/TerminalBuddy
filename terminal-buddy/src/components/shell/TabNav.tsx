@@ -17,6 +17,7 @@ import type { ExtraParamMode, Profile, TerminalSession } from '../../types';
 import { SessionTreeItem } from './SessionTreeItem';
 import { TabContextMenu } from './TabContextMenu';
 import { NewTerminalMenu } from './NewTerminalMenu';
+import { AgentTabContextMenu } from './AgentTabContextMenu';
 import { AgentIcon } from '../agent-chat/AgentIcon';
 import './TabNav.css';
 
@@ -72,6 +73,8 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   highlightedIndexRef.current = highlightedIndex;
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
+  // 原生会话叶子的右键菜单：数据源是聊天标签而非终端会话，单独保存一份。
+  const [agentTabMenu, setAgentTabMenu] = useState<{ x: number; y: number; key: string } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
@@ -731,6 +734,10 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
               e.preventDefault();
               setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId });
             }}
+            onAgentContextMenu={(e, tab) => {
+              e.preventDefault();
+              setAgentTabMenu({ x: e.clientX, y: e.clientY, key: tab.key });
+            }}
           />
         ))}
       </div>
@@ -773,6 +780,18 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           />
         </>
       )}
+      {agentTabMenu && (() => {
+        const tab = agentTabs.find(item => item.key === agentTabMenu.key && item.shape === 'native');
+        if (!tab || tab.shape !== 'native') return null;
+        return (
+          <AgentTabContextMenu
+            x={agentTabMenu.x}
+            y={agentTabMenu.y}
+            tab={tab}
+            onClose={() => setAgentTabMenu(null)}
+          />
+        );
+      })()}
       {showContextMenu && (
         <NewTerminalMenu
           x={contextMenuPos.x}

@@ -28,6 +28,8 @@ export const createAgentChatSlice = (
 ): Partial<AppState> => ({
 	agentTabs: [],
 	activeAgentTabKey: null,
+	agentDrafts: {},
+	agentDraftImages: {},
 
 	openAgentTab: (tab) => {
 		set((state) => {
@@ -50,9 +52,14 @@ export const createAgentChatSlice = (
 			const wasActive = state.activeAgentTabKey === key;
 			// 关闭当前标签后回到最后一个仍打开的会话；没有则回到终端区。
 			const nextActive = wasActive ? (agentTabs[agentTabs.length - 1]?.key ?? null) : state.activeAgentTabKey;
+			// 标签关闭后草稿与待发送图片没有归属，一并清掉，避免内存里残留无主内容。
+			const { [key]: _removedDraft, ...agentDrafts } = state.agentDrafts;
+			const { [key]: _removedDraftImages, ...agentDraftImages } = state.agentDraftImages;
 			return {
 				agentTabs,
 				activeAgentTabKey: nextActive,
+				agentDrafts,
+				agentDraftImages,
 				activeSpecialTab:
 					state.activeSpecialTab === "agent-chat" && wasActive && nextActive === null
 						? null
@@ -60,6 +67,20 @@ export const createAgentChatSlice = (
 			};
 		});
 		persistNow(get);
+	},
+
+	setAgentDraft: (key, text) => {
+		set((state) => {
+			if (state.agentDrafts[key] === text) return state;
+			return { agentDrafts: { ...state.agentDrafts, [key]: text } };
+		});
+	},
+
+	setAgentDraftImages: (key, images) => {
+		set((state) => {
+			if (state.agentDraftImages[key] === images) return state;
+			return { agentDraftImages: { ...state.agentDraftImages, [key]: images } };
+		});
 	},
 
 	updateAgentTab: (key, patch) => {

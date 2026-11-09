@@ -1,9 +1,9 @@
-import { useAppStore, relayAgentTabKey } from '../../stores/appStore';
+import { useAppStore } from '../../stores/appStore';
 import { effectiveProfilePath } from '../../utils/projectPath';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { withoutResumeArgs } from '../../utils/commandParams';
-import { FC, useEffect, useState } from 'react';
-import { openInExplorer, terminalAgentList, type TerminalAgentSession } from '../../services/tauri';
+import { FC } from 'react';
+import { openInExplorer } from '../../services/tauri';
 import type { ExtraParamMode, Profile, TerminalSession } from '../../types';
 import { supportsSystemExplorerOpen } from '../../services/platform';
 
@@ -35,16 +35,6 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
 }) => {
   const session = sessions.find(s => s.id === sessionId);
 
-  // 该终端里是否有可接力的 Agent 会话：有则提供聊天标签入口。
-  const [agentSession, setAgentSession] = useState<TerminalAgentSession | null>(null);
-  useEffect(() => {
-    let disposed = false;
-    terminalAgentList()
-      .then(list => { if (!disposed) setAgentSession(list.find(item => item.terminalId === sessionId) ?? null); })
-      .catch(() => {});
-    return () => { disposed = true; };
-  }, [sessionId]);
-
   const profile = session && session.sessionType !== 'editor'
     ? profiles.find(p => p.id === session.profileId)
     : undefined;
@@ -62,22 +52,6 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
       <div className="context-menu-item" onClick={() => { onRename(session); onClose(); }}>
         重命名
       </div>
-      {agentSession && (
-        <div className="context-menu-item" onClick={() => {
-          const key = relayAgentTabKey(sessionId);
-          const store = useAppStore.getState();
-          store.openAgentTab({
-            key,
-            shape: 'relay',
-            terminalId: sessionId,
-            title: agentSession.title || agentSession.profileName || session?.profileName || 'Agent 会话',
-            provider: agentSession.provider === 'codex' ? 'codex' : 'claude',
-            openedAt: Date.now(),
-          });
-          store.setActiveAgentTab(key);
-          onClose();
-        }}>查看 Agent 对话</div>
-      )}
       {session && session.sessionType !== 'editor' && (profile || isProjectSession) && (
         <div className="context-menu-item" onClick={() => {
           if (profile) {
