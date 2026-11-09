@@ -69,6 +69,13 @@ impl NativeLaunch {
                 .map_err(|e| format!("解析会话模型配置失败：{e}"))?
         } else { json!({}) };
         settings["hooks"] = super::claude_hook_settings::managed_hooks_object();
+        // 没有供应商配置（服务端默认 CLI）时 `prepare` 不生成临时 settings，
+        // 任务工具开关只能在这里补：否则默认配置的会话永远拿不到清单。
+        if let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) { enable_task_tools(env); }
+        else {
+            let mut map = serde_json::Map::new(); enable_task_tools(&mut map);
+            settings["env"] = Value::Object(map);
+        }
         let path = self.settings.clone().unwrap_or_else(|| std::env::temp_dir()
             .join(format!("terminal-buddy-native-settings-{}.json", uuid::Uuid::new_v4())));
         atomic_write_private(&path, &serde_json::to_vec(&settings).map_err(|_| "无法编码会话配置")?)
@@ -105,6 +112,9 @@ pub fn prepare(agent: &str, provider_id: Option<&str>, model: Option<&str>) -> R
         } else { "ANTHROPIC_AUTH_TOKEN" };
         env.insert(auth.into(), json!(""));
         for key in ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"] { env.insert(key.into(), json!("0")); }
+        // 任务清单面板依赖 CLI 的任务工具：默认构建里它们被开关门控，
+        // 关掉时模型看不到 TodoWrite / TaskCreate，底部清单卡永远为空。
+        enable_task_tools(env);
     }
     let context_window = settings.pointer("/env/CLAUDE_CODE_MAX_CONTEXT_TOKENS")
         .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok())).filter(|n| *n > 0)
@@ -115,8 +125,18 @@ pub fn prepare(agent: &str, provider_id: Option<&str>, model: Option<&str>) -> R
     Ok(NativeLaunch { args: vec!["--settings".into(), path.to_string_lossy().into_owned()], context_window, settings: Some(path) })
 }
 
-fn inherited_context_window(agent: &str) -> Option<u64> {
-    if agent != "claude" { return None; }
+/// 打开 Claude CLI 的任务工具（`TodoWrite` / `TaskCreate` / `TaskUpdate` / `TaskList`）。
+/// 这些工具在 CLI 2.1.x 默认关闭：关着时 `system/init.tools` 里根本没有它们，
+/// 模型也明确回答"工具不存在"，原生会话的底部任务清单卡就永远是空的。
+/// 原生会话的 `--settings` 临时文件由本服务统一生成，因此在这里补上开关即可；
+/// 用户已有的同名键不覆盖，保留其显式配置。
+fn enable_task_tools(env: &mut serde_json::Map<String, Value>) {
+    for key in ["CLAUDE_CODE_ENABLE_TODO_TOOLS", "CLAUDE_CODE_ENABLE_TASKS"] {
+        env.entry(key.to_string()).or_insert_with(|| json!("1"));
+    }
+}
+
+fn inherited_context_window(agent: &str) -> Option<u64> {    if agent != "claude" { return None; }
     std::env::var("CLAUDE_CODE_MAX_CONTEXT_TOKENS").ok()?.parse::<u64>().ok().filter(|n| *n > 0 && *n <= i64::MAX as u64)
 }
 
@@ -148,5 +168,18 @@ mod tests {
         assert!(find_target(&providers, "claude", "xyz").is_none());
         // 已带前缀的 ID 只做精确匹配。
         assert!(find_target(&providers, "codex", "llm:abc").is_none());
+    }
+
+    #[test]
+    fn task_tools_are_enabled_without_overriding_user_choice() {
+        let mut env = serde_json::Map::new();
+        enable_task_tools(&mut env);
+        assert_eq!(env["CLAUDE_CODE_ENABLE_TODO_TOOLS"], "1");
+        assert_eq!(env["CLAUDE_CODE_ENABLE_TASKS"], "1");
+        // 用户显式关掉时保留其配置，不强行打开。
+        let mut env = serde_json::Map::new();
+        env.insert("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), json!("0"));
+        enable_task_tools(&mut env);
+        assert_eq!(env["CLAUDE_CODE_ENABLE_TODO_TOOLS"], "0");
     }
 }

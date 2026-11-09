@@ -7,6 +7,7 @@ use super::{ai_chat_approval::{self as approval, ClaudeApproval}, ai_chat_usage 
 use super::ai_chat_claude_hooks::{NativeClaudeHooks, NativeHookEvent};
 use super::{atomic_file::atomic_write_private, terminal_task_service::SessionSummaryTracker, PathService};
 use base64::Engine;
+use serde::Deserialize as _;
 use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
     process::{Child, ChildStdin, Command, Stdio}, sync::{Arc, Mutex, OnceLock, mpsc, atomic::{AtomicBool, AtomicUsize, Ordering}},
@@ -31,9 +32,10 @@ pub fn set_app_handle(app: crate::runtime::AppHandle) {
 #[derive(Default)]
 struct Emitted {
     revision: u64,
-    /// id → (text, subagent, subagentKey)：除正文外，子代理字段变化（流式早期的
-    /// 兜底名修正、分组键补写）也必须触发推送，否则前端停留在旧值（审查 V-4）。
-    messages: HashMap<String, (String, Option<String>, Option<String>)>,
+    /// id → (text, subagent, subagentKey, todo)：除正文外，子代理字段变化（流式早期的
+    /// 兜底名修正、分组键补写）与 `todo` 标记（tool_result 先于 tool_use 到达时的补写）
+    /// 也必须触发推送，否则前端停留在旧值（审查 V-4）。
+    messages: HashMap<String, (String, Option<String>, Option<String>, bool)>,
 }
 
 struct Cell {
@@ -70,13 +72,14 @@ fn emit_update(cell: &Cell) {
     let mut changed: Vec<AiMessage> = Vec::new();
     for message in &data.messages {
         match emitted.messages.get(&message.id) {
-            Some((text, subagent, subagent_key)) if *text == message.text
+            Some((text, subagent, subagent_key, todo)) if *text == message.text
                 && *subagent == message.subagent
-                && *subagent_key == message.subagent_key => continue,
+                && *subagent_key == message.subagent_key
+                && *todo == message.todo => continue,
             _ => {}
         }
         emitted.messages.insert(message.id.clone(),
-            (message.text.clone(), message.subagent.clone(), message.subagent_key.clone()));
+            (message.text.clone(), message.subagent.clone(), message.subagent_key.clone(), message.todo));
         changed.push(message.clone());
     }
     if emitted.messages.len() != data.messages.len() {
@@ -124,6 +127,8 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
         if interrupted {
             data.status = "interrupted".into(); data.approvals.clear();
             usage::finish_turn(&mut data);
+            // 进程已随服务重启消失：仍在「执行中」的子代理一律置终态。
+            settle_agents(&mut data, "stopped");
             data.error = Some("服务已重启，上次执行已中断，可以继续发送消息".into()); touch(&mut data);
             data.result_revision = data.revision;
         }
@@ -170,7 +175,7 @@ fn new_session(owner: &str, input: CreateAiSession) -> Result<AiSession> {
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new(),
-        slash_catalog: None };
+        slash_catalog: None, todos: Vec::new(), agents: Vec::new() };
     Ok(data)
 }
 fn save_new_session(data: AiSession) -> Result<AiSession> {
@@ -249,6 +254,8 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
                 if prefill_differs(&data.messages, &fresh) {
                     let before = data.clone();
                     data.messages = fresh;
+                    // 消息被整段替换后按新历史回填清单，否则会留下上一版预填的幽灵条目。
+                    data.todos = todos_from_messages(&data.messages);
                     // 只落盘消息，不动 updated_at / revision / 标题，避免最近列表重排与在途实时流被打扰。
                     if persist_data(&cell, &data).is_err() { *data = before; }
                 }
@@ -260,6 +267,8 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
     let path = directory()?.join(format!("{id}.json"));
     let title = if first.title.trim().is_empty() { "恢复的对话".to_string() } else { first.title };
     let messages = prefill_history_messages(provider, resume_id, first.total.max(0) as usize)?;
+    // 历史预填里可能带 TodoWrite 摘要：据此还原底部清单（agents 不回填，历史子代理已结束）。
+    let todos = todos_from_messages(&messages);
     let data = AiSession { id: id.clone(), title, provider: provider.to_string(),
         provider_id, provider_name: selection.map(|(_, name)| name),
         project_path: first.project_dir, model,
@@ -267,7 +276,7 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
         usage: Some(usage::initial()), usage_checkpoint: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0,
         owner: owner.into(), thread_id: Some(resume_id.to_string()), request_ids: Vec::new(), pending_inputs: Vec::new(),
-        slash_catalog: None };
+        slash_catalog: None, todos, agents: Vec::new() };
     let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
@@ -312,8 +321,16 @@ fn prefill_history_messages(provider: &str, session_id: &str, total: usize) -> R
         for item in page.messages {
             if offset >= total { break; }
             offset += 1; advanced = true;
-            if !matches!(item.role.as_str(), "user" | "assistant" | "tool") || item.text.trim().is_empty() { continue; }
-            messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role, text: item.text, created_at: item.timestamp.unwrap_or(0), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new() });
+            if !matches!(item.role.as_str(), "user" | "assistant" | "tool") { continue; }
+            if !item.text.trim().is_empty() {
+                messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role.clone(), text: item.text.clone(), created_at: item.timestamp.unwrap_or(0), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new(), todo: false });
+            }
+            // 任务类工具的入参在历史里以工具摘要形式保留：单独成条并打标记供回填清单。
+            for (index, tool) in item.tools.iter().enumerate() {
+                if !is_task_tool(&tool.name) { continue; }
+                let text = if tool.summary.is_empty() { tool.name.clone() } else { format!("{}\n{}", tool.name, tool.summary) };
+                messages.push(AiMessage { id: format!("history-{}-{index}", item.seq), role: "tool".into(), text, created_at: item.timestamp.unwrap_or(0), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new(), todo: true });
+            }
         }
         if !advanced { break; }
     }
@@ -325,17 +342,24 @@ pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
 }
 
 fn history_messages(session_id: &str, history: &crate::models::session_history::SessionReplayPage) -> Vec<AiMessage> {
-    history.messages.iter().filter_map(|message| {
-        let mut parts = Vec::new();
-        if !message.text.trim().is_empty() { parts.push(message.text.clone()); }
-        for tool in &message.tools {
-            parts.push(if tool.summary.is_empty() { tool.name.clone() } else { format!("{}\n{}", tool.name, tool.summary) });
+    let mut result = Vec::new();
+    for message in &history.messages {
+        if !message.text.trim().is_empty() {
+            result.push(AiMessage { id: format!("history-{session_id}-{}", message.seq), role: message.role.clone(),
+                text: message.text.clone(), created_at: message.timestamp.unwrap_or(history.updated_at),
+                skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new(), todo: false });
         }
-        if parts.is_empty() { return None; }
-        Some(AiMessage { id: format!("history-{session_id}-{}", message.seq), role: message.role.clone(),
-            text: parts.join("\n\n"), created_at: message.timestamp.unwrap_or(history.updated_at), skill_name: None, model_switch: None, subagent_key: None, subagent: None,
-            images: Vec::new() })
-    }).collect()
+        // 每个工具单独成一条 `工具名\n入参摘要`：任务类工具据此打标记并回填清单，
+        // 与实时链路的正文格式完全一致（此前 join 进同一条消息会让回填无从识别）。
+        for (index, tool) in message.tools.iter().enumerate() {
+            let text = if tool.summary.is_empty() { tool.name.clone() } else { format!("{}\n{}", tool.name, tool.summary) };
+            result.push(AiMessage { id: format!("history-{session_id}-{}-{}", message.seq, index), role: "tool".into(),
+                text, created_at: message.timestamp.unwrap_or(history.updated_at),
+                skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new(),
+                todo: is_task_tool(&tool.name) });
+        }
+    }
+    result
 }
 
 /// 保留原生 threadId，首条新消息走现有 thread/resume，而非新建无上下文的线程。
@@ -357,6 +381,7 @@ pub fn resume_codex_history(owner: &str, session_id: &str, project_path: String,
     data.title = history.title.clone();
     data.thread_id = Some(session_id.into());
     data.messages = history_messages(session_id, &history);
+    data.todos = todos_from_messages(&data.messages);
     // 历史索引缺少完整缓存与推理分项，不把不完整的旧统计冒充完整累计。
     data.usage = None;
     save_new_session(data)
@@ -382,9 +407,26 @@ pub fn stop(id: &str, owner: &str) -> Result<()> {
     let cell = load(id, owner)?;
     if let Some(tx) = cell.control.lock().map_err(|_| "AI 会话状态不可用")?.as_ref() {
         tx.send(Control::Stop).map_err(|_| "执行已经结束")?;
-        update(&cell, |data| data.status = "stopping".into());
+        update(&cell, |data| {
+            data.status = "stopping".into();
+            // 子代理随进程一起被杀：就地置终态，避免界面上残留「执行中」。
+            settle_agents(data, "stopped");
+        });
     }
     Ok(())
+}
+
+/// 子代理状态落终态：用于中断、进程退出、/clear 等「不会再收到 task_* 事件」的场合。
+/// 只处理仍在运行中的条目，已结束的保留原状态与耗时。
+fn settle_agents(data: &mut AiSession, status: &str) {
+    let now = chrono::Utc::now().timestamp_millis();
+    for agent in data.agents.iter_mut().filter(|agent| agent.status == "running") {
+        agent.status = status.into();
+        agent.ended_at.get_or_insert(now);
+        if agent.duration_ms.is_none() {
+            agent.duration_ms = Some(now.saturating_sub(agent.started_at).max(0));
+        }
+    }
 }
 
 /// 会话中途切换供应商与模型（仅 Claude 原生会话）。
@@ -432,6 +474,7 @@ pub fn switch_model(id: &str, owner: &str, provider_id: &str, model: &str) -> Re
         subagent_key: None,
         model_switch: Some(switch),
         images: Vec::new(),
+        todo: false,
     });
     data.provider_id = Some(to_provider);
     data.provider_name = Some(to_name);
@@ -668,10 +711,13 @@ fn input_title(text: &str, images: &[AiImage]) -> String {
 
 /// 立即写入聊天记录；排队消息出队时由 begin_pending_turn 完成同样的登记。
 fn accept_input(data: &mut AiSession, request_id: &str, text: &str, images: &[AiImage]) {
+    // 空闲态直达的消息开启新回合：上一轮的任务清单与子代理不再适用，清空以免残留。
+    let new_turn = data.status == "idle";
     if !data.request_ids.iter().any(|id| id == request_id) { data.request_ids.push(request_id.to_string()); }
     data.messages.push(AiMessage { id: request_id.to_string(), role: "user".into(), text: text.into(),
         created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None,
-        images: images.to_vec() });
+        images: images.to_vec(), todo: false });
+    if new_turn { data.todos.clear(); data.agents.clear(); }
     if data.title == "新对话" { data.title = input_title(text, images); }
     // 等待确认时保留 approval 状态，让决策卡片继续显示；其余情况视为执行中。
     if data.approvals.is_empty() { data.status = "running".into(); }
@@ -743,9 +789,11 @@ fn begin_pending_turn(data: &mut AiSession) -> Option<PendingInput> {
     let next = data.pending_inputs.remove(0);
     data.messages.push(AiMessage { id: next.request_id.clone(), role: "user".into(), text: next.text.clone(),
         created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None,
-        images: next.images.clone() });
+        images: next.images.clone(), todo: false });
     if data.title == "新对话" { data.title = input_title(&next.text, &next.images); }
     usage::begin_turn(data);
+    // 新一轮任务开始：上一轮的任务清单与子代理不再对应当前上下文，清空以免残留误导。
+    data.todos.clear(); data.agents.clear();
     data.status = "running".into(); data.error = None; data.approvals.clear(); touch(data);
     Some(next)
 }
@@ -805,6 +853,8 @@ fn finish(cell: &Arc<Cell>, result: Result<()>) {
     let was_active = matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping");
     data.approvals.clear();
     usage::finish_turn(&mut data);
+    // 进程已退出：不再会有 task_* 事件，仍在「执行中」的子代理就地置终态。
+    settle_agents(&mut data, "stopped");
     match result {
         Ok(()) => { data.status = "idle".into(); data.error = None; }
         Err(error) => { data.status = if error == "已中断" { "interrupted" } else { "error" }.into(); data.error = Some(error); }
@@ -847,11 +897,179 @@ fn message(cell: &Cell, key: &str, role: &str, text: &str, append: bool) {
             if append { item.text.push_str(text); } else { item.text = text.into(); }
         } else {
             data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new() });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new(), todo: false });
         }
     });
 }
-/// Skill 展开消息：role 仍为 user，附 `skill_name` 供前端渲染为可展开条目。
+/// TodoWrite 的工具调用/结果消息：正文原样保留（历史恢复据此回填清单），
+/// 只打 `todo` 标记让前端跳过渲染。
+fn message_todo(cell: &Cell, key: &str, role: &str, text: &str) {
+    if text.is_empty() { return; }
+    update(cell, |data| {
+        if let Some(item) = data.messages.iter_mut().rev().find(|m| m.id == key) {
+            item.text = text.into();
+            item.todo = true;
+        } else {
+            data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(),
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None,
+                subagent_key: None, subagent: None, images: Vec::new(), todo: true });
+        }
+    });
+}
+/// TodoWrite 的 `input.todos` → 会话任务清单（全量快照，直接整体替换）。
+/// 未知 status 归一为 pending：前端只认识三种状态，多出来的值会被渲染成空行。
+fn parse_todos(value: &Value) -> Vec<AiTodo> {
+    value.as_array().map(|items| items.iter().filter_map(|item| {
+        let content = item["content"].as_str()?.trim();
+        if content.is_empty() { return None; }
+        Some(AiTodo {
+            content: content.to_string(),
+            status: normalize_todo_status(item["status"].as_str()).unwrap_or_else(|| "pending".into()),
+            active_form: item["activeForm"].as_str().map(str::trim)
+                .filter(|text| !text.is_empty()).map(str::to_string),
+        })
+    }).collect()).unwrap_or_default()
+}
+
+/// 任务状态归一：`TaskUpdate` 与 `TodoWrite` 共用同一条映射，未知值返回 None（不改动）。
+fn normalize_todo_status(status: Option<&str>) -> Option<String> {
+    Some(match status? {
+        "completed" => "completed", "in_progress" | "inProgress" | "running" => "in_progress",
+        "pending" | "not_started" => "pending",
+        _ => return None,
+    }.to_string())
+}
+
+/// `TaskCreate` 的调用先记住内容，等结果里的真实任务号回来再落位。
+enum PendingTaskCall {
+    Create { content: String, active_form: Option<String> },
+}
+
+/// 任务编号在清单里的位置：CLI 的编号从 1 开始递增，清单里的第 N 条即编号 N。
+/// 编号越界（清单尚未同步）时返回 None，由调用方决定追加到末尾。
+fn task_position(todos: &[AiTodo], task_id: &str) -> Option<usize> {
+    let number: usize = task_id.trim_start_matches('#').parse().ok()?;
+    let index = number.checked_sub(1)?;
+    (index < todos.len()).then_some(index)
+}
+
+/// `TaskUpdate` 的增量补丁：只改请求里出现的字段。
+fn apply_todo_patch(todo: &mut AiTodo, status: Option<String>, subject: Option<String>, active_form: Option<String>) {
+    if let Some(status) = status { todo.status = status; }
+    if let Some(subject) = subject { todo.content = subject; }
+    if let Some(active_form) = active_form { todo.active_form = Some(active_form); }
+}
+
+/// 任务类工具名（TodoWrite 全量快照 + Task* 增量）。历史索引只保留工具名与摘要，
+/// 因此这里也用于判定「这条历史消息属于任务工具」。
+fn is_task_tool(name: &str) -> bool {
+    matches!(name, "TodoWrite" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet")
+}
+
+/// `TaskList` 的结果解析：每行形如 `#1 [completed] 读取 AGENTS.md`。
+fn parse_task_list(text: &str) -> Option<Vec<(String, String, String)>> {
+    let mut rows = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix('#') else { continue };
+        let (number, rest) = rest.split_once(' ')?;
+        if number.is_empty() || !number.chars().all(|c| c.is_ascii_digit()) { return None; }
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix('[') else { return None; };
+        let (status, rest) = rest.split_once(']')?;
+        let status = normalize_todo_status(Some(status.trim()))?;
+        let content = rest.trim();
+        if content.is_empty() { return None; }
+        rows.push((number.to_string(), status, content.to_string()));
+    }
+    (!rows.is_empty()).then_some(rows)
+}
+/// 从历史消息回填任务清单：倒序找最后一条 TodoWrite 工具消息（带 `todo` 标记，
+/// 或本功能上线前写入的 `tools` 角色原文），解析正文里的完整 input JSON。
+/// 历史索引里的工具入参会被截断，解析失败静默跳过。
+fn todos_from_messages(messages: &[AiMessage]) -> Vec<AiTodo> {
+    // Task* 序列没有全量快照：正序重放调用与结果，用同一套状态机还原本轮清单。
+    // 先判断是否存在 Task* 记录，避免对只有 TodoWrite 的会话白跑一遍。
+    let has_task_calls = messages.iter().any(|message| message.todo && message.text.split_once('\n')
+        .map(|(name, _)| name.trim()).is_some_and(is_task_tool)
+        && !message.text.starts_with("TodoWrite\n"));
+    if has_task_calls { return todos_from_task_calls(messages); }
+    messages.iter().rev()
+        .filter(|message| message.todo || (message.role == "tool" && message.text.contains("TodoWrite\n")))
+        .find_map(|message| {
+            // 正文可能由多段工具摘要拼接（历史预填），定位 TodoWrite 之后的第一段 JSON。
+            let start = message.text.find("TodoWrite\n")? + "TodoWrite\n".len();
+            let mut stream = serde_json::Deserializer::from_str(&message.text[start..]);
+            let input = Value::deserialize(&mut stream).ok()?;
+            input.get("todos").map(parse_todos)
+        })
+        .unwrap_or_default()
+}
+
+/// 历史里的 Task* 序列还原：`TaskCreate` 的调用记内容、其结果给编号，
+/// `TaskUpdate` 按编号改状态，`TaskList` 结果整表校准。
+/// 解析不了的条目静默跳过——历史索引会截断长文本。
+fn todos_from_task_calls(messages: &[AiMessage]) -> Vec<AiTodo> {
+    // 只需要 todos 一个字段：用一个空清单做载体，避免为回填构造完整会话。
+    let mut todos: Vec<AiTodo> = Vec::new();
+    // 尚未遇到结果的创建调用，按出现顺序排队。历史预填的 id 是 `history-{seq}`，
+    // 无法与结果行按 tool_use_id 配对，因此用 FIFO 顺序消耗（CLI 总是先发调用再发结果）。
+    let mut pending: std::collections::VecDeque<(String, Option<String>)> = std::collections::VecDeque::new();
+    for message in messages {
+        // 任务工具的结果行本身不带 `todo` 标记（它与调用是两条独立的历史条目），
+        // 因此这里既要收带标记的调用，也要收可能是结果的普通工具消息。
+        let maybe_result = message.role == "tool";
+        if !message.todo && !maybe_result { continue; }
+        // 结果行（`Task #1 created successfully: …` / `#1 [completed] …`）没有工具名，单独认。
+        if !message.text.starts_with("TaskCreate\n") && !message.text.starts_with("TaskUpdate\n")
+            && !message.text.starts_with("TaskList\n") && !message.text.starts_with("TodoWrite\n") {
+            // TaskList 的结果是多行 `#N [status] 标题`：整表校准。
+            if let Some(rows) = parse_task_list(&message.text) {
+                todos = rows.into_iter().map(|(_, status, content)| AiTodo { content, status, active_form: None }).collect();
+                continue;
+            }
+            if let Some((task_id, content)) = created_task(&message.text) {
+                let active_form = pending.pop_front().and_then(|(_, active_form)| active_form);
+                let position = task_position(&todos, &task_id).unwrap_or(todos.len());
+                let todo = AiTodo { content, status: "pending".into(), active_form };
+                if position < todos.len() { todos.insert(position, todo); } else { todos.push(todo); }
+            }
+            continue;
+        }
+        // 历史里工具结果为独立消息（`Updated task #1 status`），只带编号：状态由调用里的 input 决定。
+        let (name, json) = message.text.split_once('\n').unwrap_or((&message.text, ""));
+        let Ok(input) = serde_json::from_str::<Value>(json.trim()) else { continue };
+        match name.trim() {
+            "TaskCreate" => {
+                let content = text_field(&input, "subject").or_else(|| text_field(&input, "content"))
+                    .unwrap_or_else(|| "新任务".into());
+                pending.push_back((content, text_field(&input, "activeForm")));
+            }
+            "TaskUpdate" => {
+                let Some(task_id) = text_field(&input, "taskId").or_else(|| input["taskId"].as_i64().map(|id| id.to_string())) else { continue };
+                if let Some(index) = task_position(&todos, &task_id) {
+                    apply_todo_patch(&mut todos[index], normalize_todo_status(input["status"].as_str()),
+                        text_field(&input, "subject"), text_field(&input, "activeForm"));
+                }
+            }
+            _ => {}
+        }
+    }
+    // 没有编号结果的创建调用（结果被截断时）：按出现顺序补在末尾，保持可见。
+    for (content, active_form) in pending {
+        todos.push(AiTodo { content, status: "pending".into(), active_form });
+    }
+    todos
+}
+
+/// `Task #1 created successfully: 读取 AGENTS.md` → (编号, 标题)。
+fn created_task(text: &str) -> Option<(String, String)> {
+    let rest = text.trim().strip_prefix("Task #")?;
+    let (number, rest) = rest.split_once(" created")?;
+    if number.is_empty() || !number.chars().all(|c| c.is_ascii_digit()) { return None; }
+    let title = rest.split_once(':').map(|(_, title)| title.trim()).filter(|title| !title.is_empty())?;
+    Some((number.to_string(), title.to_string()))
+}
 fn message_with_skill(cell: &Cell, key: &str, name: &str, text: &str) {
     if text.is_empty() { return; }
     update(cell, |data| {
@@ -860,7 +1078,7 @@ fn message_with_skill(cell: &Cell, key: &str, name: &str, text: &str) {
             item.skill_name = Some(name.into());
         } else {
             data.messages.push(AiMessage { id: key.into(), role: "user".into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: Some(name.into()), model_switch: None, subagent_key: None, subagent: None, images: Vec::new() });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: Some(name.into()), model_switch: None, subagent_key: None, subagent: None, images: Vec::new(), todo: false });
         }
     });
 }
@@ -874,7 +1092,7 @@ fn message_append_quiet(cell: &Cell, key: &str, text: &str) {
             item.text.push_str(text);
         } else {
             data.messages.push(AiMessage { id: key.into(), role: "assistant".into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new() });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new(), todo: false });
         }
         touch(&mut data);
     }
@@ -892,7 +1110,7 @@ fn message_with_subagent(cell: &Cell, key: &str, group: &str, role: &str, text: 
         } else {
             data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(),
                 created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None,
-                subagent: Some(agent.into()), subagent_key: Some(group.into()), images: Vec::new() });
+                subagent: Some(agent.into()), subagent_key: Some(group.into()), images: Vec::new(), todo: false });
         }
     });
 }
@@ -907,7 +1125,7 @@ fn message_sub_quiet(cell: &Cell, key: &str, group: &str, text: &str, agent: &st
         } else {
             data.messages.push(AiMessage { id: key.into(), role: "assistant".into(), text: text.into(),
                 created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None,
-                subagent: Some(agent.into()), subagent_key: Some(group.into()), images: Vec::new() });
+                subagent: Some(agent.into()), subagent_key: Some(group.into()), images: Vec::new(), todo: false });
         }
         touch(&mut data);
     }
@@ -1087,6 +1305,12 @@ struct ClaudeOutputState {
     /// Task 工具的 tool_use_id → 子代理显示名（subagent_type，缺失时回落 description）。
     /// 带 parent_tool_use_id 的消息据此打上 subagent 标记。
     subagents: HashMap<String, String>,
+    /// 主线程 TodoWrite 的 tool_use_id：对应的 tool_result 也要打 `todo` 标记，
+    /// 与工具调用成对跳过渲染。
+    todo_tools: HashSet<String>,
+    /// 工具调用 id → TaskCreate/TaskUpdate 的序号：TaskCreate 的结果（`Task #1 created
+    /// successfully`）是异步回来的，只能先记住"这个调用会创建任务"，等结果到达再落位。
+    pending_tasks: HashMap<String, PendingTaskCall>,
     /// 子代理当前流式消息的 id（parent_tool_use_id → message id）：
     /// content_block 事件不带 message id，只能从 message_start 记住。
     current_sub_messages: HashMap<String, String>,
@@ -1164,28 +1388,99 @@ impl ClaudeOutputState {
             _ => {}
         }
     }
-    fn assistant(&mut self, cell: &Cell, turn: &str, value: &Value) {
-        let assistant = &value["message"];
+    /// 任务类工具的统一入口（TodoWrite 全量快照 / TaskCreate 追加 / TaskUpdate 改状态）。
+    /// TaskCreate 的真实任务号只在结果里出现，因此这里先把调用记进 `pending_tasks`，
+    /// 由 `apply_task_result` 在结果到达时落位。
+    fn apply_task_tool(&mut self, cell: &Cell, name: &str, tool_id: &str, input: &Value) {
+        match name {
+            "TodoWrite" => {
+                let todos = parse_todos(&input["todos"]);
+                update(cell, |data| data.todos = todos);
+            }
+            "TaskCreate" => {
+                let subject = text_field(input, "subject").or_else(|| text_field(input, "content"))
+                    .unwrap_or_else(|| "新任务".into());
+                let active_form = text_field(input, "activeForm");
+                self.pending_tasks.insert(tool_id.to_string(),
+                    PendingTaskCall::Create { content: subject, active_form });
+            }
+            "TaskUpdate" => {
+                let task_id = text_field(input, "taskId").or_else(|| input["taskId"].as_i64().map(|id| id.to_string()));
+                let status = normalize_todo_status(input["status"].as_str());
+                let subject = text_field(input, "subject");
+                let active_form = text_field(input, "activeForm");
+                if let Some(task_id) = task_id {
+                    update(cell, |data| {
+                        if let Some(index) = task_position(&data.todos, &task_id) {
+                            apply_todo_patch(&mut data.todos[index], status, subject, active_form);
+                        }
+                    });
+                }
+            }
+            // TaskList 是只读工具：结果到达时用 `#1 [completed] 标题` 校准整张清单。
+            _ => {}
+        }
+    }
+    /// 任务类工具的结果：TaskCreate 把新任务插进清单，TaskList 用结果重排清单。
+    fn apply_task_result(&mut self, cell: &Cell, tool_id: &str, text: &str) {
+        if let Some(PendingTaskCall::Create { content, active_form }) = self.pending_tasks.remove(tool_id) {
+            // 结果形如 `Task #1 created successfully: 读取 AGENTS.md`，编号即后续 TaskUpdate 的 taskId。
+            let task_id = text.split('#').nth(1)
+                .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+                .filter(|id| !id.is_empty()).map(str::to_string);
+            update(cell, |data| {
+                let position = task_id.as_deref().and_then(|id| task_position(&data.todos, id))
+                    .unwrap_or(data.todos.len());
+                let todo = AiTodo { content, status: "pending".into(), active_form };
+                if position < data.todos.len() { data.todos.insert(position, todo); }
+                else { data.todos.push(todo); }
+            });
+            return;
+        }
+        if let Some(list) = parse_task_list(text) {
+            update(cell, |data| {
+                // 结果只带编号、状态与标题：保留服务端已知的 activeForm，未知条目整条替换。
+                let mut merged: Vec<AiTodo> = list.into_iter().map(|(id, status, content)| {
+                    let active_form = task_position(&data.todos, &id)
+                        .and_then(|index| data.todos.get(index)).and_then(|todo| todo.active_form.clone());
+                    AiTodo { content, status, active_form }
+                }).collect();
+                // 结果里没有的条目（并发创建尚未返回）保留在末尾，避免短暂丢行。
+                for todo in &data.todos {
+                    if !merged.iter().any(|item| item.content == todo.content) { merged.push(todo.clone()); }
+                }
+                data.todos = merged;
+            });
+        }
+    }
+    fn assistant(&mut self, cell: &Cell, turn: &str, value: &Value) {        let assistant = &value["message"];
         let Some(content) = assistant["content"].as_array() else { return; };
         let parent = subagent_parent(value);
         let subagent = parent.map(|parent| self.subagent_name(parent, value));
-        let id = assistant["id"].as_str().unwrap_or(&self.current_message);
+        // 克隆一份：循环里会以可变借用调用 self 上的任务工具解析。
+        let id = assistant["id"].as_str().unwrap_or(&self.current_message).to_string();
         let tracking = match parent {
             Some(parent) => format!("sub:{parent}:{id}"),
-            None => id.to_string(),
+            None => id.clone(),
         };
-        let blocks = self.messages.entry(tracking).or_default();
+        // 先确保块表存在；循环内按索引重新借用，避免持有 self.messages 的借用时
+        // 又去调用会写 self 的任务工具解析（借用冲突）。
+        self.messages.entry(tracking.clone()).or_default();
         for (offset, item) in content.iter().enumerate() {
             let kind = item["type"].as_str().unwrap_or("");
-            // 单块完成消息的数组下标会重置，按原始块顺序和类型领取尚未完成的块。
-            // 保留每个块的状态，避免依赖最近事件的位置，兼容停止事件及后续块先到达。
-            let index = if content.len() == 1 {
-                blocks.blocks.iter().find(|(_, block)| !block.completed && block.kind == kind)
-                    .map(|(&index, _)| index).unwrap_or(blocks.next_index)
-            } else { offset as u64 };
-            blocks.next_index = blocks.next_index.max(index.saturating_add(1));
-            let block = blocks.blocks.entry(index).or_default();
-            block.kind = kind.into(); block.completed = true;
+            let index = {
+                let Some(blocks) = self.messages.get_mut(&tracking) else { return; };
+                // 单块完成消息的数组下标会重置，按原始块顺序和类型领取尚未完成的块。
+                // 保留每个块的状态，避免依赖最近事件的位置，兼容停止事件及后续块先到达。
+                let index = if content.len() == 1 {
+                    blocks.blocks.iter().find(|(_, block)| !block.completed && block.kind == kind)
+                        .map(|(&index, _)| index).unwrap_or(blocks.next_index)
+                } else { offset as u64 };
+                blocks.next_index = blocks.next_index.max(index.saturating_add(1));
+                let block = blocks.blocks.entry(index).or_default();
+                block.kind = kind.into(); block.completed = true;
+                index
+            };
             if kind == "text" {
                 let text = item["text"].as_str().unwrap_or("");
                 match &subagent {
@@ -1205,10 +1500,21 @@ impl ClaudeOutputState {
                         self.subagents.insert(tool_id.to_string(), display.to_string());
                     }
                 }
-                let body = format!("{}\n{}", item["name"].as_str().unwrap_or("工具调用"), item["input"]);
+                // 主线程 TodoWrite：全量快照直接投影到会话级 todos，消息本身打 `todo` 标记，
+                // 前端不渲染，历史恢复时据此回填（正文保留完整 input JSON）。
+                let name = item["name"].as_str().unwrap_or("");
+                let is_todo = parent.is_none() && is_task_tool(name);
                 let tool_id = item["id"].as_str().unwrap_or_default();
+                if is_todo {
+                    if let Some(id) = item["id"].as_str().filter(|id| !id.is_empty()) {
+                        self.todo_tools.insert(id.to_string());
+                    }
+                    self.apply_task_tool(cell, name, tool_id, &item["input"]);
+                }
+                let body = format!("{}\n{}", item["name"].as_str().unwrap_or("工具调用"), item["input"]);
                 match &subagent {
                     Some(name) => message_with_subagent(cell, &format!("{turn}-sub-tool-{}-{tool_id}", parent.unwrap_or("")), &format!("{turn}:{}", parent.unwrap_or("")), "tool", &body, name),
+                    None if is_todo => message_todo(cell, &format!("{turn}-tool-{tool_id}"), "tool", &body),
                     None => message(cell, &format!("{turn}-tool-{tool_id}"), "tool", &body, false),
                 }
             }
@@ -1272,8 +1578,12 @@ fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, va
                 for item in blocks { if item["type"] == "tool_result" {
                     let body = item["content"].as_str().map(str::to_string).unwrap_or_else(|| item["content"].to_string());
                     let tool_id = item["tool_use_id"].as_str().unwrap_or_default();
+                    // TodoWrite / Task* 的工具结果与调用成对跳过渲染；历史恢复时也不会误当正文。
+                    let is_todo = state.todo_tools.contains(tool_id) && subagent.is_none();
+                    if is_todo { state.apply_task_result(cell, tool_id, &body); }
                     match &subagent {
                         Some(name) => message_with_subagent(cell, &format!("{turn}-sub-result-{}-{tool_id}", subagent_parent(value).unwrap_or("")), &format!("{turn}:{}", subagent_parent(value).unwrap_or("")), "tool", &body, name),
+                        None if is_todo => message_todo(cell, &format!("{turn}-result-{tool_id}"), "tool", &body),
                         None => message(cell, &format!("{turn}-result-{tool_id}"), "tool", &body, false),
                     }
                 } }
@@ -1381,6 +1691,209 @@ impl ClaudeBackgroundTasks {
         message(cell, &format!("{turn}-background-{id}"), "tool", &format!("{status}\n{detail}"), false);
     }
 }
+/// 子代理状态机：把 `task_started / task_updated / task_notification` 与
+/// `background_tasks_changed` 快照映射为会话级 `agents`，供底部 chip 带与抽屉展示。
+///
+/// 与 `ClaudeBackgroundTasks` 刻意分开维护：那边的职责是判断「后台任务是否还撑着回合」，
+/// 因此 `awaited == true`（前台阻塞等待的 resumed 子代理）必须排除，否则回合永远不结束；
+/// 这边要回答「派发过哪些子代理」，awaited 同样是被派发的代理，必须保留。
+/// `ambient == true`（内部杂务）与 `skip_transcript == true` 两边都过滤——它们不是用户可见的子代理。
+#[derive(Default)]
+struct ClaudeAgents {
+    /// tool_use_id → task_id：`background_tasks_changed` 快照只带 task_id，
+    /// 记下映射才能在快照里补回与消息（subagentKey）的关联。
+    tool_ids: HashMap<String, String>,
+    /// task_id → 已见过的 run_id：同一 task 被 resume 后 run_id 会变（task_id 不变），
+    /// 旧 run 的迟到帧按字典序比较判断，直接丢弃。
+    runs: HashMap<String, String>,
+}
+impl ClaudeAgents {
+    fn observe(&mut self, cell: &Cell, value: &Value) {
+        if value["type"] != "system" { return; }
+        match value["subtype"].as_str().unwrap_or("") {
+            "task_started" => self.start(cell, value),
+            "task_updated" => self.patch(cell, value),
+            "task_notification" => self.notify(cell, value),
+            "background_tasks_changed" => self.snapshot(cell, value),
+            _ => {}
+        }
+    }
+    /// 记录 run_id 并判断该帧是否过时（CLI 文档：同一 task 的 run_id 可按字符串排序，
+    /// 比已见过的更小的帧是迟到的）。没有 run_id 的帧一律接受（老版本 CLI）。
+    fn accept_run(&mut self, task_id: &str, value: &Value) -> bool {
+        let Some(run) = value["run_id"].as_str().filter(|run| !run.is_empty()) else { return true; };
+        match self.runs.get(task_id) {
+            Some(known) if run < known.as_str() => false,
+            _ => { self.runs.insert(task_id.to_string(), run.to_string()); true }
+        }
+    }
+    fn start(&mut self, cell: &Cell, value: &Value) {
+        let Some(task_id) = visible_task_id(value) else { return; };
+        if !self.accept_run(&task_id, value) { return; }
+        let tool_use_id = text_field(value, "tool_use_id");
+        let description = text_field(value, "description");
+        // CLI 的代理类型字段：新版叫 subagent_type，部分事件用 agent_type / agent；
+        // 都缺时回落 description，再回落通用名。
+        let name = text_field(value, "subagent_type").or_else(|| text_field(value, "agent_type"))
+            .or_else(|| text_field(value, "agent")).or_else(|| description.clone())
+            .unwrap_or_else(|| "subagent".into());
+        let background = value["is_backgrounded"] == true;
+        let parent_task_id = text_field(value, "parent_task_id");
+        let depth = value["spawn_depth"].as_u64().map(|depth| depth as u32)
+            .unwrap_or(if parent_task_id.is_some() { 2 } else { 1 });
+        if let Some(tool_id) = &tool_use_id { self.tool_ids.insert(tool_id.clone(), task_id.clone()); }
+        let now = chrono::Utc::now().timestamp_millis();
+        update(cell, |data| {
+            if let Some(agent) = data.agents.iter_mut().find(|agent| agent.task_id == task_id) {
+                // CLI 可能重发 task_started：只补空白字段，不重置开始时间与已落定的终态。
+                if agent.tool_use_id.is_none() { agent.tool_use_id = tool_use_id.clone(); }
+                if agent.description.is_none() { agent.description = description.clone(); }
+                if agent.name == "subagent" { agent.name = name.clone(); }
+                return;
+            }
+            data.agents.push(AiAgent {
+                task_id, tool_use_id, name, description,
+                status: "running".into(), background, parent_task_id, depth,
+                started_at: now, ended_at: None, summary: None, duration_ms: None, tool_uses: None,
+            });
+        });
+    }
+    fn patch(&mut self, cell: &Cell, value: &Value) {
+        let Some(task_id) = visible_task_id(value) else { return; };
+        if !self.accept_run(&task_id, value) { return; }
+        // 新版 CLI 把变更放在 `patch` 里，旧版是平铺字段；两种都要认。
+        let patch = if value["patch"].is_object() { &value["patch"] } else { value };
+        // 状态可缺省（只改 is_backgrounded / description），此时不碰 status。
+        let status = normalize_status(patch["status"].as_str());
+        let background = patch["is_backgrounded"].as_bool();
+        let description = text_field(patch, "description");
+        if status.is_none() && background.is_none() && description.is_none() { return; }
+        let now = chrono::Utc::now().timestamp_millis();
+        update(cell, |data| {
+            let Some(agent) = data.agents.iter_mut().find(|agent| agent.task_id == task_id) else { return; };
+            if let Some(description) = description { agent.description = Some(description); }
+            if let Some(background) = background { agent.background = background; }
+            let Some(status) = status else { return; };
+            // 终态不回退：迟到/乱序的 running 事件不能把已结束的代理复活。
+            if is_terminal(&agent.status) { return; }
+            agent.status = status.clone();
+            if is_terminal(&status) {
+                agent.ended_at.get_or_insert(now);
+                if agent.duration_ms.is_none() {
+                    agent.duration_ms = Some(now.saturating_sub(agent.started_at).max(0));
+                }
+            }
+        });
+    }
+    fn notify(&mut self, cell: &Cell, value: &Value) {
+        let Some(task_id) = visible_task_id(value) else { return; };
+        if !self.accept_run(&task_id, value) { return; }
+        let status = match value["status"].as_str().unwrap_or("") {
+            "failed" => "failed", "stopped" => "stopped", _ => "completed",
+        };
+        let summary = text_field(value, "summary");
+        let usage = &value["usage"];
+        let duration_ms = usage["duration_ms"].as_i64().or_else(|| usage["durationMs"].as_i64());
+        let tool_uses = usage["tool_uses"].as_i64().or_else(|| usage["toolUses"].as_i64());
+        let tool_use_id = self.tool_ids.iter().find(|(_, id)| **id == task_id).map(|(tool, _)| tool.clone());
+        let now = chrono::Utc::now().timestamp_millis();
+        update(cell, |data| {
+            let Some(agent) = data.agents.iter_mut().find(|agent| agent.task_id == task_id) else {
+                // 通知先于开始事件到达（快照校准的补漏）：补一条终态记录，不留空白。
+                let name = text_field(value, "subagent_type").or_else(|| text_field(value, "agent_type"))
+                    .or_else(|| summary.clone()).unwrap_or_else(|| "subagent".into());
+                data.agents.push(AiAgent {
+                    task_id, tool_use_id, name, description: summary.clone(), status: status.into(),
+                    background: false, parent_task_id: None, depth: 1,
+                    started_at: now.saturating_sub(duration_ms.unwrap_or(0)), ended_at: Some(now),
+                    summary, duration_ms, tool_uses,
+                });
+                return;
+            };
+            // 同一 task 可收到多次通知（resume 或等待结束），后到的替换先到的展示内容。
+            agent.status = status.into();
+            agent.ended_at = Some(now);
+            agent.summary = summary.or(agent.summary.take());
+            agent.duration_ms = duration_ms.or(agent.duration_ms)
+                .or_else(|| Some(now.saturating_sub(agent.started_at).max(0)));
+            agent.tool_uses = tool_uses.or(agent.tool_uses);
+        });
+    }
+    /// 快照校准：以完整快照为准补齐缺失条目，缺项置终态而非删除（历史仍要给人看）。
+    fn snapshot(&mut self, cell: &Cell, value: &Value) {
+        let Some(tasks) = value["tasks"].as_array() else { return; };
+        let visible: Vec<&Value> = tasks.iter().filter(|task| is_visible_task(task)).collect();
+        // 快照带的是「当前」的 run：同样记进 runs，后续旧 run 的迟到帧才能被识别。
+        for task in &visible {
+            if let Some(task_id) = task["task_id"].as_str() {
+                self.accept_run(task_id, task);
+            }
+        }
+        let ids: HashSet<String> = visible.iter().filter_map(|task| task["task_id"].as_str())
+            .filter(|id| !id.is_empty()).map(str::to_string).collect();
+        let now = chrono::Utc::now().timestamp_millis();
+        let entries: Vec<AiAgent> = visible.iter().filter_map(|task| {
+            let task_id = task["task_id"].as_str().filter(|id| !id.is_empty())?.to_string();
+            let status = normalize_status(task["status"].as_str()).unwrap_or_else(|| "running".into());
+            let tool_use_id = text_field(task, "tool_use_id").or_else(|| self.tool_ids.iter()
+                .find(|(_, id)| **id == task_id).map(|(tool, _)| tool.clone()));
+            let name = text_field(task, "subagent_type").or_else(|| text_field(task, "description"))
+                .unwrap_or_else(|| "subagent".into());
+            Some(AiAgent {
+                task_id, tool_use_id,
+                description: text_field(task, "description"), name,
+                status, background: task["is_backgrounded"] == true || task["awaited"] != true,
+                parent_task_id: text_field(task, "parent_task_id"),
+                depth: task["spawn_depth"].as_u64().map(|depth| depth as u32).unwrap_or(1),
+                started_at: now, ended_at: None, summary: None, duration_ms: None, tool_uses: None,
+            })
+        }).collect();
+        update(cell, |data| {
+            for agent in data.agents.iter_mut() {
+                // 只在快照里消失、且仍在运行中的条目落终态；已结束的保持原样（不复活、不覆盖耗时）。
+                if agent.status == "running" && !ids.contains(&agent.task_id) {
+                    agent.status = "stopped".into();
+                    agent.ended_at.get_or_insert(now);
+                    if agent.duration_ms.is_none() {
+                        agent.duration_ms = Some(now.saturating_sub(agent.started_at).max(0));
+                    }
+                }
+            }
+            for entry in &entries {
+                if data.agents.iter().any(|agent| agent.task_id == entry.task_id) { continue; }
+                let mut entry = entry.clone();
+                entry.started_at = now;
+                if is_terminal(&entry.status) { entry.ended_at = Some(now); }
+                data.agents.push(entry);
+            }
+        });
+    }
+}
+
+/// 用户可见子代理的过滤：内部杂务（ambient）与不上转录的条目不属于面板。
+fn is_visible_task(task: &Value) -> bool {
+    task["ambient"] != true && task["skip_transcript"] != true && task["task_id"].as_str().is_some_and(|id| !id.is_empty())
+}
+fn visible_task_id(value: &Value) -> Option<String> {
+    if !is_visible_task(value) { return None; }
+    value["task_id"].as_str().map(str::to_string)
+}
+fn text_field(value: &Value, key: &str) -> Option<String> {
+    value[key].as_str().map(str::trim).filter(|text| !text.is_empty()).map(str::to_string)
+}
+fn is_terminal(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "stopped" | "killed")
+}
+/// CLI 状态的归一：`pending / in_progress / running / paused` 归为面板可显示的状态。
+fn normalize_status(status: Option<&str>) -> Option<String> {
+    Some(match status? {
+        "pending" => "pending", "in_progress" => "running", "running" => "running",
+        "completed" => "completed", "failed" => "failed", "stopped" => "stopped",
+        "killed" => "killed", "paused" => "paused",
+        _ => return None,
+    }.to_string())
+}
+
 /// 回合未结算时允许的最长无输出时间：与 CLI 默认 API 超时（600 秒）对齐，超过即判定任务停滞
 /// （模型接口挂起、CLI 无限重试等），主动结束回合并保留聊天记录。等待用户决策不算停滞。
 /// Claude / Codex 两家循环共用。
@@ -1392,6 +1905,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
     let mut turn = Uuid::new_v4().to_string();
     let mut state = ClaudeOutputState::default();
     let mut tasks = ClaudeBackgroundTasks::default();
+    let mut agents = ClaudeAgents::default();
     let mut input = Some(stdin);
     let mut pending: HashMap<String, ClaudeApproval> = HashMap::new();
     // 每条写入 stdin 的用户消息都会产生一个 result；归零才表示当前回合任务全部结束。
@@ -1562,6 +2076,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
                 continue;
             }
             tasks.observe(cell, &turn, &value);
+            agents.observe(cell, &value);
             if apply_claude_event(cell, &turn, &mut state, &value)? {
                 pending_results = pending_results.saturating_sub(1);
                 // result 表示这一段回复及用量已结算；后台唤醒产生的新 result 也会走到这里。
@@ -2161,7 +2676,7 @@ mod tests {
     fn prefill_differs_detects_append_and_rewrite() {
         let message = |id: &str, text: &str, at: i64| AiMessage {
             id: id.into(), role: "user".into(), text: text.into(), created_at: at, skill_name: None, model_switch: None, subagent: None, subagent_key: None,
-            images: Vec::new(),
+            images: Vec::new(), todo: false,
         };
         let old = vec![message("history-0", "第一问", 1)];
         // 条数相同、内容相同 → 不替换，避免无意义的落盘。
@@ -2367,7 +2882,7 @@ mod tests {
     fn push_user(cell: &Cell, text: &str) {
         cell.data.lock().unwrap().messages.push(AiMessage {
             id: "user-input".into(), role: "user".into(), text: text.into(), created_at: 0, skill_name: None, model_switch: None, subagent: None, subagent_key: None,
-            images: Vec::new(),
+            images: Vec::new(), todo: false,
         });
     }
 
@@ -2672,6 +3187,422 @@ mod tests {
         let _ = fs::remove_dir_all(&directory);
     }
 
+}
+
+#[cfg(test)]
+mod todo_agent_tests {
+    use super::*;
+
+    fn cell() -> Cell {
+        let data = serde_json::from_value(json!({
+            "id": "todo-test", "title": "任务面板", "provider": "claude", "projectPath": ".",
+            "model": null, "status": "running", "messages": [], "approvals": [], "error": null,
+            "updatedAt": 0, "revision": 0,
+        })).unwrap();
+        Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(),
+            emitted: Mutex::default(), deleted: AtomicBool::new(false), path: PathBuf::new() }
+    }
+
+    fn todo_use(id: &str, todos: Value) -> Value {
+        json!({"type": "assistant", "message": {"id": format!("m-{id}"), "content": [
+            {"type": "tool_use", "id": id, "name": "TodoWrite", "input": {"todos": todos}}
+        ]}})
+    }
+
+    fn task_event(subtype: &str, extra: Value) -> Value {
+        let mut base = json!({"type": "system", "subtype": subtype});
+        if let (Some(map), Some(fields)) = (base.as_object_mut(), extra.as_object()) {
+            for (key, value) in fields { map.insert(key.clone(), value.clone()); }
+        }
+        base
+    }
+
+    #[test]
+    fn todowrite_replaces_whole_snapshot_and_marks_message() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        apply_claude_event(&cell, "t", &mut state, &todo_use("a", json!([
+            {"content": "读代码", "status": "completed", "activeForm": "读代码"},
+            {"content": "写解析", "status": "in_progress", "activeForm": "正在写解析"},
+        ]))).unwrap();
+        {
+            let data = cell.data.lock().unwrap();
+            assert_eq!(data.todos.len(), 2);
+            assert_eq!(data.todos[1].status, "in_progress");
+            assert_eq!(data.todos[1].active_form.as_deref(), Some("正在写解析"));
+            let message = data.messages.iter().find(|m| m.id == "t-tool-a").expect("应写入工具消息");
+            assert!(message.todo, "工具消息应带 todo 标记");
+            assert!(message.text.contains("TodoWrite"), "正文需保留原文供恢复");
+        }
+        // 第二次调用是新的全量快照：不叠加、不残留旧条目。
+        apply_claude_event(&cell, "t", &mut state, &todo_use("b", json!([
+            {"content": "收尾", "status": "pending"},
+        ]))).unwrap();
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.todos.len(), 1);
+        assert_eq!(data.todos[0].content, "收尾");
+    }
+
+    #[test]
+    fn todowrite_empty_array_clears_and_unknown_status_is_pending() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        apply_claude_event(&cell, "t", &mut state, &todo_use("a", json!([
+            {"content": "甲", "status": "weird"}, {"content": "  ", "status": "pending"},
+        ]))).unwrap();
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.todos.len(), 1, "空白 content 被丢弃");
+        assert_eq!(data.todos[0].status, "pending", "未知状态归一为 pending");
+        drop(data);
+        apply_claude_event(&cell, "t", &mut state, &todo_use("b", json!([]))).unwrap();
+        assert!(cell.data.lock().unwrap().todos.is_empty(), "空数组清空清单");
+    }
+
+    #[test]
+    fn todowrite_result_is_also_marked() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        apply_claude_event(&cell, "t", &mut state, &todo_use("a", json!([{"content": "甲", "status": "pending"}]))).unwrap();
+        apply_claude_event(&cell, "t", &mut state, &json!({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "a", "content": "Todos modified"}
+        ]}})).unwrap();
+        let data = cell.data.lock().unwrap();
+        let result = data.messages.iter().find(|m| m.id == "t-result-a").expect("应写入结果消息");
+        assert!(result.todo, "TodoWrite 的结果消息同样不渲染");
+        // 普通工具结果不受影响。
+        drop(data);
+        apply_claude_event(&cell, "t", &mut state, &json!({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "zzz", "content": "ok"}
+        ]}})).unwrap();
+        assert!(!cell.data.lock().unwrap().messages.iter().find(|m| m.id == "t-result-zzz").unwrap().todo);
+    }
+
+    #[test]
+    fn todos_backfill_from_tool_message() {
+        let message = |id: &str, text: &str, todo: bool| AiMessage {
+            id: id.into(), role: "tool".into(), text: text.into(), created_at: 0,
+            skill_name: None, model_switch: None, subagent_key: None, subagent: None,
+            images: Vec::new(), todo,
+        };
+        // 旧会话没有 todo 标记：正文里能找到 TodoWrite 也能回填。
+        let history = vec![
+            message("a", "TodoWrite\n{\"todos\":[{\"content\":\"甲\",\"status\":\"completed\"}]}", false),
+            message("b", "TodoWrite\n{\"todos\":[{\"content\":\"乙\",\"status\":\"in_progress\"}]}", true),
+        ];
+        let todos = todos_from_messages(&history);
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].content, "乙", "取最后一次快照");
+        // 被截断的 JSON 静默跳过，不影响会话加载。
+        assert!(todos_from_messages(&[message("c", "TodoWrite\n{\"todos\":[{\"content\":\"截", true)]).is_empty());
+        assert!(todos_from_messages(&[]).is_empty());
+    }
+
+    #[test]
+    fn agent_lifecycle_start_update_notify() {
+        let cell = cell();
+        let mut agents = ClaudeAgents::default();
+        agents.observe(&cell, &task_event("task_started", json!({
+            "task_id": "task-1", "tool_use_id": "tool-1", "subagent_type": "Explore",
+            "description": "找代码", "is_backgrounded": true, "spawn_depth": 1,
+        })));
+        {
+            let data = cell.data.lock().unwrap();
+            assert_eq!(data.agents.len(), 1);
+            let agent = &data.agents[0];
+            assert_eq!(agent.name, "Explore");
+            assert_eq!(agent.status, "running");
+            assert!(agent.background);
+            assert_eq!(agent.tool_use_id.as_deref(), Some("tool-1"));
+        }
+        agents.observe(&cell, &task_event("task_updated", json!({
+            "task_id": "task-1", "patch": {"status": "completed", "end_time": 1},
+        })));
+        assert_eq!(cell.data.lock().unwrap().agents[0].status, "completed");
+        // 迟到的事件不能把已结束的代理复活。
+        agents.observe(&cell, &task_event("task_started", json!({"task_id": "task-1", "subagent_type": "Explore"})));
+        agents.observe(&cell, &task_event("task_updated", json!({"task_id": "task-1", "patch": {"status": "running"}})));
+        assert_eq!(cell.data.lock().unwrap().agents[0].status, "completed");
+        // 通知补上 summary 与用量。
+        agents.observe(&cell, &task_event("task_notification", json!({
+            "task_id": "task-1", "status": "failed", "summary": "没找到",
+            "usage": {"duration_ms": 1200, "tool_uses": 3},
+        })));
+        let data = cell.data.lock().unwrap();
+        let agent = &data.agents[0];
+        assert_eq!(agent.status, "failed");
+        assert_eq!(agent.summary.as_deref(), Some("没找到"));
+        assert_eq!(agent.duration_ms, Some(1200));
+        assert_eq!(agent.tool_uses, Some(3));
+        assert!(agent.ended_at.is_some());
+    }
+
+    #[test]
+    fn agent_snapshot_settles_missing_entries_and_filters_noise() {
+        let cell = cell();
+        let mut agents = ClaudeAgents::default();
+        let snapshot = |tasks: Value| task_event("background_tasks_changed", json!({"tasks": tasks}));
+        agents.observe(&cell, &snapshot(json!([
+            {"task_id": "a", "status": "running", "subagent_type": "Explore"},
+            {"task_id": "noise", "status": "running", "ambient": true},
+            {"task_id": "hidden", "status": "running", "skip_transcript": true},
+        ])));
+        {
+            let data = cell.data.lock().unwrap();
+            assert_eq!(data.agents.len(), 1, "ambient / skip_transcript 不进面板");
+            assert_eq!(data.agents[0].task_id, "a");
+        }
+        // 快照重放：不重复、不复活、不覆盖已落定的耗时。
+        agents.observe(&cell, &snapshot(json!([{"task_id": "a", "status": "running"}])));
+        assert_eq!(cell.data.lock().unwrap().agents.len(), 1);
+        // 快照里消失 → 置 stopped 而不是删除（历史仍要给人看）。
+        agents.observe(&cell, &snapshot(json!([])));
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.agents.len(), 1);
+        assert_eq!(data.agents[0].status, "stopped");
+        assert!(data.agents[0].ended_at.is_some());
+    }
+
+    #[test]
+    fn awaited_agents_stay_visible_but_out_of_background_count() {
+        let cell = cell();
+        let mut agents = ClaudeAgents::default();
+        let mut tasks = ClaudeBackgroundTasks::default();
+        let started = task_event("task_started", json!({
+            "task_id": "aw", "subagent_type": "Plan", "awaited": true, "is_backgrounded": false,
+        }));
+        tasks.observe(&cell, "t", &started);
+        agents.observe(&cell, &started);
+        assert_eq!(cell.data.lock().unwrap().agents.len(), 1, "awaited 也是被派发的子代理");
+        assert!(tasks.tasks.is_empty(), "awaited 不占用后台任务计数");
+    }
+
+    #[test]
+    fn stale_run_frames_are_dropped() {
+        let cell = cell();
+        let mut agents = ClaudeAgents::default();
+        let snapshot = |tasks: Value| task_event("background_tasks_changed", json!({"tasks": tasks}));
+        agents.observe(&cell, &snapshot(json!([
+            {"task_id": "a", "run_id": "run-0002", "status": "running", "subagent_type": "Explore"},
+        ])));
+        // 一个属于更早 run 的迟到帧：run_id 字典序更小，整帧丢弃。
+        agents.observe(&cell, &task_event("task_notification", json!({
+            "task_id": "a", "run_id": "run-0001", "status": "completed",
+        })));
+        assert_eq!(cell.data.lock().unwrap().agents[0].status, "running", "旧 run 的结论不能生效");
+        agents.observe(&cell, &task_event("task_notification", json!({
+            "task_id": "a", "run_id": "run-0003", "status": "completed",
+        })));
+        assert_eq!(cell.data.lock().unwrap().agents[0].status, "completed");
+    }
+
+    #[test]
+    fn patch_without_status_still_updates_background_flag() {
+        let cell = cell();
+        let mut agents = ClaudeAgents::default();
+        agents.observe(&cell, &task_event("task_started", json!({
+            "task_id": "a", "subagent_type": "Explore", "is_backgrounded": false,
+        })));
+        assert!(!cell.data.lock().unwrap().agents[0].background);
+        agents.observe(&cell, &task_event("task_updated", json!({
+            "task_id": "a", "patch": {"is_backgrounded": true},
+        })));
+        let data = cell.data.lock().unwrap();
+        assert!(data.agents[0].background, "转后台的补丁即使不带 status 也要生效");
+        assert_eq!(data.agents[0].status, "running");
+    }
+
+    #[test]
+    fn repeated_notifications_replace_previous_report() {
+        let cell = cell();
+        let mut agents = ClaudeAgents::default();
+        agents.observe(&cell, &task_event("task_started", json!({"task_id": "a", "subagent_type": "Explore"})));
+        agents.observe(&cell, &task_event("task_notification", json!({
+            "task_id": "a", "status": "completed", "summary": "第一版", "usage": {"duration_ms": 100},
+        })));
+        agents.observe(&cell, &task_event("task_notification", json!({
+            "task_id": "a", "status": "completed", "summary": "第二版", "usage": {"duration_ms": 200},
+        })));
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.agents.len(), 1, "重复通知不新增条目");
+        assert_eq!(data.agents[0].summary.as_deref(), Some("第二版"));
+        assert_eq!(data.agents[0].duration_ms, Some(200));
+    }
+
+    fn task_use(id: &str, name: &str, input: Value) -> Value {
+        json!({"type": "assistant", "message": {"id": format!("m-{id}"), "content": [
+            {"type": "tool_use", "id": id, "name": name, "input": input}
+        ]}})
+    }
+    fn task_result(id: &str, text: &str) -> Value {
+        json!({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id, "content": text}
+        ]}})
+    }
+
+    #[test]
+    fn task_create_lands_after_result_reports_number() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        // 调用本身不落清单：真实任务号只在结果里出现。
+        apply_claude_event(&cell, "t", &mut state,
+            &task_use("a", "TaskCreate", json!({"subject": "读取 AGENTS.md", "description": "了解约定"}))).unwrap();
+        assert!(cell.data.lock().unwrap().todos.is_empty());
+        apply_claude_event(&cell, "t", &mut state, &task_result("a", "Task #1 created successfully: 读取 AGENTS.md")).unwrap();
+        apply_claude_event(&cell, "t", &mut state,
+            &task_use("b", "TaskCreate", json!({"subject": "检查 package.json"}))).unwrap();
+        apply_claude_event(&cell, "t", &mut state, &task_result("b", "Task #2 created successfully: 检查 package.json")).unwrap();
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.todos.len(), 2);
+        assert_eq!(data.todos[0].content, "读取 AGENTS.md");
+        assert_eq!(data.todos[0].status, "pending");
+        assert_eq!(data.todos[1].content, "检查 package.json");
+        // 工具调用与结果都要打 todo 标记：正文不渲染原文。
+        assert!(data.messages.iter().filter(|m| m.todo).count() == 4);
+    }
+
+    #[test]
+    fn task_update_patches_status_by_number() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        for (id, number, subject) in [("a", 1, "甲"), ("b", 2, "乙")] {
+            apply_claude_event(&cell, "t", &mut state, &task_use(id, "TaskCreate", json!({"subject": subject}))).unwrap();
+            apply_claude_event(&cell, "t", &mut state,
+                &task_result(id, &format!("Task #{number} created successfully: {subject}"))).unwrap();
+        }
+        apply_claude_event(&cell, "t", &mut state,
+            &task_use("c", "TaskUpdate", json!({"taskId": "1", "status": "in_progress"}))).unwrap();
+        {
+            let data = cell.data.lock().unwrap();
+            assert_eq!(data.todos[0].status, "in_progress");
+            assert_eq!(data.todos[1].status, "pending");
+        }
+        apply_claude_event(&cell, "t", &mut state,
+            &task_use("d", "TaskUpdate", json!({"taskId": "1", "status": "completed"}))).unwrap();
+        assert_eq!(cell.data.lock().unwrap().todos[0].status, "completed");
+        // 越界编号与未知状态都不改动清单。
+        apply_claude_event(&cell, "t", &mut state,
+            &task_use("e", "TaskUpdate", json!({"taskId": "9", "status": "completed"}))).unwrap();
+        apply_claude_event(&cell, "t", &mut state,
+            &task_use("f", "TaskUpdate", json!({"taskId": "2", "status": "weird"}))).unwrap();
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.todos.len(), 2);
+        assert_eq!(data.todos[1].status, "pending");
+    }
+
+    #[test]
+    fn task_list_result_realigns_rows() {
+        // 结果里只有编号/状态/标题：整张清单按结果重排。
+        let rows = parse_task_list("#1 [completed] 读取 AGENTS.md\n#2 [pending] 检查 package.json").unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].0, "2");
+        assert_eq!(rows[1].1, "pending");
+        // 解析不了的内容（普通工具输出）不误伤清单。
+        assert!(parse_task_list("普通输出").is_none());
+        assert!(parse_task_list("").is_none());
+
+        // 端到端：TaskList 的结果把清单校准成结果里的状态。
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        apply_claude_event(&cell, "t", &mut state, &task_use("a", "TaskCreate", json!({"subject": "甲"}))).unwrap();
+        apply_claude_event(&cell, "t", &mut state, &task_result("a", "Task #1 created successfully: 甲")).unwrap();
+        apply_claude_event(&cell, "t", &mut state, &task_use("l", "TaskList", json!({}))).unwrap();
+        apply_claude_event(&cell, "t", &mut state, &task_result("l", "#1 [completed] 甲")).unwrap();
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.todos.len(), 1);
+        assert_eq!(data.todos[0].status, "completed");
+    }
+
+    #[test]
+    fn task_calls_backfill_from_history() {
+        let message = |id: &str, text: &str, todo: bool| AiMessage {
+            id: id.into(), role: "tool".into(), text: text.into(), created_at: 0,
+            skill_name: None, model_switch: None, subagent_key: None, subagent: None,
+            images: Vec::new(), todo,
+        };
+        let history = vec![
+            message("a", "TaskCreate\n{\"subject\":\"读取 AGENTS.md\",\"description\":\"看约定\"}", true),
+            message("a-r", "Task #1 created successfully: 读取 AGENTS.md", true),
+            message("b", "TaskCreate\n{\"subject\":\"检查 package.json\"}", true),
+            message("b-r", "Task #2 created successfully: 检查 package.json", true),
+            message("c", "TaskUpdate\n{\"taskId\":\"1\",\"status\":\"in_progress\"}", true),
+            message("c-r", "Updated task #1 status", true),
+            message("d", "TaskUpdate\n{\"taskId\":\"1\",\"status\":\"completed\"}", true),
+        ];
+        let todos = todos_from_messages(&history);
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].content, "读取 AGENTS.md");
+        assert_eq!(todos[0].status, "completed");
+        assert_eq!(todos[1].content, "检查 package.json");
+        assert_eq!(todos[1].status, "pending");
+        // TaskList 的结果整表校准（编号 → 状态 → 标题）。
+        // TaskList 的 ok 结果就是 `#1 [..]` 多行本身：往流里追加这两条后重新还原。
+        let mut with_list = history;
+        with_list.push(message("l", "TaskList\n{}", true));
+        with_list.push(message("l-r", "#1 [pending] 读取 AGENTS.md\n#2 [completed] 检查 package.json", true));
+        let todos = todos_from_messages(&with_list);
+        assert_eq!(todos[0].status, "pending", "TaskList 结果把第一条改回 pending");
+        assert_eq!(todos[1].status, "completed");
+    }
+
+    #[test]
+    fn task_calls_backfill_from_real_history_shape() {
+        // 历史回放里调用与结果是各自独立的条目（`TaskCreate\n{json}` 与 `Task #1 created…`），
+        // 且 id 为 `history-{seq}`：这是恢复会话时真正会遇到的形状。
+        let entry = |id: &str, role: &str, text: &str, todo: bool| AiMessage {
+            id: id.into(), role: role.into(), text: text.into(), created_at: 0,
+            skill_name: None, model_switch: None, subagent_key: None, subagent: None,
+            images: Vec::new(), todo,
+        };
+        let history = vec![
+            entry("history-8", "tool", "TaskCreate\n{\"activeForm\":\"正在读取 AGENTS.md\",\"subject\":\"读取 AGENTS.md\"}", true),
+            entry("history-9", "tool", "Task #1 created successfully: 读取 AGENTS.md", false),
+            entry("history-11", "tool", "TaskCreate\n{\"activeForm\":\"正在检查包\",\"subject\":\"检查 package.json\"}", true),
+            entry("history-12", "tool", "Task #2 created successfully: 检查 package.json", false),
+            entry("history-16", "tool", "TaskUpdate\n{\"status\":\"in_progress\",\"taskId\":\"1\"}", true),
+            entry("history-17", "tool", "Updated task #1 status", false),
+            entry("history-18", "tool", "TaskUpdate\n{\"status\":\"completed\",\"taskId\":\"1\"}", true),
+            entry("history-19", "tool", "Updated task #1 status", false),
+        ];
+        let todos = todos_from_messages(&history);
+        assert_eq!(todos.len(), 2, "恢复后应有两条任务，而不是空清单");
+        assert_eq!(todos[0].content, "读取 AGENTS.md");
+        assert_eq!(todos[0].status, "completed");
+        assert_eq!(todos[0].active_form.as_deref(), Some("正在读取 AGENTS.md"));
+        assert_eq!(todos[1].content, "检查 package.json");
+        assert_eq!(todos[1].status, "pending");
+    }
+
+    #[test]
+    fn settle_agents_only_closes_running_entries() {
+        let mut data = cell().data.lock().map(|guard| guard.clone()).unwrap();
+        data.agents = vec![
+            AiAgent { task_id: "a".into(), tool_use_id: None, name: "A".into(), description: None,
+                status: "running".into(), background: false, parent_task_id: None, depth: 1,
+                started_at: 0, ended_at: None, summary: None, duration_ms: None, tool_uses: None },
+            AiAgent { task_id: "b".into(), tool_use_id: None, name: "B".into(), description: None,
+                status: "completed".into(), background: false, parent_task_id: None, depth: 1,
+                started_at: 0, ended_at: Some(5), summary: None, duration_ms: Some(5), tool_uses: None },
+        ];
+        settle_agents(&mut data, "stopped");
+        assert_eq!(data.agents[0].status, "stopped");
+        assert_eq!(data.agents[1].status, "completed");
+        assert_eq!(data.agents[1].duration_ms, Some(5));
+    }
+
+    #[test]
+    fn legacy_session_json_without_new_fields_still_loads() {
+        let legacy: AiSession = serde_json::from_value(json!({
+            "id": "old", "title": "旧会话", "provider": "claude", "projectPath": "/tmp",
+            "model": null, "status": "idle", "messages": [], "approvals": [], "error": null,
+            "updatedAt": 1, "revision": 1,
+        })).unwrap();
+        assert!(legacy.todos.is_empty());
+        assert!(legacy.agents.is_empty());
+        // 空集合不落盘：旧格式序列化后不应多出 null / 空数组字段。
+        let value = serde_json::to_value(&legacy).unwrap();
+        assert!(value.get("todos").is_none());
+        assert!(value.get("agents").is_none());
+    }
 }
 
 #[cfg(test)]

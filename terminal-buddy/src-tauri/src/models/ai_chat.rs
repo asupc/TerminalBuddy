@@ -27,6 +27,57 @@ pub struct AiMessage {
     /// 用户消息附带的图片：客户端据此展示缩略图，CLI 侧转成多模态内容块。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<AiImage>,
+    /// TodoWrite 工具消息标记：正文保留 `TodoWrite\n{完整 input}` 供历史恢复回填清单，
+    /// 前端分组时连同其 tool_result 一起跳过渲染（清单由底部清单卡呈现）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub todo: bool,
+}
+
+fn is_false(value: &bool) -> bool { !*value }
+
+/// 会话当前任务清单：`TodoWrite` 全量快照的直接投影。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTodo {
+    /// 命令式文案，如「修复登录跳转」。
+    pub content: String,
+    /// pending | in_progress | completed
+    pub status: String,
+    /// 进行中文案，如「正在修复登录跳转」；只用于折叠态摘要。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_form: Option<String>,
+}
+
+/// 本轮派发过的子代理：运行态由 `task_*` 系列事件维护，结束后保留供回看。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAgent {
+    pub task_id: String,
+    /// 关联的 Task tool_use id；与消息的 subagentKey（`{turn}:{parent}`）同源。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    /// subagent_type，缺失时回落 description 或 "subagent"。
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// running | completed | failed | stopped | killed | paused
+    pub status: String,
+    #[serde(default)]
+    pub background: bool,
+    /// 嵌套子代理的父任务 id。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<String>,
+    #[serde(default)]
+    pub depth: u32,
+    pub started_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_uses: Option<i64>,
 }
 
 /// 已落盘的图片附件。消息与排队项只保存元数据，不内嵌 base64，
@@ -134,6 +185,12 @@ pub struct AiSession {
     /// `/` 补全清单，来自 `system/init`，随会话启动自动刷新。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slash_catalog: Option<SlashCatalog>,
+    /// 会话当前任务清单（TodoWrite 全量快照的直接投影）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub todos: Vec<AiTodo>,
+    /// 本轮派发过的子代理状态（`task_started` / `task_updated` / `task_notification`）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<AiAgent>,
 }
 
 impl AiSession {
@@ -150,6 +207,9 @@ impl AiSession {
             // 排队消息是客户端可见的元数据：实时帧需要它来刷新「N 条排队中」。
             pending_inputs: self.pending_inputs.clone(),
             slash_catalog: self.slash_catalog.clone(),
+            // 任务清单与子代理状态是底部面板的实时数据源，必须随每一帧下发。
+            todos: self.todos.clone(),
+            agents: self.agents.clone(),
         }
     }
 }
