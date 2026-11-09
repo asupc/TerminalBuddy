@@ -22,6 +22,8 @@ pub(crate) struct ClaudeHookRequest {
     session_id: String,
     hook_event_name: String,
     #[serde(default)]
+    prompt_id: Option<String>,
+    #[serde(default)]
     prompt: Option<String>,
     #[serde(default)]
     last_assistant_message: Option<String>,
@@ -153,7 +155,7 @@ fn emit_terminal_event(
     terminal_id: &str,
     request: &ClaudeHookRequest,
     phase: &str,
-) {
+) -> bool {
     let session_start = request.hook_event_name == "SessionStart";
     crate::services::terminal_task_service::record_claude_session(
         terminal_id, &request.session_id, request.prompt.as_deref(), session_start,
@@ -176,14 +178,19 @@ fn emit_terminal_event(
     };
     // relay 阶段表：键含 sessionId，且只有与当前绑定完全匹配才写入
     // （旧会话的迟到 SessionEnd 不会污染换绑后的新会话）。
-    crate::services::terminal_agent_relay::note_phase(
-        terminal_id, "claude", &request.session_id, phase, occurred_at,
-    );
+    if !crate::services::terminal_agent_relay::note_claude_hook_phase(
+        terminal_id, &request.session_id, &request.hook_event_name, request.prompt_id.as_deref(), phase, occurred_at,
+    ) {
+        eprintln!("[ClaudeHook] 忽略过期状态 terminal={} session={} event={} phase={}",
+            terminal_id, request.session_id, request.hook_event_name, phase);
+        return false;
+    }
     if matches!(phase, "running" | "attention") {
         crate::services::terminal_agent_relay::monitor_claude_activity(app, terminal_id);
     }
     let _ = app.emit("claude-hook-terminal-event", event.clone());
     AppNotificationService::publish_terminal_result(&event, terminal_name(app, terminal_id));
+    true
 }
 
 fn settle_decision(
@@ -242,9 +249,11 @@ pub(crate) async fn claude_hook(
             eprintln!("[ClaudeHook] Stop terminal={} background_tasks={} blocking={} scheduled_crons={}",
                 terminal_id, request.background_tasks.len(), background_pending, request.session_crons.len());
             if background_pending {
-                crate::services::terminal_agent_relay::hold_for_background_work(
-                    terminal_id, &request.session_id, next_hook_timestamp(),
-                );
+                if crate::services::terminal_agent_relay::hold_for_background_work(
+                    terminal_id, &request.session_id, request.prompt_id.as_deref(), next_hook_timestamp(),
+                ) {
+                    crate::services::terminal_agent_relay::monitor_claude_activity(&app, terminal_id);
+                }
             } else {
                 // session_crons 是未来唤醒计划，不代表此刻仍在执行。
                 emit_terminal_event(&app, terminal_id, &request, "completed");
@@ -288,7 +297,9 @@ pub(crate) async fn claude_hook(
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    if !native { emit_terminal_event(&app, terminal_id, &request, "attention"); }
+    if !native && !emit_terminal_event(&app, terminal_id, &request, "attention") {
+        return StatusCode::NO_CONTENT.into_response();
+    }
     let decision_id = if native { uuid::Uuid::new_v4().to_string() } else { format!(
         "{}:{}:{}", request.session_id, tool_use_id, uuid::Uuid::new_v4()
     ) };

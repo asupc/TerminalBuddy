@@ -669,6 +669,10 @@ pub(crate) struct PhaseEntry {
     pub last_seen: Instant,
     /// Stop 已确认仍有真实后台工作时，不用前台回合结束记录提前结算。
     pub background_pending: bool,
+    /// Claude 用户提示词的回合标识；工具心跳不能启动或切换用户回合。
+    prompt_id: Option<String>,
+    /// 最新一次 UserPromptSubmit 的时间，区别于工具心跳的到达时间。
+    prompt_started_at: Option<i64>,
 }
 
 /// 阶段表：允许每终端多代次留存；至少保留 24 小时、上限 500 条并按最近使用淘汰。
@@ -695,11 +699,50 @@ impl PhaseTable {
                         occurred_at,
                         last_seen: Instant::now(),
                         background_pending: false,
+                        prompt_id: None,
+                        prompt_started_at: None,
                     },
                 );
             }
         }
         self.prune();
+    }
+
+    /// 回合开始由 UserPromptSubmit 确认；迟到的工具 / 通知不能重新点亮已结算的回合。
+    fn note_claude_hook(
+        &mut self, key: PhaseKey, event_name: &str, prompt_id: Option<&str>, phase: &str, occurred_at: i64,
+    ) -> bool {
+        let prompt_id = prompt_id.filter(|id| !id.is_empty());
+        let current = self.entries.get(&key);
+        let settled = current.is_some_and(|entry| {
+            matches!(entry.phase.as_str(), "completed" | "failed" | "ended")
+                || (entry.phase == "idle" && entry.prompt_started_at.is_some())
+        });
+        let new_prompt = event_name == "UserPromptSubmit";
+        if event_name != "SessionStart" {
+            if !new_prompt {
+                if matches!(phase, "running" | "attention") && settled { return false; }
+                if current.and_then(|entry| entry.prompt_id.as_deref()).zip(prompt_id)
+                    .is_some_and(|(active, incoming)| active != incoming) { return false; }
+            } else if current.filter(|entry| entry.prompt_started_at.is_some())
+                .and_then(|entry| entry.prompt_id.as_deref()).zip(prompt_id)
+                .is_some_and(|(active, incoming)| active == incoming) {
+                // 同一提示词的重复提交事件不能改变回合开始时间或覆盖完成状态。
+                return false;
+            }
+        }
+        self.note(key.clone(), phase, occurred_at);
+        let entry = self.entries.get_mut(&key).expect("刚写入的回合状态必须存在");
+        if event_name == "SessionStart" {
+            entry.prompt_id = prompt_id.map(str::to_string);
+            entry.prompt_started_at = None;
+        } else if new_prompt {
+            entry.prompt_id = prompt_id.map(str::to_string);
+            entry.prompt_started_at = Some(occurred_at);
+        } else if entry.prompt_id.is_none() {
+            entry.prompt_id = prompt_id.map(str::to_string);
+        }
+        true
     }
 
     /// 审批结束等场景：已 ended（或换绑后键不匹配）则不覆盖。
@@ -725,11 +768,13 @@ impl PhaseTable {
         let Some(entry) = self.entries.get_mut(key) else { return false; };
         let interrupted = matches!(end, ClaudeTurnEnd::Interrupted(_));
         if (entry.phase != "running" && !(interrupted && entry.phase == "attention"))
-            || (!interrupted && entry.background_pending) || end.at() <= entry.occurred_at {
+            || (!interrupted && entry.background_pending)
+            || end.at() <= entry.prompt_started_at.unwrap_or(entry.occurred_at) {
             return false;
         }
         entry.phase = end.phase().to_string();
-        entry.occurred_at = end.at();
+        // 结算依据是用户回合开始时间；广播时间仍须晚于迟到心跳，前端才会接受纠正。
+        entry.occurred_at = end.at().max(entry.occurred_at.saturating_add(1));
         entry.background_pending = false;
         entry.last_seen = Instant::now();
         true
@@ -1454,7 +1499,7 @@ fn reconcile_transcript_end(
     let key = PhaseKey {
         terminal_id: info.id.clone(), provider: record.provider.clone(), session_id: record.session_id.clone(),
     };
-    let (end, summary) = {
+    let (end, occurred_at, summary) = {
         let mut current = lock_state();
         let Some(entry) = current.mirrors.get(&info.id)
             .filter(|entry| entry.available && entry.provider == record.provider && entry.session_id == record.session_id)
@@ -1470,7 +1515,7 @@ fn reconcile_transcript_end(
                 .map(|message| super::codex_transcript::excerpt(&message.text, 220))
         };
         if !current.phases.settle_from_transcript(&key, end) { return; }
-        (end, summary)
+        (end, current.phases.entries[&key].occurred_at, summary)
     };
     for decision in pending {
         super::ClaudeHookService::expire_decision(&decision.decision_id);
@@ -1479,7 +1524,7 @@ fn reconcile_transcript_end(
         event_id: uuid::Uuid::new_v4().to_string(), terminal_id: info.id.clone(),
         session_id: record.session_id.clone(),
         event_name: if matches!(end, ClaudeTurnEnd::Interrupted(_)) { "TranscriptTurnInterrupted" } else { "TranscriptTurnComplete" }.to_string(),
-        phase: end.phase().to_string(), occurred_at: end.at(), provider: Some(record.provider.clone()),
+        phase: end.phase().to_string(), occurred_at, provider: Some(record.provider.clone()),
         notification_type: None, title: None, message: None, task_title: None, summary,
     };
     eprintln!("[TerminalActivity] 从转录补齐回合结束 terminal={} session={} phase={} occurred_at={}",
@@ -2058,14 +2103,27 @@ pub fn note_phase(terminal_id: &str, provider: &str, session_id: &str, phase: &s
     );
 }
 
+/// Claude Hook 按提示词回合更新；返回 false 时调用方也不能向客户端广播被拒绝的状态。
+pub(crate) fn note_claude_hook_phase(
+    terminal_id: &str, session_id: &str, event_name: &str, prompt_id: Option<&str>, phase: &str, occurred_at: i64,
+) -> bool {
+    if terminal_task_service::current_binding(terminal_id) != Some(("claude".to_string(), session_id.to_string())) {
+        return false;
+    }
+    lock_state().phases.note_claude_hook(
+        PhaseKey { terminal_id: terminal_id.to_string(), provider: "claude".to_string(), session_id: session_id.to_string() },
+        event_name, prompt_id, phase, occurred_at,
+    )
+}
+
 /// Stop 明确携带真实后台工作时，阻止前台 turn_duration 把整个任务提前结束。
-pub(crate) fn hold_for_background_work(terminal_id: &str, session_id: &str, occurred_at: i64) {
-    if terminal_task_service::current_binding(terminal_id) != Some(("claude".to_string(), session_id.to_string())) { return; }
+pub(crate) fn hold_for_background_work(terminal_id: &str, session_id: &str, prompt_id: Option<&str>, occurred_at: i64) -> bool {
+    if terminal_task_service::current_binding(terminal_id) != Some(("claude".to_string(), session_id.to_string())) { return false; }
     let key = PhaseKey { terminal_id: terminal_id.to_string(), provider: "claude".to_string(), session_id: session_id.to_string() };
     let mut current = lock_state();
-    if current.phases.entries.get(&key).is_some_and(|entry| entry.phase == "ended") { return; }
-    current.phases.note(key.clone(), "running", occurred_at);
+    if !current.phases.note_claude_hook(key.clone(), "Stop", prompt_id, "running", occurred_at) { return false; }
     if let Some(entry) = current.phases.entries.get_mut(&key) { entry.background_pending = true; }
+    true
 }
 
 /// 审批结束等场景：会话已 ended（或已换绑）时不把 running 写回去。
@@ -2685,6 +2743,52 @@ mod tests {
         ] {
             assert_eq!(claude_turn_end(&format!("{completed}{row}")), None);
         }
+    }
+
+    #[test]
+    fn settled_claude_turn_rejects_late_heartbeats_and_old_prompt_events() {
+        let key = PhaseKey { terminal_id: "terminal".into(), provider: "claude".into(), session_id: "session".into() };
+        for (event, phase) in [("Stop", "completed"), ("StopFailure", "failed"), ("TranscriptTurnInterrupted", "idle")] {
+            let mut table = PhaseTable::default();
+            assert!(table.note_claude_hook(key.clone(), "UserPromptSubmit", Some("first"), "running", 100));
+            assert!(table.note_claude_hook(key.clone(), event, Some("first"), phase, 200));
+            for prompt in [Some("first"), None] {
+                assert!(!table.note_claude_hook(key.clone(), "PreToolUse", prompt, "running", 250));
+                assert!(!table.note_claude_hook(key.clone(), "Notification", prompt, "attention", 260));
+            }
+            assert!(!table.note_claude_hook(key.clone(), "UserPromptSubmit", Some("first"), "running", 270));
+            assert_eq!(table.current("terminal", "claude", "session"), Some((phase.into(), 200)));
+            // 真正的新输入仍正常执行；旧回合的工具和完成事件不能污染新回合。
+            assert!(table.note_claude_hook(key.clone(), "UserPromptSubmit", Some("second"), "running", 300));
+            assert!(!table.note_claude_hook(key.clone(), "PreToolUse", Some("first"), "running", 350));
+            assert!(!table.note_claude_hook(key.clone(), "Stop", Some("first"), "completed", 360));
+            assert!(table.note_claude_hook(key.clone(), "PreToolUse", Some("second"), "running", 400));
+            assert_eq!(table.entries[&key].prompt_started_at, Some(300));
+        }
+        // 兼容不提供 prompt_id 的旧版 Claude：下一次真实输入仍能启动回合。
+        let mut table = PhaseTable::default();
+        assert!(table.note_claude_hook(key.clone(), "UserPromptSubmit", None, "running", 100));
+        assert!(table.note_claude_hook(key.clone(), "Stop", None, "completed", 200));
+        assert!(!table.note_claude_hook(key.clone(), "PreToolUse", None, "running", 250));
+        assert!(table.note_claude_hook(key, "UserPromptSubmit", None, "running", 300));
+    }
+
+    #[test]
+    fn transcript_end_uses_prompt_start_and_broadcasts_after_late_heartbeat() {
+        let key = PhaseKey { terminal_id: "terminal".into(), provider: "claude".into(), session_id: "session".into() };
+        let mut table = PhaseTable::default();
+        table.note_claude_hook(key.clone(), "UserPromptSubmit", Some("first"), "running", 100);
+        table.note_claude_hook(key.clone(), "PreToolUse", Some("first"), "running", 300);
+        // 转录 200 已结束、心跳 300 才到达：仍须结算，并让前端接受纠正事件。
+        assert!(table.settle_from_transcript(&key, ClaudeTurnEnd::Completed(200)));
+        assert_eq!(table.current("terminal", "claude", "session"), Some(("completed".into(), 301)));
+        table.note_claude_hook(key.clone(), "UserPromptSubmit", Some("second"), "running", 400);
+        assert!(!table.settle_from_transcript(&key, ClaudeTurnEnd::Completed(200)), "旧结束记录不能关闭新输入");
+        table.note_claude_hook(key.clone(), "PreToolUse", Some("second"), "running", 500);
+        table.entries.get_mut(&key).unwrap().background_pending = true;
+        assert!(!table.settle_from_transcript(&key, ClaudeTurnEnd::Completed(450)), "保留真实后台任务");
+        assert!(table.settle_from_transcript(&key, ClaudeTurnEnd::Interrupted(450)));
+        assert_eq!(table.current("terminal", "claude", "session"), Some(("idle".into(), 501)));
     }
 
     #[test]
