@@ -6,6 +6,7 @@ import { getWorkingDotColor } from './tabColor';
  * - 首个 hook 事件（无论类型）→ runtimeKind=claude，「会话在场」点亮
  * - UserPromptSubmit → running 绿闪「Claude 执行中」
  * - permission_prompt / 决策 → attention 黄闪「等待你的确认」
+ * - 用户中断（转录标记）→ idle 灰灯「会话在场 · 空闲」
  * - Stop → completed 绿亮「任务完成」
  * - StopFailure → failed 红长亮「错误停止」（点击清除；不受 30min 过期影响）
  * - SessionEnd → 会话在场熄灭（runtimeKind 回 shell）

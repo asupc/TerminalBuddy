@@ -261,7 +261,10 @@ function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
   if (event.sessionId) {
     store.setClaudeSessionId(event.terminalId, event.sessionId);
   }
-  if (event.phase === 'running') {
+  if (event.phase === 'idle') {
+    // 转录中的用户中断不会触发 Stop；退回空闲时清除执行过期计时和待发送通知。
+    cancelPendingClaudeNotifications(event.terminalId);
+  } else if (event.phase === 'running') {
     cancelPendingClaudeCompletion(event.terminalId);
     cancelAttentionForTerminal(event.terminalId);
     scheduleClaudeActivityExpiry(event.terminalId, event.occurredAt);
