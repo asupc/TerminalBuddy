@@ -17,6 +17,8 @@ import {
   aiSessionSwitchModel,
   aiCatalog,
   listenTauri,
+  type AiAgent,
+  type AiMessage,
   type AiSession,
   type AiSessionUpdateFrame,
   type AnswerAiApproval,
@@ -24,6 +26,9 @@ import {
 } from '../../services/tauri';
 import { useAppStore, type AgentDraftImage, type NativeAgentTab } from '../../stores/appStore';
 import { AgentMessageList, type AgentMessageListHandle, type ChatBlock } from './AgentMessageList';
+import { TodoCard } from './TodoCard';
+import { AgentChips } from './AgentChips';
+import { AgentDrawer } from './AgentDrawer';
 import { filterSlashCommands, SlashCompletions } from './SlashCompletions';
 import './AgentChat.css';
 
@@ -100,6 +105,13 @@ function outlineLabel(text: string): string {
   return firstLine.trim().slice(0, 48);
 }
 
+/** 由 Task 的 tool_use_id 找子代理分组键：消息的 subagentKey 是 `{turn}:{parent}`，
+ * 后缀即 tool_use_id（与后端 `format!("{turn}:{parent}")` 同源）。 */
+function subagentKeyFor(messages: { subagentKey?: string }[], toolUseId: string): string | null {
+  const match = messages.find(message => message.subagentKey?.endsWith(`:${toolUseId}`));
+  return match?.subagentKey ?? null;
+}
+
 /** 输入框上方待发送的图片：dataUrl 用于即时预览，data 是交给服务端的 base64。 */
 const MAX_DRAFT_IMAGES = 8;
 const MAX_DRAFT_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -161,6 +173,14 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const listRef = useRef<AgentMessageListHandle>(null);
   // 右侧输入节点导轨：当前视口内的用户输入（scroll spy 驱动高亮）。
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  // 子代理抽屉：记录选中的 (agent, subagentKey)。抽屉只读 messages，不影响主列表虚拟化。
+  const [selected, setSelected] = useState<{ agent: AiAgent; key: string | null } | null>(null);
+  // 关闭抽屉后把焦点还给触发它的 chip（按 taskId 找回；chip 可能已被淘汰，找不到就算了）。
+  const restoreFocus = useRef<string | null>(null);
+  // 回调里需要读到最新的消息与选中项，但又不能因此重新绑定回调。
+  const messagesRef = useRef<AiMessage[]>([]);
+  const selectedRef = useRef<typeof selected>(null);
+  const sessionRef = useRef<AiSession | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -205,6 +225,8 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   }, [session?.status, tab.sessionId]);
 
   const messages = session?.messages ?? [];
+  const messageCount = messages.length;
+  const running = session != null && ['running', 'approval', 'background', 'stopping'].includes(session.status);
 
   // 新会话的 CLI 还没启动时没有 system/init：先用本地缓存或最近一次同 Agent 会话的清单补全。
   const [fallbackCatalog, setFallbackCatalog] = useState<SlashCatalog | null>(() => readCachedCatalog(tab.provider));
@@ -235,6 +257,61 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   }, [session?.slashCatalog, tab.provider, fallbackCatalog]);
   const slashCatalog = session?.slashCatalog ?? fallbackCatalog;
 
+  // 子代理 chip 与正文 Task 组头共用同一个抽屉：点击同一个已选中的 chip 关闭。
+  const openAgent = useCallback((agent: AiAgent) => {
+    const key = agent.toolUseId ? subagentKeyFor(messagesRef.current, agent.toolUseId) : null;
+    setSelected(current => {
+      if (current?.agent.taskId === agent.taskId) {
+        restoreFocus.current = agent.taskId;
+        return null;
+      }
+      return { agent, key };
+    });
+  }, []);
+  const closeDrawer = useCallback(() => {
+    restoreFocus.current = selectedRef.current?.agent.taskId ?? null;
+    setSelected(null);
+  }, []);
+  // 正文 Task 组头：按 tool_use_id 找到对应 agent 并开同一个抽屉；agent 尚未登记时
+  // （旧会话 / 事件缺失）也允许打开，抽屉按消息分组键筛选内容。
+  const openAgentByToolUseId = useCallback((toolUseId: string) => {
+    const agent = sessionRef.current?.agents?.find(item => item.toolUseId === toolUseId);
+    if (agent) { openAgent(agent); return; }
+    const key = subagentKeyFor(messagesRef.current, toolUseId);
+    if (!key) return;
+    // 没有 agent 记录时用该组消息里的子代理名，避免把分组键（turn:tool_use_id）当名字显示。
+    const groupName = messagesRef.current.find(message => message.subagentKey === key)?.subagent ?? '子代理';
+    setSelected(current => (current?.key === key ? null : {
+      agent: {
+        taskId: key, toolUseId, name: groupName, status: 'completed',
+        background: false, depth: 1, startedAt: 0,
+      },
+      key,
+    }));
+  }, [openAgent]);
+  // 会话切换、/clear 之后选中的子代理已不存在：自动收起，避免悬空抽屉。
+  // 依赖只看消息条数：流式期间内容每帧变化，但组是否存在的结论不会变。
+  useEffect(() => {
+    if (!selected) return;
+    const key = selected.key;
+    const exists = messagesRef.current.some(message =>
+      (key ? message.subagentKey === key : message.subagent === selected.agent.name));
+    if (!exists && !running) setSelected(null);
+  }, [messageCount, running, selected]);
+  messagesRef.current = messages;
+  selectedRef.current = selected;
+  sessionRef.current = session;
+  // 焦点回还：抽屉关闭且 chip 仍在 DOM 里时聚焦它。
+  useEffect(() => {
+    if (selected || !restoreFocus.current) return;
+    const taskId = restoreFocus.current;
+    restoreFocus.current = null;
+    requestAnimationFrame(() => {
+      const chip = document.querySelector<HTMLButtonElement>(`.agent-chip[data-task-id="${taskId}"]`);
+      chip?.focus();
+    });
+  }, [selected]);
+
   // 连续工具调用合并为一个块；子代理消息按 subagentKey（turn + parent_tool_use_id，
   // 审查 V-5）精确分组——同名代理不误并组、同一代理被主线程消息隔开也不拆组，
   // 组位置取首次出现处；用户/助手消息保持原顺序。旧会话无 subagentKey 时回落
@@ -243,6 +320,8 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     const result: ChatBlock[] = [];
     const groupIndex = new Map<string, number>();
     for (const message of messages) {
+      // TodoWrite 的工具调用与结果由底部清单卡统一呈现，正文不重复显示。
+      if (message.todo) continue;
       if (message.subagent) {
         const groupKey = message.subagentKey ?? `name:${message.subagent}`;
         const at = message.subagentKey ? groupIndex.get(groupKey) : undefined;
@@ -420,7 +499,6 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   }, [pickSlash, send, slashIndex, slashItems]);
 
   const pending = session?.pendingInputs ?? [];
-  const running = session != null && ['running', 'approval', 'background', 'stopping'].includes(session.status);
   // 发送中或 Agent 正在执行且不在等用户确认：显示「AI 正在思考中」，长时间无正文时也能看出进程仍在跑。
   const busy = sending || (running && session?.status !== 'approval');
   const [thinkingSince, setThinkingSince] = useState<number | null>(null);
@@ -445,7 +523,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const context = session?.usage?.context;
   const lastTurn = session?.usage?.lastTurn;
   const usage = session?.usage;
-  const contextPercent = context?.usedTokens != null && context.windowTokens
+  const contextPercent = context?.usedTokens && context.windowTokens
     ? Math.min(100, Math.round((context.usedTokens / context.windowTokens) * 100))
     : null;
   // 上下文摘要点击后打开与手机端同源的用量明细（输入/输出/缓存/命中率）。
@@ -469,10 +547,19 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     return () => { disposed = true; };
   }, [usageOpen, session?.providerId, session?.model]);
 
+  // 抽屉里的 agent 用会话中的最新版本：实时帧更新状态/耗时时抽屉要跟着变，
+  // 而不是停在打开那一刻的快照上。
+  const drawerAgent = useMemo(() => {
+    if (!selected) return null;
+    const live = selected.agent.toolUseId
+      ? session?.agents?.find(item => item.toolUseId === selected.agent.toolUseId)
+      : session?.agents?.find(item => item.taskId === selected.agent.taskId);
+    return live ?? selected.agent;
+  }, [selected, session?.agents]);
+
   return (
     <div className="agent-chat-page">
-      <header className="agent-chat-header">
-        <div className="agent-chat-heading">
+      <header className="agent-chat-header">        <div className="agent-chat-heading">
           <AgentIcon provider={tab.provider} className="agent-chat-icon" />
           <div className="agent-chat-titles">
             <div className="agent-chat-title">{session?.title ?? tab.title}</div>
@@ -513,15 +600,31 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
           stickRef={stickToBottom}
           onAnswer={answer}
           onActiveUserChange={setActiveNodeId}
+          onOpenTask={openAgentByToolUseId}
         />
         <ChatNodeRail
           nodes={outlineNodes}
           activeId={activeNodeId}
           onJump={id => listRef.current?.jumpTo(id)}
         />
+        {selected && drawerAgent && (
+          <AgentDrawer
+            agent={drawerAgent}
+            subagentKey={selected.key}
+            messages={messages}
+            onClose={closeDrawer}
+          />
+        )}
       </div>
 
       <footer className="agent-chat-composer">
+        <TodoCard todos={session?.todos ?? []} sessionId={tab.sessionId} running={running} />
+        <AgentChips
+          agents={session?.agents ?? []}
+          selectedKey={selected?.agent.toolUseId ?? null}
+          onSelect={openAgent}
+          sessionId={tab.sessionId}
+        />
         {pending.length > 0 && (
           <div className="agent-pending-list">
             <div className="agent-pending-title">{pending.length} 条排队中</div>
@@ -609,17 +712,17 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
               <span className="agent-usage-group">
                 <span className="agent-usage-label">上下文</span>
                 <span className="agent-usage-value">
-                  {context?.updating && context.usedTokens == null
+                  {context?.updating && !context.usedTokens
                     ? '待更新'
                     : contextPercent != null
                       ? `${contextPercent}%`
-                      : compact(context?.usedTokens)}
+                      : context?.usedTokens ? compact(context.usedTokens) : '—'}
                 </span>
                 {contextPercent != null && (
                   <span className="agent-context-bar"><span style={{ width: `${contextPercent}%` }} /></span>
                 )}
                 <span className="agent-usage-sub">
-                  {compact(context?.usedTokens)} / {compact(context?.windowTokens)}
+                  {context?.usedTokens ? compact(context.usedTokens) : '—'} / {compact(context?.windowTokens)}
                 </span>
               </span>
               <span className="agent-usage-sep" />

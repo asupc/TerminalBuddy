@@ -1370,3 +1370,487 @@
 [data-theme="light"] .agent-subagent-entry .agent-tool-header svg {
   color: #7c5ce0;
 }
+
+/* ===== 任务清单卡与子代理面板（2026-11） =====
+   规格见 docs/原生会话任务清单与子代理面板实施计划.md 第 6 章；
+   颜色全部取自 global.css 的设计令牌，子代理紫色与 .agent-subagent-entry 保持一致。 */
+
+:root {
+  --agent-accent-purple: #a78bfa;
+}
+[data-theme="light"] {
+  --agent-accent-purple: #7c5ce0;
+}
+
+/* ── 任务清单卡 ───────────────────────────────────────────── */
+.agent-todo-card {
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border-subtle));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  overflow: hidden;
+}
+
+.agent-todo-card.done-all {
+  border-color: var(--border-subtle);
+  background: transparent;
+}
+
+.agent-todo-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard);
+}
+
+.agent-todo-head:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.agent-todo-ring {
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+  height: 18px;
+  padding: 0 6px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-todo-now {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.agent-todo-now b {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.agent-todo-card.done-all .agent-todo-now {
+  color: var(--text-tertiary);
+}
+
+.agent-todo-bar {
+  width: 64px;
+  height: 4px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  overflow: hidden;
+}
+
+.agent-todo-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 320ms var(--ease-standard);
+}
+
+.agent-todo-card.done-all .agent-todo-bar > span {
+  background: var(--success);
+}
+
+.agent-todo-chev {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  transition: transform var(--motion-fast) var(--ease-standard);
+}
+
+.agent-todo-head[aria-expanded="true"] .agent-todo-chev {
+  transform: rotate(90deg);
+}
+
+.agent-todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 2px 8px 8px;
+  list-style: none;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.agent-todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.agent-todo-mark {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+}
+
+.agent-todo-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-todo-item.done {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-tertiary) 60%, transparent);
+}
+
+.agent-todo-item.done .agent-todo-mark {
+  color: var(--success);
+}
+
+.agent-todo-item.now {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.agent-todo-item.now .agent-todo-mark {
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+  animation: agent-todo-pulse 1.6s infinite ease-in-out;
+}
+
+.agent-todo-item.pending .agent-todo-mark {
+  border: 1px solid var(--text-tertiary);
+  border-radius: 50%;
+  opacity: 0.6;
+}
+
+@keyframes agent-todo-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+
+/* ── 子代理 chip 带 ───────────────────────────────────────── */
+.agent-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--agent-accent-purple) 30%, var(--border-subtle));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--agent-accent-purple) 6%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard);
+}
+
+.agent-chip:hover {
+  background: color-mix(in srgb, var(--agent-accent-purple) 13%, transparent);
+}
+
+.agent-chip[aria-pressed="true"] {
+  border-color: var(--agent-accent-purple);
+  background: color-mix(in srgb, var(--agent-accent-purple) 16%, transparent);
+  color: var(--text-primary);
+}
+
+.agent-chip-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--agent-accent-purple);
+}
+
+.agent-chip.running .agent-chip-dot {
+  animation: agent-todo-pulse 1.6s infinite ease-in-out;
+}
+
+.agent-chip.completed {
+  border-color: var(--border-subtle);
+  background: transparent;
+}
+
+.agent-chip.completed .agent-chip-dot {
+  background: var(--success);
+  animation: none;
+}
+
+.agent-chip.failed {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+.agent-chip.failed .agent-chip-dot {
+  background: var(--danger);
+}
+
+.agent-chip.stopped .agent-chip-dot {
+  background: var(--text-tertiary);
+}
+
+.agent-chip-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.agent-chip-meta {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-chip-more {
+  padding: 4px 9px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* ── 子代理抽屉 ───────────────────────────────────────────── */
+.agent-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 78%);
+  border-left: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  box-shadow: -14px 0 34px rgb(0 0 0 / 0.16);
+  animation: agent-drawer-in 220ms var(--ease-standard);
+}
+
+@keyframes agent-drawer-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.agent-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.agent-drawer-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--agent-accent-purple);
+}
+
+.agent-drawer-dot.completed { background: var(--success); }
+.agent-drawer-dot.failed { background: var(--danger); }
+.agent-drawer-dot.stopped,
+.agent-drawer-dot.killed { background: var(--text-tertiary); }
+
+.agent-drawer-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--agent-accent-purple);
+}
+
+.agent-drawer-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  background: color-mix(in srgb, var(--agent-accent-purple) 16%, transparent);
+  color: var(--agent-accent-purple);
+}
+
+.agent-drawer-badge.completed {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+}
+
+.agent-drawer-badge.failed {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.agent-drawer-badge.stopped,
+.agent-drawer-badge.killed {
+  background: color-mix(in srgb, var(--text-tertiary) 16%, transparent);
+  color: var(--text-tertiary);
+}
+
+.agent-drawer-spacer {
+  margin-left: auto;
+}
+
+.agent-drawer-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-drawer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.agent-drawer-empty {
+  padding: 12px 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.agent-drawer-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-drawer-bubble {
+  max-width: 100%;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.agent-drawer-tool {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.agent-drawer-tool summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.agent-drawer-tool summary svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.agent-drawer-tool pre {
+  margin: 0;
+  padding: 7px 9px;
+  max-height: 132px;
+  overflow: auto;
+  border-top: 1px solid var(--border-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--text-tertiary);
+  white-space: pre-wrap;
+}
+
+@media (max-width: 640px) {
+  .agent-drawer {
+    width: 100%;
+    box-shadow: none;
+  }
+}
+
+/* ── 正文内的 Task 组头 ───────────────────────────────────── */
+.agent-task-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: min(560px, 84%);
+  padding: 7px 11px;
+  border: 1px solid color-mix(in srgb, var(--agent-accent-purple) 34%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--agent-accent-purple) 8%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard);
+}
+
+.agent-task-head:hover {
+  background: color-mix(in srgb, var(--agent-accent-purple) 14%, transparent);
+}
+
+.agent-task-head .agent-task-glyph {
+  color: var(--agent-accent-purple);
+  flex-shrink: 0;
+}
+
+.agent-task-head .agent-task-name {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.agent-task-head .agent-task-desc {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-todo-item.now .agent-todo-mark,
+  .agent-chip.running .agent-chip-dot {
+    animation: none;
+  }
+  .agent-todo-bar > span,
+  .agent-todo-chev {
+    transition: none;
+  }
+  .agent-drawer {
+    animation: none;
+  }
+}

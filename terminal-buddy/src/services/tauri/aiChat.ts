@@ -24,6 +24,36 @@ export interface AiMessage {
   modelSwitch?: AiModelSwitch;
   /** 用户消息附带的图片：输入框上方与消息气泡内都据此显示缩略图。 */
   images?: AiChatImage[];
+  /** TodoWrite 的工具调用/结果：正文保留原始 input 供历史回填，
+   * 前端分组时连同其结果一起跳过渲染（清单由底部清单卡呈现）。 */
+  todo?: boolean;
+}
+
+/** 会话当前任务清单：TodoWrite 全量快照的直接投影。 */
+export interface AiTodo {
+  /** 命令式文案，如「修复登录跳转」。 */
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed' | string;
+  /** 进行中文案；只用于折叠态摘要，展开列表一律显示 content。 */
+  activeForm?: string | null;
+}
+
+/** 本轮派发过的子代理：运行态由 task_* 事件维护，结束后保留供回看。 */
+export interface AiAgent {
+  taskId: string;
+  /** 关联的 Task tool_use id；与消息的 subagentKey（`{turn}:{parent}`）同源。 */
+  toolUseId?: string | null;
+  name: string;
+  description?: string | null;
+  status: 'running' | 'completed' | 'failed' | 'stopped' | 'killed' | 'paused' | string;
+  background: boolean;
+  parentTaskId?: string | null;
+  depth: number;
+  startedAt: number;
+  endedAt?: number | null;
+  summary?: string | null;
+  durationMs?: number | null;
+  toolUses?: number | null;
 }
 
 /** 会话中途切换模型的记录；分段位置即切换发生的时间点。 */
@@ -95,6 +125,10 @@ export interface AiSession {
   usage?: AiUsage | null;
   pendingInputs?: PendingInput[];
   slashCatalog?: SlashCatalog | null;
+  /** 会话当前任务清单（TodoWrite 全量快照的直接投影）。 */
+  todos?: AiTodo[];
+  /** 本轮派发过的子代理状态。 */
+  agents?: AiAgent[];
 }
 
 export interface AiProviderOption {

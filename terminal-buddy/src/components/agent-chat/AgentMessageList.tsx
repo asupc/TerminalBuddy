@@ -46,6 +46,8 @@ interface Props {
   onAnswer: (approval: AnswerAiApproval) => void;
   /** 视口内第一个用户消息变化时上报，驱动右侧导航的当前节点高亮。 */
   onActiveUserChange: (id: string | null) => void;
+  /** 正文 Task 组头点击：按 tool_use_id 打开子代理抽屉（与 chip 指向同一分组）。 */
+  onOpenTask?: (toolUseId: string) => void;
 }
 
 export function formatClock(at: number): string {
@@ -239,6 +241,42 @@ const SubagentGroup = memo(function SubagentGroup({ name, messages }: { name: st
   && prev.messages.length === next.messages.length
   && prev.messages.every((message, index) => message === next.messages[index]));
 
+/**
+ * 主线程 Task 工具调用的组头：不再显示 `Task\n{json}` 原文，改为
+ * 「代理名 — 描述」，点击打开同一个子代理抽屉（规格见实施计划 6.4）。
+ */
+const TaskHead = memo(function TaskHead({ message, onOpen }: {
+  message: AiMessage;
+  onOpen?: (toolUseId: string) => void;
+}) {
+  const parsed = useMemo(() => {
+    const newline = message.text.indexOf('\n');
+    if (newline < 0) return { name: '', description: '' };
+    try {
+      const input = JSON.parse(message.text.slice(newline + 1)) as { subagent_type?: string; description?: string };
+      return { name: input.subagent_type ?? '', description: input.description ?? '' };
+    } catch {
+      return { name: '', description: '' };
+    }
+  }, [message.text]);
+  // 工具消息 id 形如 `{turn}-tool-{tool_use_id}`，后半段即子代理关联键。
+  const toolUseId = message.id.split('-tool-').pop() ?? '';
+  const name = parsed.name || '子代理';
+  return (
+    <button
+      type="button"
+      className="agent-task-head"
+      onClick={() => toolUseId && onOpen?.(toolUseId)}
+      title={parsed.description || name}
+      aria-label={`查看子代理 ${name} 的工作过程`}
+    >
+      <span className="agent-task-glyph" aria-hidden="true">◈</span>
+      <span className="agent-task-name">{name}</span>
+      {parsed.description && <span className="agent-task-desc">— {parsed.description}</span>}
+    </button>
+  );
+});
+
 const AssistantBubble = memo(function AssistantBubble({ text, streaming }: { text: string; streaming?: boolean }) {
   return (
     <div className="agent-bubble-row assistant">
@@ -280,6 +318,7 @@ export function AgentMessageList({
   stickRef,
   onAnswer,
   onActiveUserChange,
+  onOpenTask,
 }: Props & { ref?: React.Ref<AgentMessageListHandle> }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | undefined)[]>([]);
@@ -499,7 +538,9 @@ export function AgentMessageList({
               block.kind === 'tools'
                 ? (block.messages.length > 1
                   ? <ToolGroup messages={block.messages} />
-                  : <ToolMessage message={block.messages[0]} />)
+                  : (block.messages[0].text.startsWith('Task\n')
+                    ? <TaskHead message={block.messages[0]} onOpen={onOpenTask} />
+                    : <ToolMessage message={block.messages[0]} />))
                 : block.kind === 'subagent'
                   ? <SubagentGroup name={block.name} messages={block.messages} />
                   : (() => {
