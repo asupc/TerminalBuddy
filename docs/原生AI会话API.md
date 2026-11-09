@@ -61,16 +61,26 @@ AI REST 接口不使用普通 API 的请求正文大小和处理超时限制；�
 
 消息还带可选的 `todo`（布尔）标记：`TodoWrite` 的工具调用与其 `tool_result` 置为 `true`，正文仍保留原始 `TodoWrite\n{input JSON}` 供历史恢复回填清单，客户端渲染时应跳过这类消息（清单由会话级 `todos` 呈现）。
 
-会话新增两个可选字段（值为空时不序列化，旧会话与非 Claude 会话自然缺省）：
+会话新增三个可选字段（值为空时不序列化，旧会话与非 Claude 会话自然缺省）：
 
 - `todos`：当前任务清单，数组，元素为 `{ content, status, activeForm? }`，`status ∈ pending | in_progress | completed`。数据来自 Claude 的两条工具路径，规则不同：
   - `TodoWrite`（全量快照）：每次调用**整体替换**清单，不叠加；
   - `TaskCreate` / `TaskUpdate` / `TaskList`（增量）：`TaskCreate` 在结果行 `Task #N created successfully: 标题` 到达时按编号插入，`TaskUpdate` 按 `taskId` 改字段，`TaskList` 的 `#N [status] 标题` 多行结果整表校准。编号即清单序号（从 1 起）。
 
   这两组工具在 Claude Code 2.1.x 默认关闭（`system/init.tools` 里没有它们，模型会明确回答"工具不存在"），原生会话在 `--settings` 临时配置里默认打开 `CLAUDE_CODE_ENABLE_TODO_TOOLS` / `CLAUDE_CODE_ENABLE_TASKS`；用户已在同一位置显式配置的值不会被覆盖。历史恢复时按最后一条 `TodoWrite` 快照或重放 `Task*` 序列回填，解析失败静默跳过。上一轮任务结束、进入新回合时清单清空。
-- `agents`：本轮派发过的子代理，数组，元素为 `{ taskId, toolUseId?, name, description?, status, background, parentTaskId?, depth, startedAt, endedAt?, summary?, durationMs?, toolUses? }`，`status ∈ running | completed | failed | stopped | killed | paused`。
+- `agents`：本轮派发过的子代理，数组，元素为 `{ taskId, toolUseId?, name, description?, status, taskType?, background, parentTaskId?, depth, startedAt, endedAt?, summary?, durationMs?, toolUses? }`，`status ∈ running | completed | failed | stopped | killed | paused`。`taskType` 是 CLI 的任务类型（子代理为 `local_agent` 等）。
 
-`agents` 由 Claude 的 `system/task_started`、`task_updated`、`task_notification` 与 `background_tasks_changed` 快照维护：以快照做校准（快照中消失的条目置 `stopped` 而非删除），`run_id` 字典序更小的迟到帧直接丢弃，终态不回退。`ambient`（内部杂务）与 `skip_transcript` 条目不进 `agents`；`awaited` 条目进 `agents`，但不计入「后台任务未完成」的回合结束判定。`toolUseId` 与消息的 `subagentKey`（`{turn}:{parent_tool_use_id}`）后半段相同，客户端据此筛选该子代理的完整过程。上一轮任务结束、会话中断、服务重启或进程退出时，仍在 `running` 的条目标为终态，不会残留「执行中」。这两组字段只随会话文件存活，不跨会话共享；Codex 会话当前不产生 `agents`。
+`agents` 由 Claude 的 `system/task_started`、`task_updated`、`task_notification` 与 `background_tasks_changed` 快照维护：以快照做校准（快照中消失的条目置 `stopped` 而非删除），`run_id` 字典序更小的迟到帧直接丢弃，终态不回退。`ambient`（内部杂务）、`skip_transcript` 条目，以及**后台命令**（`task_type = local_bash` / `background_shell`，例如后台运行的 Bash 命令——CLI 对它们下发同构的 `task_*` 事件，但它们不产生任何子代理消息）都不进 `agents`；`awaited` 条目进 `agents`，但不计入「后台任务未完成」的回合结束判定。`toolUseId` 与消息的 `subagentKey`（`{turn}:{parent_tool_use_id}`）后半段相同，客户端据此筛选该子代理的完整过程。上一轮任务结束、会话中断、服务重启或进程退出时，仍在 `running` 的条目标为终态，不会残留「执行中」。子代理工具在 CLI 2.1.x 起由 `Task` 改名为 `Agent`，后端两代名字都识别；加载旧会话时会把历史里被误记成子代理的后台命令一并清理。这两组字段只随会话文件存活，不跨会话共享；Codex 会话当前不产生 `agents`。
+- `thinking`：主线程当前思考的实时快照，`{ text, startedAt, updatedAt, active, blocks, totalChars }`，无思考时为 `null`。
+
+  它回答的是长回合里「模型到底在干什么」：Claude 的 `stream_event` 会持续下发 `thinking_delta`，**此前后端直接丢弃**，实测一个会话第一轮就有 164 段思考、42 万字，前 28 分钟没有一行正文，界面上只剩一个「已等待 N 秒」的呼吸灯。现在这些增量累积进 `thinking.text`，客户端据此在「思考中」状态行里滚动显示最新一句、可展开看全文。
+
+  三条边界必须遵守：
+  - **不落盘**：`thinking` 只随实时帧下发，写入会话文件时被剔除（思考不是聊天记录，且每批 delta 重写整个会话文件的写放大不可接受）；服务重启后该字段自然为空。
+  - **不进 `messages`**：思考不参与历史回放、不占消息 ID 空间、不参与 `result` 阶段的「本轮是否已有正文」判定。客户端不要把它当消息渲染。
+  - **只留尾部**：`text` 只保留最近 4000 字符（截断点回退到段落边界），因此 `totalChars` 是**截断前**的累计字符数，用来说明模型确实在推进；`text.length` 与 `totalChars` 不等时前端可提示「只保留最近 N 字」。
+
+  `active` 表示这一段是否仍在输出：正文或工具块开始、思考块 `content_block_stop`、回合收尾时都会置 `false`。`blocks` 是本回合已开始的思考段数（正文/工具之后的思考算新的一段）。子代理的思考不进这里，只走带 `parent_tool_use_id` 的子代理消息。上一轮任务结束、进入新回合时清空。Codex 会话当前不产生 `thinking`。
 
 WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type": "update", "session": "不含历史消息的会话对象", "messages": ["新增或变更的完整消息对象"] }`。客户端按消息 ID 更新有序列表；重连重新获取首帧，REST 可用于补偿。AI 连接不占用普通终端的全局配额，不限制帧或消息大小，不按固定发送或心跳超时断开；保留 Ping/Pong 和认证复核，实际连接关闭、网络错误、令牌失效或关闭 Web API 时结束订阅，服务端任务仍独立执行。
 
