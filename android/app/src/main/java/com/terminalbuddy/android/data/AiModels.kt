@@ -71,6 +71,21 @@ fun slashCompletions(catalog: AiSlashCatalog?, draft: String, limit: Int = 12): 
         .toList()
 }
 
+/** 主线程当前思考的实时快照（Claude thinking 块）。不落盘、不进聊天记录：
+ * 长回合里模型可能思考几十分钟才输出一句正文，界面靠它证明模型仍在推进。 */
+@Serializable
+data class AiThinking(
+    val text: String = "",
+    val startedAt: Long = 0,
+    val updatedAt: Long = 0,
+    /** 是否仍在输出：思考块结束后为 false。 */
+    val active: Boolean = false,
+    /** 本回合已开始的思考段数。 */
+    val blocks: Int = 0,
+    /** 本回合思考累计字符数（截断前统计）。 */
+    val totalChars: Long = 0,
+)
+
 @Serializable
 data class AiSession(
     val id: String, val title: String, val provider: String, val projectPath: String,
@@ -82,6 +97,8 @@ data class AiSession(
     val pendingInputs: List<AiPendingInput> = emptyList(),
     /** CLI `system/init` 下发的 `/` 命令清单；会话启动后自动刷新。 */
     val slashCatalog: AiSlashCatalog? = null,
+    /** 主线程当前思考的实时快照；无思考或回合结束时为 null。 */
+    val thinking: AiThinking? = null,
 ) {
     /** 服务端仍在该会话执行任务（含等待用户确认）。 */
     val running get() = status == "running" || status == "approval" || status == "background" || status == "stopping"

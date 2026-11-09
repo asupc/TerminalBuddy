@@ -202,6 +202,7 @@ internal fun TerminalAgentChatScreen(
                             session.provider,
                             if (ui.queuedReplies.isNotEmpty()) "$statusLabel · ${ui.queuedReplies.size} 条排队中" else statusLabel,
                             elapsedSeconds,
+                            null,
                             Modifier.animateItem(fadeInSpec = tween(120), placementSpec = null, fadeOutSpec = null),
                         )
                     }

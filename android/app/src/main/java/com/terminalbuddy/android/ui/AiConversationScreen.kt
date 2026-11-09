@@ -11,6 +11,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -220,6 +221,7 @@ private fun AiConversation(
                             session.providerLabel,
                             if (session.pendingCount > 0) "$statusLabel · ${session.pendingCount} 条排队中" else statusLabel,
                             elapsedSeconds,
+                            thinking = session.thinking,
                             Modifier.animateItem(fadeInSpec = tween(120), placementSpec = null, fadeOutSpec = null),
                         )
                     }
@@ -701,20 +703,70 @@ private fun AiAvatar(provider: String, modifier: Modifier = Modifier) {
     }
 }
 
+/** 思考面板折叠态展示的最新一句：优先最后一个完整句子，其次最后一个非空行。 */
+internal fun aiThinkingPeek(text: String): String {
+    val trimmed = text.trimEnd()
+    if (trimmed.isBlank()) return ""
+    val clean = { value: String -> value.replace(Regex("^[#>*\\-\\s]+"), "").replace(Regex("\\s+"), " ").trim() }
+    val lines = trimmed.lineSequence().map(clean).filter(String::isNotBlank).toList()
+    if (lines.isEmpty()) return clean(trimmed)
+    val last = lines.last()
+    // 最后一行太短（比如只有「1.」）时回退到上一行，避免闪出一个残句。
+    return if (last.length >= 4 || lines.size == 1) last else lines[lines.size - 2]
+}
+
 @Composable
-internal fun AiReplyIndicator(provider: String, label: String, elapsedSeconds: Long, modifier: Modifier = Modifier) {
-    Row(
-        modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        AiAvatar(provider)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(label, color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall)
-            AiConnectionSpinner(TbColors.Accent, Modifier.size(14.dp))
-            Text(
-                (elapsedSeconds / 60).toString().padStart(2, '0') + ":" + (elapsedSeconds % 60).toString().padStart(2, '0'),
-                color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
-            )
+internal fun AiReplyIndicator(
+    provider: String, label: String, elapsedSeconds: Long,
+    thinking: AiThinking? = null, modifier: Modifier = Modifier,
+) {
+    // 思考内容默认折叠成一行（跟随最新一句），点开可看服务端保留的尾部全文。
+    val peek = remember(thinking?.text) { thinking?.let { aiThinkingPeek(it.text) } ?: "" }
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Column(modifier.fillMaxWidth().padding(vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            AiAvatar(provider)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(label, color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall)
+                AiConnectionSpinner(TbColors.Accent, Modifier.size(14.dp))
+                Text(
+                    (elapsedSeconds / 60).toString().padStart(2, '0') + ":" + (elapsedSeconds % 60).toString().padStart(2, '0'),
+                    color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+                )
+            }
+        }
+        if (peek.isNotBlank()) {
+            Column(
+                Modifier.padding(start = 30.dp).fillMaxWidth()
+                    .border(BorderStroke(1.dp, TbColors.Border), RoundedCornerShape(8.dp)).padding(8.dp),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { expanded = !expanded }
+                        .semantics { stateDescription = if (expanded) "思考内容已展开" else "思考内容已折叠" },
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val counter = when {
+                        thinking == null || thinking.totalChars <= 0 -> ""
+                        thinking.totalChars >= 10000 -> " · ${thinking.totalChars / 1000} 千字"
+                        else -> " · ${thinking.totalChars} 字"
+                    }
+                    Text(
+                        if (thinking != null && thinking.blocks > 1) "第 ${thinking.blocks} 段思考$counter" else "思考$counter",
+                        color = TbColors.TextMuted, style = MaterialTheme.typography.labelSmall,
+                    )
+                    if (!expanded) Text(
+                        peek, color = TbColors.TextSoft, style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                    )
+                }
+                if (expanded && thinking != null) {
+                    Text(
+                        thinking.text, color = TbColors.TextSoft,
+                        style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp).verticalScroll(rememberScrollState()),
+                    )
+                }
+            }
         }
     }
 }
