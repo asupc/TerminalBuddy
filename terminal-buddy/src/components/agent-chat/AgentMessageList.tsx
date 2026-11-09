@@ -1,10 +1,11 @@
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Bot, CornerDownLeft } from 'lucide-react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { AgentIcon } from './AgentIcon';
 import { ChatMarkdown } from './ChatMarkdown';
 import { SkillEntry } from './SkillEntry';
 import { ApprovalCard } from './ApprovalCard';
-import type { AiApproval, AiMessage, AiModelSwitch, AnswerAiApproval } from '../../services/tauri';
+import type { AiApproval, AiChatImage, AiMessage, AiModelSwitch, AnswerAiApproval } from '../../services/tauri';
 
 /**
  * 虚拟化消息列表：长会话（数千条消息、超大工具输出）全量常驻 DOM 是内存暴涨的主因，
@@ -173,11 +174,29 @@ const ModelSwitchDivider = memo(function ModelSwitchDivider({ at, info }: { at: 
   );
 });
 
-const UserBubble = memo(function UserBubble({ text, skillName }: { text: string; skillName?: string }) {
+const UserBubble = memo(function UserBubble({ text, skillName, images }: { text: string; skillName?: string; images?: AiChatImage[] }) {
   if (skillName) return <SkillEntry name={skillName} text={text} />;
   return (
     <div className="agent-bubble-row user">
-      <div className="agent-bubble user">{text}</div>
+      <div className="agent-bubble user">
+        {images && images.length > 0 && (
+          <div className="agent-message-images">
+            {images.map((image, index) => (
+              <a
+                key={`${image.path}-${index}`}
+                className="agent-message-image"
+                href={convertFileSrc(image.path)}
+                target="_blank"
+                rel="noreferrer"
+                title={image.name || `图片 ${index + 1}`}
+              >
+                <img src={convertFileSrc(image.path)} alt={image.name || `图片 ${index + 1}`} loading="lazy" />
+              </a>
+            ))}
+          </div>
+        )}
+        {text && <div className="agent-bubble-text">{text}</div>}
+      </div>
     </div>
   );
 });
@@ -489,7 +508,7 @@ export function AgentMessageList({
                     return <ModelSwitchDivider at={message.createdAt} info={message.modelSwitch} />;
                   }
                   if (message.role === 'user') {
-                    return <UserBubble text={message.text} skillName={message.skillName} />;
+                    return <UserBubble text={message.text} skillName={message.skillName} images={message.images} />;
                   }
                   if (message.role === 'assistant') {
                     return <AssistantBubble text={message.text} streaming={message.id === streamingTailId} />;

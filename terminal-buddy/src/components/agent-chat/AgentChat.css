@@ -640,6 +640,79 @@
   gap: 6px;
 }
 
+/* 输入框上方的待发送图片：与 ZCode 一致，缩略图横向排列、可逐张移除。 */
+.agent-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px;
+}
+
+.agent-attachment {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-primary, transparent);
+}
+
+.agent-attachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.agent-attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+}
+
+.agent-attachment-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 隐藏的原生文件选择器，由输入栏「图片」按钮触发。 */
+.agent-image-input {
+  display: none;
+}
+
+/* 用户消息里的图片：按原始比例缩小，点击可在新窗口查看大图。 */
+.agent-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.agent-message-image {
+  display: block;
+  line-height: 0;
+}
+
+.agent-message-image img {
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 7px;
+  object-fit: cover;
+  display: block;
+}
+
 .agent-input {
   width: 100%;
   resize: none;
@@ -1054,16 +1127,20 @@
 
 /* ===== 内存优化与右侧输入节点导航（2026-11） ===== */
 
-/* 中段改为左右布局：虚拟化消息区 + 输入节点导航侧栏 */
+/* 中段改为左右布局：虚拟化消息区 + 绝对定位的输入节点导轨 */
 .agent-chat-body {
   flex: 1;
   min-height: 0;
   display: flex;
+  /* 导轨绝对定位的定位上下文 */
+  position: relative;
 }
 
 .agent-chat-body .agent-chat-messages {
   flex: 1;
   min-width: 0;
+  /* 右侧留出导轨位置（峰值横线 31px + 让开的滚动条），正文不会被横线压住 */
+  padding-right: 46px;
 }
 
 /* 虚拟化块 wrapper：窗口外的块只有固定高度占位，不渲染正文。
@@ -1089,102 +1166,142 @@
   100% { background: transparent; }
 }
 
-/* 右侧输入节点导航（类大纲面板）：列出全部用户输入，点击定位 */
-.agent-chat-outline {
-  width: 216px;
-  flex-shrink: 0;
-  border-left: 1px solid var(--border-subtle);
-  background: var(--bg-secondary);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.agent-outline-head {
-  padding: 8px 12px;
-  font-size: 11px;
-  color: var(--text-tertiary);
-  border-bottom: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.agent-outline-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.agent-outline-item {
+/* 右侧输入节点导轨：移植自 ZCode ConversationTurnNavigator。
+   每条用户输入一根 12px 短横线，悬停时以指针为中心形成「山峰」（2.6x/1.7x/1.25x），
+   点击定位。导轨覆盖在消息区右缘，不占用消息区宽度；伸缩以右端为原点。 */
+.agent-node-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 12px;
+  width: 36px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
+  justify-content: center;
+  z-index: 6;
+  /* 导轨本身不拦截滚动/选中，只有条目接收事件。 */
+  pointer-events: none;
+}
+
+/* 容器过窄或没有节点时只隐藏内容，保留外壳供 ResizeObserver 观察。 */
+.agent-node-rail.hidden {
+  display: none;
+}
+
+.agent-node-rail-list {
+  pointer-events: auto;
+  max-height: calc(100% - 96px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.agent-node-rail-list::-webkit-scrollbar {
+  display: none;
+}
+
+.agent-node-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 36px;
+  height: 10px;
+  padding: 0;
   border: none;
-  border-radius: 6px;
   background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 11px;
-  text-align: left;
+  pointer-events: auto;
   cursor: pointer;
 }
 
-.agent-outline-item:hover {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+.agent-node-bar:focus-visible {
+  outline: none;
 }
 
-.agent-outline-item.active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
+.agent-node-bar:focus-visible .agent-node-bar-fill {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
-.agent-outline-index {
-  flex-shrink: 0;
-  min-width: 16px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  color: var(--text-tertiary);
+/* ZCode：span 默认 12x2、scaleX(1)、opacity 0.58，150ms ease-out 过渡；
+   悬停项由内联样式放大到 2.6 倍，相邻项依次 1.7 / 1.25。 */
+.agent-node-bar-fill {
+  display: block;
+  width: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background-color: var(--text-secondary);
+  transform-origin: right center;
+  transition:
+    height 0.15s ease-out,
+    opacity 0.15s ease-out,
+    transform 0.15s ease-out,
+    background-color 0.15s ease-out;
 }
 
-.agent-outline-item.active .agent-outline-index {
-  color: inherit;
+/* 悬停中心与当前滚动位置的横线用主文字色，其余用次级色 + 更低不透明度。 */
+.agent-node-bar.focus .agent-node-bar-fill {
+  background-color: var(--text-primary);
 }
 
-.agent-outline-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-outline-time {
-  flex-shrink: 0;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 10px;
-  color: var(--text-tertiary);
-}
-
-.agent-outline-empty {
-  padding: 14px 12px;
-  font-size: 11px;
-  color: var(--text-tertiary);
-  line-height: 1.6;
-}
-
-/* 窄窗口放下导航侧栏会挤压消息区：自动隐藏（仍可用顶部按钮开关） */
-@media (max-width: 960px) {
-  .agent-chat-outline {
-    display: none;
+@media (prefers-reduced-motion: reduce) {
+  .agent-node-bar-fill {
+    transition: none;
   }
+}
+
+/* 悬停浮层：ZCode 的 w-80 / p-3 规格，展示输入（2 行）与助手回复（3 行）。 */
+.agent-node-tip {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 0;
+  transform: translateY(-50%);
+  width: 320px;
+  max-width: calc(100vw - 2rem);
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34);
+  pointer-events: none;
+  z-index: 8;
+  animation: agent-node-tip-in 0.12s ease;
+}
+
+/* 浮层淡入：横线之间切换时组件不卸载，动画不会重播 */
+@keyframes agent-node-tip-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 首帧还没算好位置时先隐藏，避免浮层从导轨顶部闪一下。 */
+.agent-node-tip.pending {
+  visibility: hidden;
+}
+
+.agent-node-tip-user,
+.agent-node-tip-reply {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.agent-node-tip-user {
+  -webkit-line-clamp: 2;
+  font-weight: 500;
+}
+
+.agent-node-tip-reply {
+  -webkit-line-clamp: 3;
+  margin-top: 8px;
+  color: var(--text-secondary);
 }
 
 /* 发送按钮与停止按钮并排：运行中的停止入口紧跟发送 */
@@ -1197,12 +1314,6 @@
 
 .agent-stop-btn svg {
   color: #ef4444;
-}
-
-/* 顶部按钮的激活态（节点导航开关） */
-.agent-btn.active {
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-  color: var(--accent);
 }
 
 /* 超长正文/工具输出的「展开全部」按钮 */

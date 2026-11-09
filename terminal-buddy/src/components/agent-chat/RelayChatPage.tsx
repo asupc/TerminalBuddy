@@ -39,7 +39,10 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
   const [session, setSession] = useState<TerminalAgentSession | null>(null);
   const [messages, setMessages] = useState<RelayReplayMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
+  // 草稿存在 store 里：切换到其它会话/标签时本页会被卸载，组件内 state 会丢字。
+  const draft = useAppStore(state => state.agentDrafts[tab.key] ?? '');
+  const setAgentDraft = useAppStore(state => state.setAgentDraft);
+  const setDraft = useCallback((text: string) => setAgentDraft(tab.key, text), [setAgentDraft, tab.key]);
   const [sending, setSending] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [now, setNow] = useState(Date.now());
@@ -164,7 +167,7 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
     } finally {
       setSending(false);
     }
-  }, [draft, sending, session?.canReply, session?.replyBlockedReason, terminalId]);
+  }, [draft, sending, session?.canReply, session?.replyBlockedReason, terminalId, setDraft]);
 
   const onScroll = useCallback(() => {
     const element = bottomRef.current?.parentElement;

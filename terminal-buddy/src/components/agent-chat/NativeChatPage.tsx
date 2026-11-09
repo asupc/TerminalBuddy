@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleStop, ListTree, Send, Trash2, Zap } from 'lucide-react';
+import { CircleStop, ImagePlus, Send, Trash2, X, Zap } from 'lucide-react';
 import { AgentIcon } from './AgentIcon';
+import { ChatNodeRail, type ChatNode } from './ChatNodeRail';
 import { ModelSwitcher } from './ModelSwitcher';
 import { UsagePanel, cacheHitRate, compact } from './UsagePanel';
 import {
   AI_SESSION_REMOVED_EVENT,
   AI_SESSION_UPDATE_EVENT,
   aiSessionAnswer,
-  aiSessionDelete,
   aiSessionFlush,
   aiSessionGet,
   aiSessionList,
@@ -22,8 +22,8 @@ import {
   type AnswerAiApproval,
   type SlashCatalog,
 } from '../../services/tauri';
-import { useAppStore, type NativeAgentTab } from '../../stores/appStore';
-import { AgentMessageList, formatClock, type AgentMessageListHandle, type ChatBlock } from './AgentMessageList';
+import { useAppStore, type AgentDraftImage, type NativeAgentTab } from '../../stores/appStore';
+import { AgentMessageList, type AgentMessageListHandle, type ChatBlock } from './AgentMessageList';
 import { filterSlashCommands, SlashCompletions } from './SlashCompletions';
 import './AgentChat.css';
 
@@ -71,8 +71,6 @@ function mergeSession(previous: AiSession | null, frame: AiSessionUpdateFrame): 
  * 这段时间先借用同一客户端最近一次拿到的清单，避免输入 / 没有补全。
  */
 const SLASH_CATALOG_CACHE_KEY = 'agent-slash-catalog';
-/** 右侧输入节点导航的展开状态持久化键。 */
-const OUTLINE_VISIBLE_KEY = 'agent-outline-visible';
 
 function readCachedCatalog(provider: string): SlashCatalog | null {
   try {
@@ -102,11 +100,33 @@ function outlineLabel(text: string): string {
   return firstLine.trim().slice(0, 48);
 }
 
-interface OutlineNode {
-  id: string;
-  label: string;
-  skillName?: string;
-  at: number;
+/** 输入框上方待发送的图片：dataUrl 用于即时预览，data 是交给服务端的 base64。 */
+const MAX_DRAFT_IMAGES = 8;
+const MAX_DRAFT_IMAGE_BYTES = 10 * 1024 * 1024;
+/** 无图片时复用同一空数组，避免每次取 store 都生成新引用触发重渲染。 */
+const EMPTY_DRAFT_IMAGES: AgentDraftImage[] = [];
+
+function readDraftImage(file: File): Promise<AgentDraftImage> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) { reject(new Error('仅支持图片文件')); return; }
+    if (file.size > MAX_DRAFT_IMAGE_BYTES) { reject(new Error('单张图片不能超过 10MB')); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? '');
+      const comma = dataUrl.indexOf(',');
+      if (comma < 0) { reject(new Error('图片读取失败')); return; }
+      resolve({
+        id: crypto.randomUUID(),
+        dataUrl,
+        // 发送时只带 base64 正文，服务端会校验格式并落盘。
+        data: dataUrl.slice(comma + 1),
+        mediaType: file.type || 'image/png',
+        name: file.name || '粘贴图片.png',
+      });
+    };
+    reader.onerror = () => reject(new Error('图片读取失败'));
+    reader.readAsDataURL(file);
+  });
 }
 
 export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
@@ -124,23 +144,23 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     return approvals.length === value.approvals.length ? value : { ...value, approvals };
   }, []);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
+  // 草稿存在 store 里：切换到其它会话/标签时本页会被卸载，组件内 state 会丢字。
+  const draft = useAppStore(state => state.agentDrafts[tab.key] ?? '');
+  const setAgentDraft = useAppStore(state => state.setAgentDraft);
+  const setDraft = useCallback((text: string) => setAgentDraft(tab.key, text), [setAgentDraft, tab.key]);
   const [sending, setSending] = useState(false);
+  // 待发送图片与文本草稿同存 store：切换标签导致本页重挂载时不丢图。
+  const draftImages = useAppStore(state => state.agentDraftImages[tab.key] ?? EMPTY_DRAFT_IMAGES);
+  const setAgentDraftImages = useAppStore(state => state.setAgentDraftImages);
+  const setDraftImages = useCallback((images: AgentDraftImage[]) => setAgentDraftImages(tab.key, images), [setAgentDraftImages, tab.key]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [slashIndex, setSlashIndex] = useState(0);
   const composing = useRef(false);
   const stickToBottom = useRef(true);
   const previousStatus = useRef<string | null>(null);
   const listRef = useRef<AgentMessageListHandle>(null);
-  // 右侧输入节点导航：默认展开，状态跨会话记住。
-  const [outlineOpen, setOutlineOpen] = useState(() => localStorage.getItem(OUTLINE_VISIBLE_KEY) !== '0');
+  // 右侧输入节点导轨：当前视口内的用户输入（scroll spy 驱动高亮）。
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
-
-  const toggleOutline = useCallback(() => {
-    setOutlineOpen(open => {
-      localStorage.setItem(OUTLINE_VISIBLE_KEY, open ? '0' : '1');
-      return !open;
-    });
-  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -250,19 +270,29 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     return result;
   }, [messages]);
 
-  // 右侧输入节点导航：列出全部用户输入（含 Skill 展开），点击即可定位。
-  const outlineNodes = useMemo<OutlineNode[]>(() => {
-    const nodes: OutlineNode[] = [];
+  // 右侧输入节点导轨：每条用户输入一根横线（含 Skill 展开），悬停看输入与回复摘要、点击定位。
+  const outlineNodes = useMemo<ChatNode[]>(() => {
+    const nodes: ChatNode[] = [];
     for (const block of blocks) {
       if (block.kind !== 'message') continue;
       const message = block.message;
-      if (message.role !== 'user') continue;
-      nodes.push({
-        id: message.id,
-        label: outlineLabel(message.text) || (message.skillName ? `skill:${message.skillName}` : '（空消息）'),
-        skillName: message.skillName,
-        at: message.createdAt,
-      });
+      if (message.role === 'user') {
+        const label = outlineLabel(message.text)
+          || (message.images?.length ? `[${message.images.length} 张图片]` : message.skillName ? `skill:${message.skillName}` : '（空消息）');
+        nodes.push({
+          id: message.id,
+          label,
+          userText: message.text,
+        });
+        continue;
+      }
+      // 浮层第二段展示该轮助手的文字回复（与 ZCode 一致，取本轮第一条有正文的助手消息）。
+      if (message.role === 'assistant' && nodes.length > 0) {
+        const current = nodes[nodes.length - 1];
+        if (current.assistantText == null && message.text.trim()) {
+          current.assistantText = message.text;
+        }
+      }
     }
     return nodes;
   }, [blocks]);
@@ -276,25 +306,61 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
 
   const pickSlash = useCallback((command: string) => {
     setDraft(`/${command} `);
-  }, []);
+  }, [setDraft]);
+
+  /** 粘贴 / 选择图片后先在输入框上方预览，发送时再随消息一起提交。 */
+  const addImages = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+    setError(null);
+    try {
+      const images = await Promise.all(files.map(readDraftImage));
+      const room = Math.max(0, MAX_DRAFT_IMAGES - draftImages.length);
+      if (images.length > room) setError(`一次最多发送 ${MAX_DRAFT_IMAGES} 张图片`);
+      if (room > 0) setDraftImages([...draftImages, ...images.slice(0, room)]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, [draftImages, setDraftImages]);
+
+  const removeDraftImage = useCallback((id: string) => {
+    setDraftImages(draftImages.filter(image => image.id !== id));
+  }, [draftImages, setDraftImages]);
+
+  const onPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData?.items ?? [])
+      .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+      .map(item => item.getAsFile())
+      .filter((file): file is File => file != null);
+    // 只有确实带图片时才拦截，普通文本粘贴保持浏览器默认行为。
+    if (files.length === 0) return;
+    event.preventDefault();
+    void addImages(files);
+  }, [addImages]);
 
   const send = useCallback(async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    const images = draftImages;
+    if ((!text && images.length === 0) || sending) return;
     setSending(true);
     setError(null);
     setDraft('');
+    setDraftImages([]);
     stickToBottom.current = true;
     try {
-      const snapshot = await aiSessionSend(tab.sessionId, { text, requestId: crypto.randomUUID() });
+      const snapshot = await aiSessionSend(tab.sessionId, {
+        text,
+        requestId: crypto.randomUUID(),
+        images: images.map(image => ({ data: image.data, mediaType: image.mediaType, name: image.name })),
+      });
       setSession(previous => (previous && previous.revision > snapshot.revision ? previous : stripAnswered(snapshot)));
     } catch (reason) {
       setError(String(reason));
       setDraft(text);
+      setDraftImages(images);
     } finally {
       setSending(false);
     }
-  }, [draft, sending, tab.sessionId]);
+  }, [draft, draftImages, sending, tab.sessionId, setDraft, setDraftImages]);
 
   const answer = useCallback(async (approval: AnswerAiApproval) => {
     try {
@@ -318,15 +384,6 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
       setError(String(reason));
     }
   }, [tab.sessionId]);
-
-  const removeSession = useCallback(async () => {
-    try {
-      await aiSessionDelete(tab.sessionId);
-      closeAgentTab(tab.key);
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }, [closeAgentTab, tab.key, tab.sessionId]);
 
   const stop = useCallback(() => {
     aiSessionStop(tab.sessionId).catch(reason => setError(String(reason)));
@@ -440,18 +497,6 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
             </div>
           </div>
         </div>
-        <div className="agent-chat-header-actions">
-          <button
-            className={`agent-btn${outlineOpen ? ' active' : ''}`}
-            title={outlineOpen ? '收起输入节点导航' : '展开输入节点导航'}
-            onClick={toggleOutline}
-          >
-            <ListTree aria-hidden="true" />节点
-          </button>
-          <button className="agent-btn danger" onClick={() => { void removeSession(); }}>
-            <Trash2 aria-hidden="true" />删除会话
-          </button>
-        </div>
       </header>
 
       <div className="agent-chat-body">
@@ -469,33 +514,11 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
           onAnswer={answer}
           onActiveUserChange={setActiveNodeId}
         />
-        {outlineOpen && (
-          <aside className="agent-chat-outline">
-            <div className="agent-outline-head">
-              <span>输入节点 · {outlineNodes.length}</span>
-            </div>
-            <div className="agent-outline-list">
-              {outlineNodes.length === 0 && (
-                <div className="agent-outline-empty">发送消息后，这里会列出全部输入，点击可快速定位。</div>
-              )}
-              {outlineNodes.map((node, index) => (
-                <button
-                  key={node.id}
-                  className={`agent-outline-item${activeNodeId === node.id ? ' active' : ''}`}
-                  title={node.label}
-                  onClick={() => listRef.current?.jumpTo(node.id)}
-                >
-                  <span className="agent-outline-index">{index + 1}</span>
-                  <span className="agent-outline-text">
-                    {node.skillName && <span className="agent-skill-badge">SKILL</span>}
-                    {node.label}
-                  </span>
-                  <span className="agent-outline-time">{formatClock(node.at)}</span>
-                </button>
-              ))}
-            </div>
-          </aside>
-        )}
+        <ChatNodeRail
+          nodes={outlineNodes}
+          activeId={activeNodeId}
+          onJump={id => listRef.current?.jumpTo(id)}
+        />
       </div>
 
       <footer className="agent-chat-composer">
@@ -521,13 +544,57 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
           {slashItems.length > 0 && (
             <SlashCompletions items={slashItems} activeIndex={slashIndex} onPick={pickSlash} />
           )}
+          {/* 与 ZCode 一致的附件区：粘贴/选择后的图片缩略图排在输入框上方，可逐张移除。 */}
+          {draftImages.length > 0 && (
+            <div className="agent-attachments" aria-label="待发送图片">
+              {draftImages.map(image => (
+                <div className="agent-attachment" key={image.id}>
+                  <img src={image.dataUrl} alt={image.name} title={image.name} />
+                  <button
+                    type="button"
+                    className="agent-attachment-remove"
+                    title="移除图片"
+                    aria-label="移除图片"
+                    onClick={() => removeDraftImage(image.id)}
+                  >
+                    <X aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="agent-image-input"
+            onChange={event => {
+              const files = Array.from(event.target.files ?? []);
+              // 清空值，连续选择同一文件也能再次触发 change。
+              event.target.value = '';
+              void addImages(files);
+            }}
+          />
           <textarea
             className="agent-input"
             value={draft}
             rows={3}
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+            placeholder="输入消息，Enter 发送，Shift+Enter 换行；可直接粘贴或拖入图片"
             onChange={event => setDraft(event.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            onDragOver={event => {
+              // 只有拖动文件时才接管，普通文本拖拽保持浏览器默认行为。
+              if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+            }}
+            onDrop={event => {
+              const files = Array.from(event.dataTransfer?.files ?? [])
+                .filter(file => file.type.startsWith('image/'));
+              if (files.length === 0) return;
+              event.preventDefault();
+              void addImages(files);
+            }}
             onCompositionStart={() => { composing.current = true; }}
             onCompositionEnd={() => { composing.current = false; }}
           />
@@ -571,7 +638,21 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
               </span>
             </button>
             <div className="agent-input-actions">
-              <button className="agent-btn primary" disabled={sending || !draft.trim()} onClick={() => { void send(); }}>
+              <button
+                type="button"
+                className="agent-btn"
+                title="添加图片"
+                aria-label="添加图片"
+                disabled={sending}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <ImagePlus aria-hidden="true" />图片
+              </button>
+              <button
+                className="agent-btn primary"
+                disabled={sending || (!draft.trim() && draftImages.length === 0)}
+                onClick={() => { void send(); }}
+              >
                 <Send aria-hidden="true" />发送
               </button>
               {/* 运行中的停止按钮紧跟发送按钮，不用再去顶部找中断入口。 */}
