@@ -74,25 +74,29 @@ function mergeSession(previous: AiSession | null, frame: AiSessionUpdateFrame): 
 /**
  * 斜杠命令清单缓存：新会话要等第一次发送启动 CLI 后才有 system/init，
  * 这段时间先借用同一客户端最近一次拿到的清单，避免输入 / 没有补全。
+ * 清单含项目级 skill（`.claude/skills`），因此缓存必须按项目隔离：
+ * 只按 provider 存会让 B 项目的新会话拿到 A 项目的清单，看起来像没加载项目级 skill。
  */
-const SLASH_CATALOG_CACHE_KEY = 'agent-slash-catalog';
+const SLASH_CATALOG_CACHE_KEY = 'agent-slash-catalog-v2';
 
-function readCachedCatalog(provider: string): SlashCatalog | null {
+const slashCatalogCacheKey = (provider: string, projectPath: string) => `${provider}\u0000${projectPath}`;
+
+function readCachedCatalog(provider: string, projectPath: string): SlashCatalog | null {
   try {
     const raw = localStorage.getItem(SLASH_CATALOG_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Record<string, SlashCatalog | undefined>;
-    return parsed[provider] ?? null;
+    return parsed[slashCatalogCacheKey(provider, projectPath)] ?? null;
   } catch {
     return null;
   }
 }
 
-function writeCachedCatalog(provider: string, catalog: SlashCatalog): void {
+function writeCachedCatalog(provider: string, projectPath: string, catalog: SlashCatalog): void {
   try {
     const raw = localStorage.getItem(SLASH_CATALOG_CACHE_KEY);
     const parsed = raw ? JSON.parse(raw) as Record<string, SlashCatalog> : {};
-    parsed[provider] = catalog;
+    parsed[slashCatalogCacheKey(provider, projectPath)] = catalog;
     localStorage.setItem(SLASH_CATALOG_CACHE_KEY, JSON.stringify(parsed));
   } catch {
     // 缓存失败不影响补全：会话自有 init 到达后仍会更新。
@@ -244,8 +248,10 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const messageCount = messages.length;
   const running = session != null && ['running', 'approval', 'background', 'stopping'].includes(session.status);
 
-  // 新会话的 CLI 还没启动时没有 system/init：先用本地缓存或最近一次同 Agent 会话的清单补全。
-  const [fallbackCatalog, setFallbackCatalog] = useState<SlashCatalog | null>(() => readCachedCatalog(tab.provider));
+  // 新会话的 CLI 还没启动时没有 system/init：先用本项目缓存或最近一次同项目会话的清单补全。
+  const [fallbackCatalog, setFallbackCatalog] = useState<SlashCatalog | null>(
+    () => readCachedCatalog(tab.provider, tab.projectPath),
+  );
   const cachedCatalogJson = useRef<string | null>(null);
   useEffect(() => {
     const own = session?.slashCatalog;
@@ -253,7 +259,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
       const json = JSON.stringify(own);
       if (json !== cachedCatalogJson.current) {
         cachedCatalogJson.current = json;
-        writeCachedCatalog(tab.provider, own);
+        writeCachedCatalog(tab.provider, tab.projectPath, own);
       }
       setFallbackCatalog(previous => (previous === own ? previous : own));
       return;
@@ -263,14 +269,15 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     aiSessionList()
       .then(list => {
         if (disposed) return;
-        const recent = list
-          .filter(item => item.provider === tab.provider && item.slashCatalog)
-          .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+        const catalogs = list.filter(item => item.provider === tab.provider && item.slashCatalog);
+        // 优先同项目：项目级 skill 随 cwd 变化，跨项目借用会显示错误的清单。
+        const recent = catalogs.find(item => item.projectPath === tab.projectPath)
+          ?? catalogs.sort((a, b) => b.updatedAt - a.updatedAt)[0];
         if (recent?.slashCatalog) setFallbackCatalog(recent.slashCatalog);
       })
       .catch(() => {});
     return () => { disposed = true; };
-  }, [session?.slashCatalog, tab.provider, fallbackCatalog]);
+  }, [session?.slashCatalog, tab.provider, tab.projectPath, fallbackCatalog]);
   const slashCatalog = session?.slashCatalog ?? fallbackCatalog;
 
   // 子代理 chip 与正文 Task 组头共用同一个抽屉：点击同一个已选中的 chip 关闭。

@@ -214,8 +214,8 @@
 }
 
 .agent-bubble.assistant {
-  /* AI 回复固定占会话窗口宽度的 70%，长内容更易读。 */
-  max-width: 70%;
+  /* AI 回复固定占会话窗口宽度的 90%，长内容更易读。 */
+  max-width: 90%;
   /* 列表记号、长 URL 等不应画出气泡边框之外 */
   min-width: 0;
   overflow-wrap: break-word;
