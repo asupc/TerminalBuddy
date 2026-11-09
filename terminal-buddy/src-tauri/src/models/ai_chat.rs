@@ -24,6 +24,34 @@ pub struct AiMessage {
     /// 模型切换分段：role = "system" 时携带切换前后的配置，前端渲染为分隔线。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_switch: Option<ModelSwitch>,
+    /// 用户消息附带的图片：客户端据此展示缩略图，CLI 侧转成多模态内容块。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<AiImage>,
+}
+
+/// 已落盘的图片附件。消息与排队项只保存元数据，不内嵌 base64，
+/// 避免会话 JSON 与实时推送帧被大图撑爆。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiImage {
+    /// 服务端绝对路径（位于 dataPath/ClientData/ai-images）。
+    pub path: String,
+    /// MIME 类型（image/png、image/jpeg 等）。
+    pub media_type: String,
+    /// 原始文件名，仅用于展示。
+    #[serde(default)]
+    pub name: String,
+}
+
+/// 发送时客户端提交的图片：base64 正文，服务端解码落盘后替换为 [AiImage]。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendAiImage {
+    /// base64 编码的图片数据；兼容带 `data:<mime>;base64,` 前缀的写法。
+    pub data: String,
+    pub media_type: String,
+    #[serde(default)]
+    pub name: String,
 }
 
 /// 会话中途切换供应商或模型的记录：从哪一段开始由 `createdAt` 标定。
@@ -62,6 +90,9 @@ pub struct AiApproval {
 pub struct PendingInput {
     pub text: String,
     pub request_id: String,
+    /// 排队期间保留图片附件，出队时与文本一起交给 CLI。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<AiImage>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -145,6 +176,9 @@ pub struct SendAiMessage {
     /// 默认排队，等当前回合任务全部完成后由服务端写入同一个 CLI 进程。
     #[serde(default)]
     pub steer: bool,
+    /// 随消息发送的图片（base64）：服务端落盘后转为 [AiImage]。
+    #[serde(default)]
+    pub images: Vec<SendAiImage>,
 }
 
 /// 把指定排队消息立即插话到当前回合（worker 已退出时按选中消息启动新回合）。

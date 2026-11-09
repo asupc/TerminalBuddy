@@ -80,12 +80,17 @@ mod headless {
 
     pub trait Manager {
         fn state<T: Send + Sync + 'static>(&self) -> State<'_, T>;
+        /// 可选状态：未注册时返回 None，与桌面端 Tauri 的 `Manager::try_state` 对齐。
+        fn try_state<T: Send + Sync + 'static>(&self) -> Option<State<'_, T>>;
     }
 
     impl Manager for AppHandle {
         fn state<T: Send + Sync + 'static>(&self) -> State<'_, T> {
             State(self.0.get(&TypeId::of::<T>()).and_then(|v| v.downcast_ref())
                 .expect("运行时状态必须在启动时注册"))
+        }
+        fn try_state<T: Send + Sync + 'static>(&self) -> Option<State<'_, T>> {
+            self.0.get(&TypeId::of::<T>()).and_then(|v| v.downcast_ref()).map(State)
         }
     }
 

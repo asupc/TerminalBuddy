@@ -6,6 +6,7 @@ use crate::runtime::Emitter;
 use super::{ai_chat_approval::{self as approval, ClaudeApproval}, ai_chat_usage as usage};
 use super::ai_chat_claude_hooks::{NativeClaudeHooks, NativeHookEvent};
 use super::{atomic_file::atomic_write_private, terminal_task_service::SessionSummaryTracker, PathService};
+use base64::Engine;
 use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
     process::{Child, ChildStdin, Command, Stdio}, sync::{Arc, Mutex, OnceLock, mpsc, atomic::{AtomicBool, AtomicUsize, Ordering}},
@@ -18,7 +19,7 @@ static RUNNING: AtomicUsize = AtomicUsize::new(0);
 struct RunningTask;
 impl Drop for RunningTask { fn drop(&mut self) { RUNNING.fetch_sub(1, Ordering::Relaxed); } }
 
-enum Control { Stop, Retire, Message { text: String, request_id: String }, Approval(AnswerAiApproval) }
+enum Control { Stop, Retire, Message { text: String, request_id: String, images: Vec<AiImage> }, Approval(AnswerAiApproval) }
 enum WorkerExit { Completed, Retired }
 /// 桌面 webview 与浏览器事件通道共用的 AppHandle（启动时注入）。
 static APP: OnceLock<crate::runtime::AppHandle> = OnceLock::new();
@@ -312,7 +313,7 @@ fn prefill_history_messages(provider: &str, session_id: &str, total: usize) -> R
             if offset >= total { break; }
             offset += 1; advanced = true;
             if !matches!(item.role.as_str(), "user" | "assistant" | "tool") || item.text.trim().is_empty() { continue; }
-            messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role, text: item.text, created_at: item.timestamp.unwrap_or(0), skill_name: None, model_switch: None, subagent_key: None, subagent: None });
+            messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role, text: item.text, created_at: item.timestamp.unwrap_or(0), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new() });
         }
         if !advanced { break; }
     }
@@ -332,7 +333,8 @@ fn history_messages(session_id: &str, history: &crate::models::session_history::
         }
         if parts.is_empty() { return None; }
         Some(AiMessage { id: format!("history-{session_id}-{}", message.seq), role: message.role.clone(),
-            text: parts.join("\n\n"), created_at: message.timestamp.unwrap_or(history.updated_at), skill_name: None, model_switch: None, subagent_key: None, subagent: None })
+            text: parts.join("\n\n"), created_at: message.timestamp.unwrap_or(history.updated_at), skill_name: None, model_switch: None, subagent_key: None, subagent: None,
+            images: Vec::new() })
     }).collect()
 }
 
@@ -429,6 +431,7 @@ pub fn switch_model(id: &str, owner: &str, provider_id: &str, model: &str) -> Re
         subagent: None,
         subagent_key: None,
         model_switch: Some(switch),
+        images: Vec::new(),
     });
     data.provider_id = Some(to_provider);
     data.provider_name = Some(to_name);
@@ -463,6 +466,87 @@ pub fn answer(id: &str, owner: &str, input: AnswerAiApproval) -> Result<()> {
         .send(Control::Approval(input)).map_err(|_| "执行已经结束".to_string());
     result
 }
+/// 单条消息最多附带的图片数量与体积：base64 解码后校验，防止超大附件拖垮会话与 CLI。
+const MAX_IMAGE_COUNT: usize = 8;
+const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_IMAGE_TOTAL_BYTES: usize = 24 * 1024 * 1024;
+
+/// 把客户端提交的 base64 图片写入 `ClientData/ai-images`，返回只含元数据的附件。
+/// 消息与排队项只保存路径，不内嵌 base64，避免会话文件与推送帧被大图撑爆。
+fn save_send_images(images: &[SendAiImage]) -> Result<Vec<AiImage>> {
+    if images.is_empty() { return Ok(Vec::new()); }
+    if images.len() > MAX_IMAGE_COUNT { return Err(format!("一次最多发送 {MAX_IMAGE_COUNT} 张图片")); }
+    let dir = PathService::require_data_dir()?.join("ClientData").join("ai-images");
+    fs::create_dir_all(&dir).map_err(|e| format!("创建图片目录失败：{e}"))?;
+    let engine = base64::engine::general_purpose::STANDARD;
+    let mut saved = Vec::with_capacity(images.len());
+    let mut total = 0usize;
+    for (index, image) in images.iter().enumerate() {
+        let (media_type, extension) = normalized_image_type(&image.media_type)
+            .ok_or_else(|| format!("第 {} 张图片格式不支持（仅 PNG / JPEG / GIF / WebP）", index + 1))?;
+        // 前端直接传 data URL 时也能工作，避免两端各自处理前缀。
+        let payload = image.data.split_once(',')
+            .filter(|(head, _)| head.starts_with("data:"))
+            .map(|(_, body)| body)
+            .unwrap_or(&image.data);
+        let bytes = engine.decode(payload.trim()).map_err(|_| format!("第 {} 张图片数据无效", index + 1))?;
+        if bytes.is_empty() { return Err(format!("第 {} 张图片为空", index + 1)); }
+        if bytes.len() > MAX_IMAGE_BYTES { return Err(format!("第 {} 张图片超过 10MB", index + 1)); }
+        if !looks_like_image(media_type, &bytes) {
+            return Err(format!("第 {} 张图片数据与格式不匹配", index + 1));
+        }
+        total = total.saturating_add(bytes.len());
+        if total > MAX_IMAGE_TOTAL_BYTES { return Err("图片总大小超过 24MB".into()); }
+        let path = dir.join(format!("{}.{}", Uuid::new_v4(), extension));
+        fs::write(&path, bytes).map_err(|e| format!("保存图片失败：{e}"))?;
+        saved.push(AiImage {
+            path: path.to_string_lossy().to_string(),
+            media_type: media_type.to_string(),
+            name: if image.name.trim().is_empty() { format!("图片{}", index + 1) }
+                else { image.name.chars().take(120).collect() },
+        });
+    }
+    Ok(saved)
+}
+
+fn normalized_image_type(input: &str) -> Option<(&'static str, &'static str)> {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "image/png" => Some(("image/png", "png")),
+        "image/jpeg" | "image/jpg" => Some(("image/jpeg", "jpg")),
+        "image/gif" => Some(("image/gif", "gif")),
+        "image/webp" => Some(("image/webp", "webp")),
+        _ => None,
+    }
+}
+
+/// 轻量魔数校验：拒绝把任意文件伪装成图片送进多模态内容块。
+fn looks_like_image(media_type: &str, bytes: &[u8]) -> bool {
+    match media_type {
+        "image/png" => bytes.starts_with(&[0x89, b'P', b'N', b'G']),
+        "image/jpeg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "image/gif" => bytes.starts_with(b"GIF8"),
+        "image/webp" => bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
+        _ => false,
+    }
+}
+
+/// Claude stream-json 的图片内容块：从落盘文件重新编码为 base64。
+fn claude_image_blocks(images: &[AiImage]) -> Result<Vec<Value>> {
+    let engine = base64::engine::general_purpose::STANDARD;
+    images.iter().map(|image| {
+        let bytes = fs::read(&image.path).map_err(|e| format!("无法读取图片附件：{e}"))?;
+        Ok(json!({"type":"image","source":{"type":"base64","media_type":image.media_type,"data":engine.encode(bytes)}}))
+    }).collect()
+}
+
+/// Codex app-server `turn/start` 的 input：文本 + `localImage` 绝对路径，由 CLI 自己读文件。
+fn codex_user_input(text: &str, images: &[AiImage]) -> Value {
+    let mut input = Vec::with_capacity(images.len() + 1);
+    if !text.is_empty() { input.push(json!({"type":"text","text":text})); }
+    for image in images { input.push(json!({"type":"localImage","path":image.path})); }
+    Value::Array(input)
+}
+
 pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     let cell = load(id, owner)?;
     let outcome = send_locked(&cell, input);
@@ -470,32 +554,35 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     outcome
 }
 fn send_locked(cell: &Arc<Cell>, input: SendAiMessage) -> Result<AiSession> {
-    if input.text.trim().is_empty() { return Err("消息不能为空".into()); }
-    Uuid::parse_str(&input.request_id).map_err(|_| "消息请求标识无效")?;
+    let SendAiMessage { text, request_id, steer, images: draft_images } = input;
+    if text.trim().is_empty() && draft_images.is_empty() { return Err("消息不能为空".into()); }
+    Uuid::parse_str(&request_id).map_err(|_| "消息请求标识无效")?;
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
     if !cell.path.is_file() { return Err("AI 会话不存在".into()); }
-    if data.request_ids.contains(&input.request_id) { return Ok(data.clone()); }
+    if data.request_ids.contains(&request_id) { return Ok(data.clone()); }
+    // 幂等检查通过后再落盘，重试同一请求不会重复写文件。
+    let images = save_send_images(&draft_images)?;
     // 原生插话，或会话空闲且没有排队消息时，直接把消息交给当前 CLI 进程。
     // 插话由 CLI 自己决定在合适节点消费；排队则等当前回合任务完全结束后再写入同一个进程。
     let idle_delivery = data.status == "idle" && data.pending_inputs.is_empty();
-    if let Some(tx) = control.as_ref().filter(|_| data.status != "stopping" && (input.steer || idle_delivery)) {
-        return deliver_now(&cell, &mut data, tx, input.request_id, input.text);
+    if let Some(tx) = control.as_ref().filter(|_| data.status != "stopping" && (steer || idle_delivery)) {
+        return deliver_now(&cell, &mut data, tx, request_id, text, images);
     }
     if control.is_some() {
         // 执行期间只入队，当前回合结束后由 worker 直接写入同一个 CLI 进程，不需要 --resume。
         let before = data.clone();
-        data.request_ids.push(input.request_id.clone());
-        data.pending_inputs.push(PendingInput { text: input.text, request_id: input.request_id });
+        data.request_ids.push(request_id.clone());
+        data.pending_inputs.push(PendingInput { text, request_id, images });
         touch(&mut data);
         let snapshot = data.clone();
         if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
         return Ok(snapshot);
     }
     let before = data.clone();
-    data.request_ids.push(input.request_id.clone());
+    data.request_ids.push(request_id.clone());
     // 新消息进队尾，先启动队首：中断/出错后保留的排队消息仍按用户发送顺序执行。
-    data.pending_inputs.push(PendingInput { text: input.text, request_id: input.request_id });
+    data.pending_inputs.push(PendingInput { text, request_id, images });
     let next = begin_pending_turn(&mut data).ok_or("没有排队中的消息")?;
     let snapshot = data.clone();
     if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
@@ -531,9 +618,9 @@ fn flush_locked(cell: &Arc<Cell>, request_id: Option<&str>) -> Result<()> {
     if let Some(tx) = control.as_ref() {
         // 运行中或空闲常驻：直接把选中的消息交给当前 CLI 进程，不重置队列顺序，也不打断当前任务。
         let item = data.pending_inputs.remove(index);
-        accept_input(&mut data, &item.request_id, &item.text);
+        accept_input(&mut data, &item.request_id, &item.text, &item.images);
         if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
-        if tx.send(Control::Message { text: item.text, request_id: item.request_id }).is_err() {
+        if tx.send(Control::Message { text: item.text, request_id: item.request_id, images: item.images }).is_err() {
             *data = before;
             persist_data(&cell, &data)?;
             return Err("服务端进程已退出，请再次发送消息".into());
@@ -560,12 +647,12 @@ fn flush_locked(cell: &Arc<Cell>, request_id: Option<&str>) -> Result<()> {
 /// 直接交付给运行中的 CLI：消息立即进入聊天记录并置为执行中，
 /// 由 worker 决定是插话到当前回合还是开始新回合。
 fn deliver_now(cell: &Cell, data: &mut AiSession, control: &mpsc::Sender<Control>,
-    request_id: String, text: String) -> Result<AiSession> {
+    request_id: String, text: String, images: Vec<AiImage>) -> Result<AiSession> {
     let before = data.clone();
-    accept_input(data, &request_id, &text);
+    accept_input(data, &request_id, &text, &images);
     let snapshot = data.clone();
     if let Err(error) = persist_data(cell, data) { *data = before; return Err(error); }
-    if control.send(Control::Message { text, request_id }).is_err() {
+    if control.send(Control::Message { text, request_id, images }).is_err() {
         *data = before;
         persist_data(cell, data)?;
         return Err("服务端进程已退出，请再次发送消息".into());
@@ -573,12 +660,19 @@ fn deliver_now(cell: &Cell, data: &mut AiSession, control: &mpsc::Sender<Control
     Ok(snapshot)
 }
 
+/// 会话首条消息的标题：纯图片消息没有正文，用图片数量兜底。
+fn input_title(text: &str, images: &[AiImage]) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() { format!("{} 张图片", images.len()) } else { trimmed.chars().take(36).collect() }
+}
+
 /// 立即写入聊天记录；排队消息出队时由 begin_pending_turn 完成同样的登记。
-fn accept_input(data: &mut AiSession, request_id: &str, text: &str) {
+fn accept_input(data: &mut AiSession, request_id: &str, text: &str, images: &[AiImage]) {
     if !data.request_ids.iter().any(|id| id == request_id) { data.request_ids.push(request_id.to_string()); }
     data.messages.push(AiMessage { id: request_id.to_string(), role: "user".into(), text: text.into(),
-        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None });
-    if data.title == "新对话" { data.title = text.trim().chars().take(36).collect(); }
+        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None,
+        images: images.to_vec() });
+    if data.title == "新对话" { data.title = input_title(text, images); }
     // 等待确认时保留 approval 状态，让决策卡片继续显示；其余情况视为执行中。
     if data.approvals.is_empty() { data.status = "running".into(); }
     data.error = None;
@@ -630,7 +724,7 @@ fn start_turn(cell: &Arc<Cell>, next: PendingInput, control: &mut Option<mpsc::S
     let worker_cell = cell.clone();
     if let Err(error) = thread::Builder::new().name(thread_name).spawn(move || {
         let _task = task;
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_turn(&worker_cell, &next.text, rx)))
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_turn(&worker_cell, &next, rx)))
             .unwrap_or_else(|_| Err("AI 执行意外结束，可以重新发送消息".into()));
         match result {
             Ok(WorkerExit::Retired) => {},
@@ -648,8 +742,9 @@ fn begin_pending_turn(data: &mut AiSession) -> Option<PendingInput> {
     if data.pending_inputs.is_empty() { return None; }
     let next = data.pending_inputs.remove(0);
     data.messages.push(AiMessage { id: next.request_id.clone(), role: "user".into(), text: next.text.clone(),
-        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None });
-    if data.title == "新对话" { data.title = next.text.trim().chars().take(36).collect(); }
+        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None,
+        images: next.images.clone() });
+    if data.title == "新对话" { data.title = input_title(&next.text, &next.images); }
     usage::begin_turn(data);
     data.status = "running".into(); data.error = None; data.approvals.clear(); touch(data);
     Some(next)
@@ -752,7 +847,7 @@ fn message(cell: &Cell, key: &str, role: &str, text: &str, append: bool) {
             if append { item.text.push_str(text); } else { item.text = text.into(); }
         } else {
             data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new() });
         }
     });
 }
@@ -765,7 +860,7 @@ fn message_with_skill(cell: &Cell, key: &str, name: &str, text: &str) {
             item.skill_name = Some(name.into());
         } else {
             data.messages.push(AiMessage { id: key.into(), role: "user".into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: Some(name.into()), model_switch: None, subagent_key: None, subagent: None });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: Some(name.into()), model_switch: None, subagent_key: None, subagent: None, images: Vec::new() });
         }
     });
 }
@@ -779,7 +874,7 @@ fn message_append_quiet(cell: &Cell, key: &str, text: &str) {
             item.text.push_str(text);
         } else {
             data.messages.push(AiMessage { id: key.into(), role: "assistant".into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None, images: Vec::new() });
         }
         touch(&mut data);
     }
@@ -797,7 +892,7 @@ fn message_with_subagent(cell: &Cell, key: &str, group: &str, role: &str, text: 
         } else {
             data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(),
                 created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None,
-                subagent: Some(agent.into()), subagent_key: Some(group.into()) });
+                subagent: Some(agent.into()), subagent_key: Some(group.into()), images: Vec::new() });
         }
     });
 }
@@ -812,7 +907,7 @@ fn message_sub_quiet(cell: &Cell, key: &str, group: &str, text: &str, agent: &st
         } else {
             data.messages.push(AiMessage { id: key.into(), role: "assistant".into(), text: text.into(),
                 created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None,
-                subagent: Some(agent.into()), subagent_key: Some(group.into()) });
+                subagent: Some(agent.into()), subagent_key: Some(group.into()), images: Vec::new() });
         }
         touch(&mut data);
     }
@@ -866,8 +961,16 @@ fn is_interrupt_notice(detail: &str) -> bool {
         || detail.contains("已中断") || detail.contains("被中断") || detail.contains("用户中断")
 }
 
-fn write_claude_user(stdin: &mut impl Write, session_id: &str, text: &str) -> Result<()> {
-    write_json(stdin, json!({"type":"user","message":{"role":"user","content":text},
+fn write_claude_user(stdin: &mut impl Write, session_id: &str, text: &str, images: &[AiImage]) -> Result<()> {
+    if images.is_empty() {
+        return write_json(stdin, json!({"type":"user","message":{"role":"user","content":text},
+            "parent_tool_use_id":null,"session_id":session_id}));
+    }
+    // 带图片时改用内容块数组：文本在前，图片以 base64 内联，CLI 直接交给多模态模型。
+    let mut content = Vec::with_capacity(images.len() + 1);
+    if !text.is_empty() { content.push(json!({"type":"text","text":text})); }
+    content.extend(claude_image_blocks(images)?);
+    write_json(stdin, json!({"type":"user","message":{"role":"user","content":content},
         "parent_tool_use_id":null,"session_id":session_id}))
 }
 /// 当前回合任务全部结束后，把队首消息直接写入同一个 Claude 进程。
@@ -878,14 +981,14 @@ fn take_pending_for_claude(cell: &Cell, stdin: &mut impl Write) -> Result<Option
     let next = begin_pending_turn(&mut data).ok_or("没有排队中的消息")?;
     let session_id = data.thread_id.clone().unwrap_or_default();
     if let Err(error) = persist_data(cell, &data) { *data = before; return Err(error); }
-    if let Err(error) = write_claude_user(stdin, &session_id, &next.text) {
+    if let Err(error) = write_claude_user(stdin, &session_id, &next.text, &next.images) {
         *data = before;
         let _ = persist_data(cell, &data);
         return Err(error);
     }
     Ok(Some(()))
 }
-fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Result<WorkerExit> {
+fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control>) -> Result<WorkerExit> {
     let session = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     let mut launch = super::ai_catalog_service::prepare(&session.provider, session.provider_id.as_deref(), session.model.as_deref())?;
     let hooks = if session.provider == "claude" {
@@ -947,7 +1050,7 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
         }
     });
     if session.provider == "claude" {
-        write_claude_user(&mut stdin, session.thread_id.as_deref().unwrap_or(""), prompt)?;
+        write_claude_user(&mut stdin, session.thread_id.as_deref().unwrap_or(""), &prompt.text, &prompt.images)?;
         run_claude(cell, &mut process, stdin, controls, output, errors, hooks.as_ref().ok_or("Claude 决策 Hook 未初始化")?)
     } else {
         write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"},"capabilities":{"experimentalApi":true}}}))?;
@@ -1315,7 +1418,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
             match control {
                 Control::Stop => return Err("已中断".into()),
                 Control::Retire => { drop(input.take()); return Ok(WorkerExit::Retired); }
-                Control::Message { text, request_id: _ } => {
+                Control::Message { text, request_id: _, images } => {
                     let stdin = input.as_mut().ok_or("Claude 输入通道已关闭，请重新发送消息")?;
                     // 空闲后收到的新消息开始新回合；运行中收到的直接交给 CLI 自行插话。
                     let new_turn = pending_results == 0;
@@ -1325,7 +1428,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
                         if data.approvals.is_empty() { data.status = "running".into(); }
                     });
                     let session_id = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.thread_id.clone().unwrap_or_default();
-                    write_claude_user(stdin, &session_id, &text)?;
+                    write_claude_user(stdin, &session_id, &text, &images)?;
                     // 等待审批时注入的消息不会单独产生 result（审批恢复后并回同一回合），
                     // 那时再加计数会让 pending_results 永远多 1，回合结束后状态卡在 running。
                     if pending.is_empty() {
@@ -1671,7 +1774,7 @@ fn codex_status(cell: &Cell, state: &CodexOutputState, background: &CodexBackgro
     }
     emit_update(cell);
 }
-fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super::ai_permission_service::NativePermissions, stdin: &mut impl Write,
+fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permissions: &super::ai_permission_service::NativePermissions, stdin: &mut impl Write,
     controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<WorkerExit> {
     let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
     let mut last_persisted = session.revision;
@@ -1683,7 +1786,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
     let mut decision_instructions = approval::codex_decision_instructions(None);
     let mut resume_request = None;
     let mut turn_request = None;
-    let mut queued_prompt = Some(prompt.to_string());
+    let mut queued_prompt = Some(prompt.clone());
     let mut request_id = active_request_id(session).map(str::to_string);
     let mut agent_queries: HashMap<u64, String> = HashMap::new();
     let mut agent_checkpoint = Instant::now();
@@ -1696,12 +1799,12 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
             match control {
                 Control::Stop => return Err("已中断".into()),
                 Control::Retire => return Ok(WorkerExit::Retired),
-                Control::Message { text, request_id: accepted_id } => {
-                    request_id = Some(accepted_id);
+                Control::Message { text, request_id: accepted_id, images } => {
+                    request_id = Some(accepted_id.clone());
                     let id = state.thread_id.as_deref().ok_or("Codex 会话尚未初始化")?;
                     if !state.finished && state.turn_id.is_some() {
                         // 原生插话：turn/start 由 app-server 原子处理活动回合的补充输入，不重置本回合用量。
-                        let mut params = json!({"threadId":id,"input":[{"type":"text","text":text}]});
+                        let mut params = json!({"threadId":id,"input": codex_user_input(&text, &images)});
                         super::ai_permission_service::for_agent("codex")?.apply_turn(&mut params);
                         turn_request = Some(codex_request(stdin, &mut next_id, "turn/start", params)?);
                     } else {
@@ -1712,7 +1815,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
                         permissions.apply_thread(&mut params);
                         if let Some(model) = &session.model { params["model"] = json!(model); }
                         resume_request = Some(codex_request(stdin, &mut next_id, "thread/resume", params)?);
-                        queued_prompt = Some(text);
+                        queued_prompt = Some(PendingInput { text, request_id: accepted_id, images });
                         state.turn_id = None;
                     }
                     last_event = Instant::now();
@@ -1737,7 +1840,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
         if state.thread_id.is_some() && resume_request.is_none() && turn_request.is_none() && settle_at.is_none() {
             if let Some(next) = take_pending_if_idle(cell)? {
                 let Some(id) = state.thread_id.clone() else { continue };
-                request_id = Some(next.request_id);
+                request_id = Some(next.request_id.clone());
                 state.usage = usage::CodexUsageTracker::default();
                 if let Ok(mut data) = cell.data.lock() { usage::begin_turn(&mut data); state.usage.start(&mut data); }
                 let permissions = super::ai_permission_service::for_agent("codex")?;
@@ -1745,7 +1848,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
                 permissions.apply_thread(&mut params);
                 if let Some(model) = &session.model { params["model"] = json!(model); }
                 resume_request = Some(codex_request(stdin, &mut next_id, "thread/resume", params)?);
-                queued_prompt = Some(next.text);
+                queued_prompt = Some(next);
                 state.turn_id = None;
                 continue;
             }
@@ -1803,8 +1906,8 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
             let id = value["result"]["thread"]["id"].as_str().ok_or("Codex 未返回会话标识")?;
             state.thread_id = Some(id.into());
             update(cell, |data| data.thread_id = Some(id.into())); persist(cell)?;
-            let text = queued_prompt.take().ok_or("Codex 待发送消息不可用")?;
-            let mut params = json!({"threadId":id,"input":[{"type":"text","text":text}]});
+            let pending = queued_prompt.take().ok_or("Codex 待发送消息不可用")?;
+            let mut params = json!({"threadId":id,"input": codex_user_input(&pending.text, &pending.images)});
             super::ai_permission_service::for_agent("codex")?.apply_turn(&mut params);
             state.usage.submitted();
             state.finished = false;
@@ -1912,7 +2015,7 @@ mod tests {
     #[test]
     fn claude_user_message_reuses_stream_json_input() {
         let mut out = Vec::new();
-        write_claude_user(&mut out, "session-1", "继续处理").unwrap();
+        write_claude_user(&mut out, "session-1", "继续处理", &[]).unwrap();
         let value: Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(value["type"], "user");
         assert_eq!(value["session_id"], "session-1");
@@ -1922,13 +2025,94 @@ mod tests {
     }
 
     #[test]
+    fn claude_user_message_with_images_uses_content_blocks() {
+        let dir = std::env::temp_dir().join(format!("tb-ai-image-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("paste.png");
+        fs::write(&path, [0x89u8, b'P', b'N', b'G', 0, 1, 2]).unwrap();
+        let image = AiImage {
+            path: path.to_string_lossy().to_string(),
+            media_type: "image/png".into(),
+            name: "paste.png".into(),
+        };
+        let mut out = Vec::new();
+        write_claude_user(&mut out, "session-1", "看图", &[image]).unwrap();
+        let value: Value = serde_json::from_slice(&out).unwrap();
+        let content = value["message"]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "看图");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["type"], "base64");
+        assert_eq!(content[1]["source"]["media_type"], "image/png");
+        assert!(!content[1]["source"]["data"].as_str().unwrap_or_default().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn claude_user_message_with_only_images_omits_text_block() {
+        let dir = std::env::temp_dir().join(format!("tb-ai-image-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("only.png");
+        fs::write(&path, [0x89u8, b'P', b'N', b'G', 0, 1, 2]).unwrap();
+        let image = AiImage {
+            path: path.to_string_lossy().to_string(),
+            media_type: "image/png".into(),
+            name: String::new(),
+        };
+        let mut out = Vec::new();
+        write_claude_user(&mut out, "session-1", "", &[image]).unwrap();
+        let value: Value = serde_json::from_slice(&out).unwrap();
+        let content = value["message"]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "image");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn codex_user_input_appends_local_images() {
+        let image = AiImage {
+            path: "/tmp/paste.png".into(),
+            media_type: "image/png".into(),
+            name: "paste.png".into(),
+        };
+        let input = codex_user_input("看图", &[image]);
+        let items = input.as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["type"], "text");
+        assert_eq!(items[1]["type"], "localImage");
+        assert_eq!(items[1]["path"], "/tmp/paste.png");
+    }
+
+    #[test]
+    fn image_only_message_title_uses_image_count() {
+        let image = AiImage {
+            path: "/tmp/paste.png".into(),
+            media_type: "image/png".into(),
+            name: String::new(),
+        };
+        assert_eq!(input_title("   ", &[image]), "1 张图片");
+        assert_eq!(input_title("看图", &[]), "看图");
+    }
+
+    #[test]
+    fn image_upload_validates_type_and_magic_bytes() {
+        assert_eq!(normalized_image_type("IMAGE/PNG"), Some(("image/png", "png")));
+        assert_eq!(normalized_image_type("image/jpg"), Some(("image/jpeg", "jpg")));
+        assert_eq!(normalized_image_type("text/plain"), None);
+        assert!(looks_like_image("image/png", &[0x89, b'P', b'N', b'G', 0]));
+        assert!(!looks_like_image("image/png", b"not an image"));
+        assert!(looks_like_image("image/webp", b"RIFF\0\0\0\0WEBPxxxx"));
+    }
+
+    #[test]
     fn claude_queue_writes_to_same_process_after_settle() {
         let saved = SavedCell::new();
         let request_id = "00000000-0000-4000-8000-000000000002";
         {
             let mut data = saved.0.data.lock().unwrap();
             data.status = "idle".into();
-            data.pending_inputs.push(PendingInput { text: "继续".into(), request_id: request_id.into() });
+            data.pending_inputs.push(PendingInput { text: "继续".into(), request_id: request_id.into(), images: Vec::new() });
             persist_data(&saved.0, &data).unwrap();
         }
         let mut out = Vec::new();
@@ -1977,6 +2161,7 @@ mod tests {
     fn prefill_differs_detects_append_and_rewrite() {
         let message = |id: &str, text: &str, at: i64| AiMessage {
             id: id.into(), role: "user".into(), text: text.into(), created_at: at, skill_name: None, model_switch: None, subagent: None, subagent_key: None,
+            images: Vec::new(),
         };
         let old = vec![message("history-0", "第一问", 1)];
         // 条数相同、内容相同 → 不替换，避免无意义的落盘。
@@ -2182,6 +2367,7 @@ mod tests {
     fn push_user(cell: &Cell, text: &str) {
         cell.data.lock().unwrap().messages.push(AiMessage {
             id: "user-input".into(), role: "user".into(), text: text.into(), created_at: 0, skill_name: None, model_switch: None, subagent: None, subagent_key: None,
+            images: Vec::new(),
         });
     }
 

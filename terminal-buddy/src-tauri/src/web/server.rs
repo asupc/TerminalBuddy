@@ -109,7 +109,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/container/claude/providers/deactivate", post(handlers::claude_provider_handler::deactivate))
         .route("/api/container/claude/providers/{id}", axum::routing::put(handlers::claude_provider_handler::update).delete(handlers::claude_provider_handler::remove))
         .route("/api/container/claude/providers/{id}/activate", post(handlers::claude_provider_handler::activate))
-        .route("/api/desktop/invoke/{command}", post(handlers::desktop_handler::invoke))
+        // 原生对话允许随消息附带图片（base64），桌面端浏览器走统一 invoke 通道，
+        // 因此把该路由的 body 上限从普通 API 的 2MB 放宽到与上传接口一致。
+        .route("/api/desktop/invoke/{command}", post(handlers::desktop_handler::invoke)
+            .layer(DefaultBodyLimit::max(32 * 1024 * 1024)))
         .route("/api/desktop/jobs/{id}", get(handlers::desktop_handler::job))
         .route("/api/desktop/upload", post(handlers::desktop_handler::upload).layer(DefaultBodyLimit::max(32 * 1024 * 1024)))
         .route("/api/desktop/file", get(handlers::desktop_handler::file))
