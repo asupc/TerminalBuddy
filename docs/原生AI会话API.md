@@ -59,6 +59,8 @@ AI REST 接口不使用普通 API 的请求正文大小和处理超时限制；�
 
 消息字段为 `id`、`role`（`user` / `assistant` / `tool`）、`text`、`createdAt`；会话还包含状态、模型、项目、确认请求、错误及单调递增 revision。会话还返回非敏感的 `providerId`、`providerName`，供首页历史项和二级页面展示来源；旧会话这两个字段默认为空。内部 thread ID、归属账户和请求去重信息不会返回客户端。
 
+会话元数据额外返回 `desktopOpen`：桌面端当前是否打开着该会话。它由桌面端标签页变化时通过本地命令整体上报，只保存在服务进程内存中，不写入会话文件，服务重启后清空；安卓简版首页的「已打开」据此展示与电脑端一致的原生会话（再加上手机本次运行打开过的会话），不再依赖手机本地「曾经点开过」的持久记录。
+
 消息还带可选的 `todo`（布尔）标记：`TodoWrite` 的工具调用与其 `tool_result` 置为 `true`，正文仍保留原始 `TodoWrite\n{input JSON}` 供历史恢复回填清单，客户端渲染时应跳过这类消息（清单由会话级 `todos` 呈现）。
 
 会话新增三个可选字段（值为空时不序列化，旧会话与非 Claude 会话自然缺省）：
@@ -68,11 +70,10 @@ AI REST 接口不使用普通 API 的请求正文大小和处理超时限制；�
   - `TaskCreate` / `TaskUpdate` / `TaskList`（增量）：`TaskCreate` 在结果行 `Task #N created successfully: 标题` 到达时按编号插入，`TaskUpdate` 按 `taskId` 改字段，`TaskList` 的 `#N [status] 标题` 多行结果整表校准。编号即清单序号（从 1 起）。
 
   这两组工具在 Claude Code 2.1.x 默认关闭（`system/init.tools` 里没有它们，模型会明确回答"工具不存在"），原生会话在 `--settings` 临时配置里默认打开 `CLAUDE_CODE_ENABLE_TODO_TOOLS` / `CLAUDE_CODE_ENABLE_TASKS`；用户已在同一位置显式配置的值不会被覆盖。历史恢复时按最后一条 `TodoWrite` 快照或重放 `Task*` 序列回填，解析失败静默跳过。上一轮任务结束、进入新回合时清单清空。
-- `agents`：本轮派发过的子代理，数组，元素为 `{ taskId, toolUseId?, name, description?, status, taskType?, background, parentTaskId?, depth, startedAt, endedAt?, summary?, durationMs?, toolUses? }`，`status ∈ running | completed | failed | stopped | killed | paused`。`taskType` 是 CLI 的任务类型（子代理为 `local_agent` 等）。
+- `agents`：本轮派发过的子代理，数组，元素为 `{ taskId, toolUseId?, name, model?, description?, status, taskType?, background, parentTaskId?, depth, startedAt, endedAt?, summary?, durationMs?, toolUses? }`，`status ∈ running | completed | failed | stopped | killed | paused`。`taskType` 是 CLI 的任务类型（子代理为 `local_agent` 等）；`model` 由该任务事件携带时才有值，缺失时客户端只展示名称与耗时。
 
 `agents` 由 Claude 的 `system/task_started`、`task_updated`、`task_notification` 与 `background_tasks_changed` 快照维护：以快照做校准（快照中消失的条目置 `stopped` 而非删除），`run_id` 字典序更小的迟到帧直接丢弃，终态不回退。`ambient`（内部杂务）、`skip_transcript` 条目，以及**后台命令**（`task_type = local_bash` / `background_shell`，例如后台运行的 Bash 命令——CLI 对它们下发同构的 `task_*` 事件，但它们不产生任何子代理消息）都不进 `agents`；`awaited` 条目进 `agents`，但不计入「后台任务未完成」的回合结束判定。`toolUseId` 与消息的 `subagentKey`（`{turn}:{parent_tool_use_id}`）后半段相同，客户端据此筛选该子代理的完整过程。上一轮任务结束、会话中断、服务重启或进程退出时，仍在 `running` 的条目标为终态，不会残留「执行中」。子代理工具在 CLI 2.1.x 起由 `Task` 改名为 `Agent`，后端两代名字都识别；加载旧会话时会把历史里被误记成子代理的后台命令一并清理。这两组字段只随会话文件存活，不跨会话共享；Codex 会话当前不产生 `agents`。
 - `thinking`：主线程当前思考的实时快照，`{ text, startedAt, updatedAt, active, blocks, totalChars }`，无思考时为 `null`。
-
   它回答的是长回合里「模型到底在干什么」：Claude 的 `stream_event` 会持续下发 `thinking_delta`，**此前后端直接丢弃**，实测一个会话第一轮就有 164 段思考、42 万字，前 28 分钟没有一行正文，界面上只剩一个「已等待 N 秒」的呼吸灯。现在这些增量累积进 `thinking.text`，客户端据此在「思考中」状态行里滚动显示最新一句、可展开看全文。
 
   三条边界必须遵守：
@@ -83,6 +84,8 @@ AI REST 接口不使用普通 API 的请求正文大小和处理超时限制；�
   `active` 表示这一段是否仍在输出：正文或工具块开始、思考块 `content_block_stop`、回合收尾时都会置 `false`。`blocks` 是本回合已开始的思考段数（正文/工具之后的思考算新的一段）。子代理的思考不进这里，只走带 `parent_tool_use_id` 的子代理消息。上一轮任务结束、进入新回合时清空。Codex 会话当前不产生 `thinking`。
 
 WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type": "update", "session": "不含历史消息的会话对象", "messages": ["新增或变更的完整消息对象"] }`。客户端按消息 ID 更新有序列表；重连重新获取首帧，REST 可用于补偿。AI 连接不占用普通终端的全局配额，不限制帧或消息大小，不按固定发送或心跳超时断开；保留 Ping/Pong 和认证复核，实际连接关闭、网络错误、令牌失效或关闭 Web API 时结束订阅，服务端任务仍独立执行。
+
+会话另外返回两个轻量字段：`createdAt`（创建时刻，毫秒）与 `compactions`（本会话上下文压缩次数）。旧会话没有 `createdAt` 时为 0，客户端可用首条消息时间回落；`compactions` 只在压缩边界事件（Claude `compact_boundary`、Codex `thread/compacted`）计数，`status=compacting` 与 `item/started contextCompaction` 属于同一次压缩的伴随事件，不重复计数。桌面端底部「会话状态」行据此显示运行时长、最近回复、压缩次数、Git 分支与未提交变更、平均输出速度、本轮活跃 MCP / Skill、CLI 版本及 MCP 配置数量；取不到的项不渲染，窄屏自动换行。
 
 ## 安卓聊天决策
 
@@ -133,7 +136,9 @@ Claude 启动时会登记本次运行独有的 Hook 目标与令牌，把桌面�
       "cacheReadInputTokens": 40000,
       "cacheCreationInputTokens": 0,
       "reasoningOutputTokens": null,
-      "state": "final"
+      "state": "final",
+      "startedAt": 1738425000000,
+      "endedAt": 1738425060000
     },
     "sessionTotal": {
       "inputTokens": 186000,
@@ -149,7 +154,7 @@ Claude 启动时会登记本次运行独有的 Hook 目标与令牌，把桌面�
 
 - `context` 仅描述主对话最近一次模型调用。Claude 的 `basis=input`，计入原始输入、缓存读与缓存写，不加输出；子 Agent 的独立窗口不覆盖主窗口。Codex 从 `thread/tokenUsage/updated` 的 `last` 推导输入与输出之和，`basis=inputAndOutput`、`usedSource=calculated`，在客户端标记估算。`windowSource=cli` 表示运行时报告，`configuration` 表示启动时生效的配置。没有可信窗口时保留 `null`，不按模型名称写死容量。
 - 压缩通知会清空 `usedTokens` 并设 `updating=true`，后续用量再填充；会话累计不清零。`usedTokens / windowTokens` 可以用于显示百分比，只有两个值均有效时才计算。
-- `lastTurn` 描述最近一次用户发送触发的整轮执行，包含多次模型调用。`state=provisional` 表示执行中，`final` 表示已收到完整统计，`partial` 表示缺少完整结算。尚未发送时为 `null`。
+- `lastTurn` 描述最近一次用户发送触发的整轮执行，包含多次模型调用。`state=provisional` 表示执行中，`final` 表示已收到完整统计，`partial` 表示缺少完整结算。尚未发送时为 `null`。`startedAt` / `endedAt` 为本轮开始与收尾时刻（毫秒）；`endedAt` 只在收到 `result`、回合结束、中断或进程退出时写入，客户端据此计算平均输出速度（`outputTokens / 时长`），流式快照不会重置计时起点。
 - `sessionTotal` 表示累计消耗；`coverage=complete` 为完整统计，`sinceUpgrade` 为旧会话从升级后开始统计，`partial` 为包含不完整或无法确定起点的统计。停止、异常或服务重启会将未完成统计标记为部分统计。
 - 对外 `inputTokens` 已包含缓存，`cacheReadInputTokens` / `cacheCreationInputTokens` 为其中的明细；Codex 的 `reasoningOutputTokens` 也是输出的组成部分，不能再叠加。
 - Claude 按 API 消息 ID 合并流式 / 完整消息用量，最终 `result.usage` 或 `modelUsage` 替换本轮快照。Codex 按线程累计快照减去回合基线，恢复线程不会重复加上历史累计。主回合完成后保留 300ms 接收紧随其后的用量通知；该等待只用于统计结算，不回收 Codex 进程。自动唤醒继续沿用最近一次用户输入的累计基线。
