@@ -8,6 +8,14 @@ import java.util.UUID
 
 internal const val AI_SESSION_KEY = "terminal_buddy_session_v1"
 
+/**
+ * 备注名合并：本次连接没填名字（自动迁移、重新登录）时沿用已有备注，
+ * 只有显式填写新名字或调用 [AiAccountStore.rename] 才改写，
+ * 避免每次冷启动把用户给服务端起的名抹掉。
+ */
+internal fun mergeAccountName(existing: String, incoming: String): String =
+    incoming.trim().ifEmpty { existing }
+
 /** 列表只暴露账号资料与登录状态，不向界面传递令牌。 */
 data class AiAccount(val id: String, val server: String, val username: String, val loggedIn: Boolean,
     /** 用户给这台服务端起的备注名；为空时界面回退显示登录账号。 */
@@ -19,6 +27,11 @@ internal data class AiConnection(val server: String, val username: String, val t
 
 /** 账号索引与令牌分开保存，每个账号沿用 Android Keystore 加密的 SessionStore。 */
 class AiAccountStore(context: Context, private val active: SessionStore) {
+    private companion object {
+        /** 「已打开」页签记录的原生会话 id；按账号隔离，随账号 prefs 一并删除。 */
+        const val OPENED_SESSION_IDS_KEY = "opened_session_ids"
+    }
+
     @Serializable private data class Record(val id: String, val server: String, val username: String, val name: String = "")
 
     private val context = context.applicationContext
@@ -40,8 +53,9 @@ class AiAccountStore(context: Context, private val active: SessionStore) {
         get() = if (active.loggedIn) records.find { it.server == active.server && it.username == active.username }?.id else null
 
     internal fun save(connection: AiConnection) {
-        val name = connection.name.trim()
         val existing = records.find { it.server == connection.server && it.username == connection.username }
+        // 未填写名称时保留原备注名：init 的自动迁移与重新登录都不携带 name。
+        val name = if (existing != null) mergeAccountName(existing.name, connection.name) else connection.name.trim()
         val record = existing
             ?.takeIf { it.name == name } ?: existing?.copy(name = name)
             ?: Record(UUID.randomUUID().toString(), connection.server, connection.username, name)
@@ -80,6 +94,40 @@ class AiAccountStore(context: Context, private val active: SessionStore) {
         check(preferences.edit().putString("accounts", ApiJson.encodeToString(value)).commit()) { "无法保存 AI 账号列表" }
         records = value
     }
+
+    /** 本机打开过的原生会话 id；简版「已打开」用它把原生会话与终端/Agent 会话并列展示。 */
+    fun openedSessionIds(accountId: String?): Set<String> {
+        val id = accountId ?: return emptySet()
+        return accountPreferences(id).getStringSet(OPENED_SESSION_IDS_KEY, emptySet()).orEmpty().toSet()
+    }
+
+    /** 记录一次原生会话打开；本地未落盘的临时会话（local-）不记录。 */
+    fun markSessionOpened(accountId: String?, sessionId: String) {
+        val id = accountId ?: return
+        if (sessionId.isBlank() || sessionId.startsWith("local-")) return
+        val prefs = accountPreferences(id)
+        val current = prefs.getStringSet(OPENED_SESSION_IDS_KEY, emptySet()).orEmpty()
+        if (sessionId in current) return
+        prefs.edit().putStringSet(OPENED_SESSION_IDS_KEY, current + sessionId).apply()
+    }
+
+    /** 会话被删除或已不存在时移出「已打开」。 */
+    fun forgetOpenedSession(accountId: String?, sessionId: String) {
+        val id = accountId ?: return
+        val prefs = accountPreferences(id)
+        val current = prefs.getStringSet(OPENED_SESSION_IDS_KEY, emptySet()).orEmpty()
+        if (sessionId !in current) return
+        prefs.edit().putStringSet(OPENED_SESSION_IDS_KEY, current - sessionId).apply()
+    }
+
+    /** 服务端会话列表刷新后只保留仍存在的 id，避免记录无限增长。 */
+    fun replaceOpenedSessions(accountId: String?, ids: Set<String>) {
+        val id = accountId ?: return
+        accountPreferences(id).edit().putStringSet(OPENED_SESSION_IDS_KEY, ids).apply()
+    }
+
+    private fun accountPreferences(id: String) =
+        context.getSharedPreferences(namespace(id), Context.MODE_PRIVATE)
 
     private fun session(record: Record): SessionStore = sessions.getOrPut(record.id) {
         SessionStore(context, namespace(record.id), AI_SESSION_KEY)

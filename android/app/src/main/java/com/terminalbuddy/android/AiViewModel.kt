@@ -35,6 +35,8 @@ data class AiUiState(
     val server: String = "", val username: String = "admin", val authenticated: Boolean = false,
     val authenticating: Boolean = false, val loading: Boolean = false, val loadingSession: Boolean = false,
     val sessions: List<AiSession> = emptyList(), val projects: List<AiProject> = emptyList(),
+    /** 本机打开过的原生会话 id（按账号持久化）；简版「已打开」据此列出生效中的原生会话。 */
+    val openedSessionIds: Set<String> = emptySet(),
     /** 首页最近任务独立恢复，避免将两条展示缓存当成完整会话列表。 */
     val recentSessions: List<AiSession> = emptyList(),
     val providers: List<AiProvider> = emptyList(),
@@ -67,6 +69,11 @@ data class AiUiState(
 ) {
     /** 仅首次取数限制操作，后续刷新保留已有内容并保持页面可操作。 */
     val initialLoading get() = loading && !homeLoaded
+    /** 「已打开」中的原生会话：本机打开过且仍在会话列表里，按最近更新排序。 */
+    val openedSessions get() = (sessions + listOfNotNull(selected))
+        .distinctBy { it.id }
+        .filter { it.id in openedSessionIds }
+        .sortedByDescending { it.updatedAt }
     val launchProject get() = projects.find { it.path == projectPath }
     /** 只列出当前项目启用的 Agent 对应供应商。 */
     fun projectProviders(project: AiProject) = providers.filter { project.enabledAgents.enabled(it.agent) }
@@ -419,6 +426,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             homeLoaded = cached != null,
             accounts = accounts.accounts, activeAccountId = accounts.activeId,
             serverName = accounts.accounts.find { it.id == accounts.activeId }?.name.orEmpty(),
+            openedSessionIds = accounts.activeId?.let { accounts.openedSessionIds(it) }.orEmpty(),
             connectionRevision = revision,
             sendSteer = repository.sendSteer,
         )
@@ -502,12 +510,17 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         if (epoch != generation) return@launch
                         val unviewed = recordSessions(sessions)
+                        // 「已打开」只保留服务端仍存在的会话，避免本地记录无限增长。
+                        val aliveOpened = mutable.value.openedSessionIds.intersect(sessions.mapTo(mutableSetOf()) { it.id })
+                        if (aliveOpened.size != mutable.value.openedSessionIds.size) {
+                            repository.accounts.replaceOpenedSessions(mutable.value.activeAccountId, aliveOpened)
+                        }
                         mutable.update {
                             reconcile(
                                 it.copy(
                                     sessions = sessions, projects = projects, providers = catalog.providers,
                                     loading = false, homeLoaded = true, reconnecting = false, error = null,
-                                    unviewedIds = unviewed,
+                                    unviewedIds = unviewed, openedSessionIds = aliveOpened,
                                 )
                             )
                         }
@@ -950,6 +963,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 先显示内存 / SQLite 中的完整会话，网络请求与磁盘恢复并行，随后静默同步。 */
     fun open(id: String) {
+        rememberOpened(id)
         if (mutable.value.selected?.id == id) {
             if (pending == null) startRealtime(refreshImmediately = true)
             return
@@ -980,6 +994,16 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
         // 实时首帧、REST 补偿和磁盘恢复并行，不再等待完整 GET 才建立连接。
         startRealtime(refreshImmediately = true)
+    }
+
+    /** 打开原生会话时登记到「已打开」，按当前账号持久化，返回首页后仍可继续。 */
+    private fun rememberOpened(id: String) {
+        if (id.isBlank() || id.startsWith("local-")) return
+        val accountId = mutable.value.activeAccountId ?: return
+        repository.accounts.markSessionOpened(accountId, id)
+        if (id !in mutable.value.openedSessionIds) {
+            mutable.update { it.copy(openedSessionIds = it.openedSessionIds + id) }
+        }
     }
 
     fun closeSession() {
@@ -1180,6 +1204,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                         drafts[created.id] = drafts.remove(session.id).orEmpty()
                         requests.remove(session.id)
                         requests[created.id] = request
+                        // 新建会话在服务端落盘后立即登记到「已打开」。
+                        rememberOpened(created.id)
                     }
                 }
                 if (epoch != generation || mutable.value.selected?.id != target.id) return@launch
@@ -1271,7 +1297,13 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 repository.delete(session.id)
                 if (epoch == generation) {
                     if (mutable.value.selected?.id == session.id) closeSession()
-                    mutable.update { it.copy(sessions = it.sessions.filterNot { item -> item.id == session.id }, working = false) }
+                    repository.accounts.forgetOpenedSession(mutable.value.activeAccountId, session.id)
+                    mutable.update {
+                        it.copy(
+                            sessions = it.sessions.filterNot { item -> item.id == session.id },
+                            openedSessionIds = it.openedSessionIds - session.id, working = false,
+                        )
+                    }
                     drafts.remove(session.id); requests.remove(session.id)
                     forgetSession(session.id)
                 }
@@ -1314,7 +1346,13 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                         continue
                     }
                     if (epoch != generation) return@launch
-                    mutable.update { it.copy(sessions = it.sessions.filterNot { item -> item.id == session.id }) }
+                    repository.accounts.forgetOpenedSession(mutable.value.activeAccountId, session.id)
+                    mutable.update {
+                        it.copy(
+                            sessions = it.sessions.filterNot { item -> item.id == session.id },
+                            openedSessionIds = it.openedSessionIds - session.id,
+                        )
+                    }
                     drafts.remove(session.id); requests.remove(session.id)
                     forgetSession(session.id)
                     deleted++

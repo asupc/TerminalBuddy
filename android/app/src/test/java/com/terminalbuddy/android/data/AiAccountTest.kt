@@ -18,4 +18,14 @@ class AiAccountTest {
         assertEquals("", legacy.name)
         assertEquals("admin", legacy.label)
     }
+
+    @Test
+    fun `saving without a name keeps the existing remark`() {
+        // 自动迁移 / 重新登录都构造不带 name 的 AiConnection，不能把备注名清空。
+        assertEquals("客厅 NAS", mergeAccountName("客厅 NAS", ""))
+        assertEquals("客厅 NAS", mergeAccountName("客厅 NAS", "   "))
+        assertEquals("书房 NAS", mergeAccountName("客厅 NAS", "书房 NAS"))
+        assertEquals("", mergeAccountName("", ""))
+        assertEquals("书房 NAS", mergeAccountName("", " 书房 NAS "))
+    }
 }

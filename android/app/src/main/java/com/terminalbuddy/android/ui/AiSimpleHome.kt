@@ -40,6 +40,7 @@ import com.terminalbuddy.android.TerminalAgentViewModel
 import com.terminalbuddy.android.data.AiHistorySession
 import com.terminalbuddy.android.data.AiSession
 import com.terminalbuddy.android.data.ServerProfile
+import com.terminalbuddy.android.data.ServerTerminal
 import com.terminalbuddy.android.data.TerminalAgentSession
 import com.terminalbuddy.android.data.findLiveAgentSession
 import java.text.SimpleDateFormat
@@ -47,36 +48,19 @@ import java.util.Date
 import java.util.Locale
 
 private enum class SimpleHomeTab(val title: String) {
-    Recent("最近会话"), History("历史会话"),
-}
-
-/**
- * 最近会话的统一条目：终端 Agent 会话与改造前创建的存量原生会话混排，
- * 只按最近活动时间排序，不再按「App / 服务端」来源分组。
- */
-private sealed interface RecentEntry {
-    val key: String
-    val sortAt: Long
-
-    data class Live(val session: TerminalAgentSession) : RecentEntry {
-        override val key get() = "live-${session.terminalId}"
-        override val sortAt get() = session.lastActivityAt ?: session.phaseAt ?: 0L
-    }
-
-    data class Native(val session: AiSession) : RecentEntry {
-        override val key get() = "native-${session.id}"
-        override val sortAt get() = session.updatedAt
-    }
+    Opened("已打开"), History("历史会话"),
 }
 
 /**
  * 简版核心页：只保留快速开始。
- * 顶部品牌与「我的」入口，中间是压缩后的新会话配置，下方用 Tab 切换最近会话和历史会话。
+ * 顶部品牌与「我的」入口，中间是压缩后的新会话配置，下方用 Tab 切换已打开会话和历史会话。
  * 「开始对话」按服务端「新会话形态」设置分流：原生会话直接进入与桌面端一致的聊天页；
  * 终端接力则在服务端创建真实终端，手机打开的 Agent 与电脑终端完全同一会话。
- * 最近会话统一平铺终端 Agent 会话与存量原生会话，不再按来源分组。
+ * 「已打开」平铺仍在服务端运行的对象：终端 Agent 会话与已打开的普通终端，
+ * 再加上本机打开过的原生会话（按账号持久化，删除后移除）；
+ * 不再展示其余原生最近会话；已绑定 Agent 的终端由 Agent 行代表，不重复列出。
  * 历史会话按当前工作项目汇总全部已启用助手，不跟随快速开始里的助手选择。
- * 支持下拉刷新：手动补齐服务端会话、终端与 Agent 列表（实时推送之外的自救入口）。
+ * 支持下拉刷新：手动补齐终端与 Agent 列表（实时推送之外的自救入口）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,7 +72,7 @@ internal fun AiSimpleHome(
     startAgent: (agent: String, providerId: String, modelId: String, projectPath: String, projectName: String) -> Unit,
     profile: () -> Unit, accounts: () -> Unit, delete: (AiSession) -> Unit,
 ) {
-    var tab by rememberSaveable(ui.activeAccountId) { mutableStateOf(SimpleHomeTab.Recent) }
+    var tab by rememberSaveable(ui.activeAccountId) { mutableStateOf(SimpleHomeTab.Opened) }
     // 顶部「切换服务端」弹层；切换成功后由 state 驱动各页面重新绑定账号。
     var switchingServer by remember { mutableStateOf(false) }
     // 长按服务端会话 → 确认后关闭承载该会话的服务端终端（Agent 随之结束）。
@@ -111,21 +95,28 @@ internal fun AiSimpleHome(
     val currentAgentUi = if (agentVm.isCurrentAccount() && agentUi.connection == agentVm.state.value.connection) {
         agentUi
     } else TerminalAgentUiState()
-    // 冷启动先用首页缓存的最近日任务占位，完整列表同步后再平铺全部会话。
-    val recent = remember(ui.sessions, ui.recentSessions) {
-        (if (ui.sessions.isEmpty()) ui.recentSessions else ui.sessions)
-            .sortedByDescending { it.updatedAt }
+    // 已打开 = 正在运行的终端 Agent 会话 + 本机打开过的原生会话 + 已打开的普通终端。
+    val agentSessions = remember(currentAgentUi.sessions) {
+        currentAgentUi.sessions.sortedByDescending { it.lastActivityAt ?: it.phaseAt ?: 0L }
     }
-    // 终端 Agent 会话与存量原生会话混排，只按最近活动时间排序，不区分来源。
-    val recentEntries = remember(currentAgentUi.sessions, recent) {
-        (currentAgentUi.sessions.map { RecentEntry.Live(it) } + recent.map { RecentEntry.Native(it) })
-            .sortedByDescending { it.sortAt }
+    // 已绑定 Agent 的终端不再重复列出：进入 Agent 会话页后可切到「终端」页签。
+    val openTerminals = remember(terminalUi.terminals, agentSessions) {
+        val agentTerminalIds = agentSessions.mapTo(HashSet()) { it.terminalId }
+        terminalUi.terminals.filterNot { it.id in agentTerminalIds }
     }
+    // 本机打开过的原生会话：普通终端/Agent 形态之外，原生会话也可继续。
+    val openedNative = ui.openedSessions
+    val openedEmpty = agentSessions.isEmpty() && openTerminals.isEmpty() && openedNative.isEmpty()
+    // 两侧都成功加载后才展示计数；任一侧失败时按已拿到的数据展示，不阻塞另一侧。
+    val agentPending = currentAgentUi.listError == null && !currentAgentUi.listLoaded
+    val terminalPending = terminalUi.error == null && !terminalUi.loaded
+    val openedCount = (agentSessions.size + openTerminals.size + openedNative.size)
+        .takeIf { !agentPending && !terminalPending }
     // 历史范围只取决于项目与该项目可用的助手，切换助手不会重新拉取或过滤历史。
     val historyAgents = ui.availableAgents
     LaunchedEffect(tab, ui.projectPath, ui.connectionRevision, historyAgents) {
         if (tab == SimpleHomeTab.History) vm.loadHistoryForSelection()
-        // 两个 Tab 都依赖实时 Agent 列表：最近会话平铺终端会话，历史会话做「电脑运行中」匹配。
+        // 已打开 Tab 依赖实时 Agent 列表，历史会话也用它做「电脑运行中」匹配。
         agentVm.refresh()
     }
     Column(Modifier.fillMaxSize()) {
@@ -169,9 +160,7 @@ internal fun AiSimpleHome(
             item(key = "tabs") {
                 SimpleTabs(
                     selected = tab,
-                    // 会话列表与实时 Agent 列表都同步完成后才展示计数。
-                    recentCount = if (ui.homeLoaded && currentAgentUi.listLoaded)
-                        recentEntries.size else null,
+                    openedCount = openedCount,
                     historyCount = ui.historySessions.size.takeIf {
                         ui.historyProjectPath == ui.projectPath && ui.historyAgents == historyAgents
                     },
@@ -179,8 +168,8 @@ internal fun AiSimpleHome(
                 )
             }
             when (tab) {
-                SimpleHomeTab.Recent -> {
-                    // 实时会话同步失败不提示：VM 内已按退避自动重试，这里最多保留下方存量会话展示。
+                SimpleHomeTab.Opened -> {
+                    // 实时会话同步失败不提示：VM 内已按退避自动重试，这里最多保留已拿到的 Agent / 终端。
                     currentAgentUi.closeError?.let { error -> item(key = "agent-close-error") {
                         Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(12.dp)) {
                             Row(
@@ -195,22 +184,29 @@ internal fun AiSimpleHome(
                             }
                         }
                     } }
-                    if (recentEntries.isNotEmpty()) {
-                        items(recentEntries, key = { it.key }) { entry ->
-                            when (entry) {
-                                is RecentEntry.Live -> SimpleAgentSessionRow(
-                                    entry.session,
-                                    closing = currentAgentUi.closingTerminalId == entry.session.terminalId,
-                                    open = { openAgent(entry.session) },
-                                    requestClose = { closeTarget = entry.session },
-                                )
-                                is RecentEntry.Native -> AiRecentSessionRow(
-                                    ui, entry.session, { vm.open(entry.session.id) }, { delete(entry.session) },
-                                )
-                            }
+                    if (!openedEmpty) {
+                        items(agentSessions, key = { "agent-${it.terminalId}" }) { session ->
+                            SimpleAgentSessionRow(
+                                session,
+                                closing = currentAgentUi.closingTerminalId == session.terminalId,
+                                open = { openAgent(session) },
+                                requestClose = { closeTarget = session },
+                            )
                         }
-                        item(key = "recent-foot") {
-                            Text("会话实时同步手机与电脑，点击继续；长按终端 Agent 可关闭。",
+                        items(openedNative, key = { "native-${it.id}" }) { session ->
+                            AiRecentSessionRow(
+                                ui, session, { vm.open(session.id) }, { delete(session) },
+                            )
+                        }
+                        items(openTerminals, key = { "terminal-${it.id}" }) { terminal ->
+                            SimpleTerminalRow(
+                                terminal,
+                                profile = terminalUi.profiles.find { it.id == terminal.profileId },
+                                open = { terminalVm.open(terminal) },
+                            )
+                        }
+                        item(key = "opened-foot") {
+                            Text("只显示当前已打开的会话，点击继续；长按终端 Agent 可关闭。",
                                 Modifier.fillMaxWidth().padding(top = 4.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = TbColors.TextMuted)
@@ -218,14 +214,11 @@ internal fun AiSimpleHome(
                     }
                     when {
                         // 列表为空时按加载进度显示提示；任一侧有数据就直接平铺。
-                        ui.initialLoading -> if (recentEntries.isEmpty())
-                            item(key = "recent-loading") { SimpleLoading("正在同步最近会话…") }
-                        currentAgentUi.listError == null && !currentAgentUi.listLoaded ->
-                            if (recentEntries.isEmpty())
-                                item(key = "agent-loading") { SimpleLoading("正在同步会话…") }
-                        recentEntries.isEmpty() -> item(key = "recent-empty") {
-                            AiEmptyState(Icons.Outlined.ChatBubbleOutline, "第一段对话，从这里开始",
-                                "选择项目与模型，开启你的新想法。")
+                        openedEmpty && (agentPending || terminalPending || ui.initialLoading) ->
+                            item(key = "opened-loading") { SimpleLoading("正在同步已打开的会话…") }
+                        openedEmpty -> item(key = "opened-empty") {
+                            AiEmptyState(Icons.Outlined.ChatBubbleOutline, "还没有打开的会话",
+                                "选择项目与模型开始对话，或从历史会话中恢复。")
                         }
                     }
                 }
@@ -559,10 +552,10 @@ private fun SimpleProjectCommands(
     }
 }
 
-/** 最近会话 / 历史会话的两段式切换，数量只作辅助信息。 */
+/** 已打开 / 历史会话的两段式切换，数量只作辅助信息。 */
 @Composable
 private fun SimpleTabs(
-    selected: SimpleHomeTab, recentCount: Int?, historyCount: Int?,
+    selected: SimpleHomeTab, openedCount: Int?, historyCount: Int?,
     select: (SimpleHomeTab) -> Unit,
 ) {
     Row(
@@ -573,7 +566,7 @@ private fun SimpleTabs(
         SimpleHomeTab.entries.forEach { tab ->
             val active = selected == tab
             val count = when (tab) {
-                SimpleHomeTab.Recent -> recentCount
+                SimpleHomeTab.Opened -> openedCount
                 SimpleHomeTab.History -> historyCount
             }
             Surface(
@@ -689,6 +682,49 @@ private fun SimpleAgentSessionRow(
             } else {
                 Icon(Icons.Outlined.ChevronRight, "接管会话", Modifier.size(17.dp), tint = TbColors.TextMuted)
             }
+        }
+        AiDivider(Modifier.padding(start = 43.dp))
+    }
+}
+
+/** 已打开的普通终端行：点击进入终端画面；承载 Agent 的终端由 Agent 行代表，不会走到这里。 */
+@Composable
+private fun SimpleTerminalRow(
+    terminal: ServerTerminal,
+    profile: ServerProfile?,
+    open: () -> Unit,
+) {
+    val type = terminal.terminalType.ifBlank { profile?.terminalType.orEmpty() }
+    val typeName = terminalTypeLabel(type)
+    val directory = terminal.directory?.takeIf(String::isNotBlank)
+        ?: profile?.startupPath?.takeIf(String::isNotBlank)
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth()
+                .combinedClickable(onClick = open)
+                .padding(horizontal = 8.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                Modifier.size(25.dp).background(TbColors.SurfaceHover, RoundedCornerShape(7.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    if (type.equals("ssh", ignoreCase = true)) Icons.Outlined.Dns else Icons.Outlined.Terminal,
+                    null, Modifier.size(15.dp), tint = TbColors.Accent,
+                )
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(terminal.profileName, style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    listOfNotNull(typeName, directory).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(Icons.Outlined.ChevronRight, "进入终端", Modifier.size(17.dp), tint = TbColors.TextMuted)
         }
         AiDivider(Modifier.padding(start = 43.dp))
     }
