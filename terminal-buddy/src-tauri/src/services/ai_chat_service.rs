@@ -106,6 +106,9 @@ fn persist_data(cell: &Cell, data: &AiSession) -> Result<()> {
     value["requestIds"] = json!(data.request_ids);
     value["usageCheckpoint"] = json!(data.usage_checkpoint);
     value["pendingInputs"] = json!(data.pending_inputs);
+    // 思考快照只是「此刻在做什么」的实时状态：既不进聊天记录，也不落盘
+    // （否则每批 delta 都要重写整个会话文件，长回合下磁盘写放大非常可观）。
+    if let Some(object) = value.as_object_mut() { object.remove("thinking"); }
     atomic_write_private(&cell.path, &serde_json::to_vec(&value).map_err(|e| e.to_string())?)
         .map_err(|e| format!("保存 AI 会话失败：{e}"))
 }
@@ -121,7 +124,12 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
         let pending_ids: HashSet<_> = data.pending_inputs.iter().map(|item| item.request_id.as_str()).collect();
         let previous_count = data.messages.len();
         data.messages.retain(|message| !pending_ids.contains(message.id.as_str()));
-        let migrated = data.messages.len() != previous_count;
+        // 旧版本把后台 Bash 命令（`task_type=local_bash`）也记成了子代理：它们没有
+        // 任何子代理消息，点开只能是空抽屉。有 task_type 的按类型剔除；更早的记录
+        // 没有该字段，改用 tool_use 对应的工具名兜底（子代理调用才会是 Task / Agent）。
+        let before_agents = data.agents.len();
+        prune_non_subagent_agents(&mut data);
+        let migrated = data.messages.len() != previous_count || data.agents.len() != before_agents;
         if migrated { touch(&mut data); }
         let interrupted = matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping");
         if interrupted {
@@ -175,7 +183,7 @@ fn new_session(owner: &str, input: CreateAiSession) -> Result<AiSession> {
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new(),
-        slash_catalog: None, todos: Vec::new(), agents: Vec::new() };
+        slash_catalog: None, todos: Vec::new(), agents: Vec::new(), thinking: None };
     Ok(data)
 }
 fn save_new_session(data: AiSession) -> Result<AiSession> {
@@ -276,7 +284,7 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
         usage: Some(usage::initial()), usage_checkpoint: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0,
         owner: owner.into(), thread_id: Some(resume_id.to_string()), request_ids: Vec::new(), pending_inputs: Vec::new(),
-        slash_catalog: None, todos, agents: Vec::new() };
+        slash_catalog: None, todos, agents: Vec::new(), thinking: None };
     let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
@@ -416,6 +424,32 @@ pub fn stop(id: &str, owner: &str) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// 清掉被误记成子代理的后台命令（历史数据迁移）。
+///
+/// 有 `task_type` 的记录直接按类型剔除；更早的会话没有该字段，则看它的
+/// `tool_use_id` 在主线程消息里对应的工具名——后台 Bash 任务的 `tool_use_id`
+/// 指向的是 `Bash` 调用，而子代理只由 `Task` / `Agent` 启动。找不到工具消息的
+/// 条目（历史被截断）保持原样，宁多勿删。
+fn prune_non_subagent_agents(data: &mut AiSession) {
+    if data.agents.is_empty() { return; }
+    let mut tool_names: HashMap<String, String> = HashMap::new();
+    for message in &data.messages {
+        if message.subagent.is_some() || message.role != "tool" { continue; }
+        let Some((name, _)) = message.text.split_once('\n') else { continue; };
+        // 工具消息 id 形如 `{turn}-tool-{tool_use_id}`（结果类是 `-result-`）。
+        if let Some(tool_id) = message.id.rsplit_once("-tool-").map(|(_, id)| id) {
+            tool_names.entry(tool_id.to_string()).or_insert_with(|| name.to_string());
+        }
+    }
+    data.agents.retain(|agent| {
+        if matches!(agent.task_type.as_deref(), Some("local_bash" | "background_shell")) { return false; }
+        match agent.tool_use_id.as_deref().and_then(|id| tool_names.get(id)) {
+            Some(name) => subagent_tool_name(name),
+            None => true,
+        }
+    });
 }
 
 /// 子代理状态落终态：用于中断、进程退出、/clear 等「不会再收到 task_* 事件」的场合。
@@ -794,8 +828,9 @@ fn begin_pending_turn(data: &mut AiSession) -> Option<PendingInput> {
         images: next.images.clone(), todo: false });
     if data.title == "新对话" { data.title = input_title(&next.text, &next.images); }
     usage::begin_turn(data);
-    // 新一轮任务开始：上一轮的任务清单与子代理不再对应当前上下文，清空以免残留误导。
+    // 新一轮任务开始：上一轮的任务清单、子代理与思考快照不再对应当前上下文，清空以免残留误导。
     data.todos.clear(); data.agents.clear();
+    data.thinking = None;
     data.status = "running".into(); data.error = None; data.approvals.clear(); touch(data);
     Some(next)
 }
@@ -857,6 +892,8 @@ fn finish(cell: &Arc<Cell>, result: Result<()>) {
     usage::finish_turn(&mut data);
     // 进程已退出：不再会有 task_* 事件，仍在「执行中」的子代理就地置终态。
     settle_agents(&mut data, "stopped");
+    // 思考实时状态随回合结束清空（它是过程量，不是聊天记录）。
+    thinking_clear(&mut data);
     match result {
         Ok(()) => { data.status = "idle".into(); data.error = None; }
         Err(error) => { data.status = if error == "已中断" { "interrupted" } else { "error" }.into(); data.error = Some(error); }
@@ -966,6 +1003,12 @@ fn apply_todo_patch(todo: &mut AiTodo, status: Option<String>, subject: Option<S
 /// 因此这里也用于判定「这条历史消息属于任务工具」。
 fn is_task_tool(name: &str) -> bool {
     matches!(name, "TodoWrite" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet")
+}
+
+/// 启动子代理的工具名：Claude CLI 2.1.x 起由 `Task` 改称 `Agent`，
+/// 两代名字都会出现在历史会话与实时 stream-json 里。
+fn subagent_tool_name(name: &str) -> bool {
+    matches!(name, "Task" | "Agent")
 }
 
 /// `TaskList` 的结果解析：每行形如 `#1 [completed] 读取 AGENTS.md`。
@@ -1132,6 +1175,102 @@ fn message_sub_quiet(cell: &Cell, key: &str, group: &str, text: &str, agent: &st
         touch(&mut data);
     }
 }
+/// 思考快照只保留尾部若干字符：一是思考可能长达数万字（实测单段最大 2.3 万字），
+/// 每帧全量下发会撑爆 IPC；二是前端折叠态只显示最后一两句。截断点回退到最近的
+/// 换行/句号，避免把半句话当成开头展示。
+const THINKING_TAIL_CHARS: usize = 4000;
+
+fn thinking_tail(text: &str) -> String {
+    let count = text.chars().count();
+    if count <= THINKING_TAIL_CHARS { return text.to_string(); }
+    let tail: String = text.chars().skip(count - THINKING_TAIL_CHARS).collect();
+    // 回退到最近的段落/句子边界，最多再丢 200 字。窗口按字符数切，
+    // 不能按字节切：中文一个字三字节，字节下标会落在字符中间直接 panic。
+    let window: String = tail.chars().take(200).collect();
+    let cut = window.rfind('\n').or_else(|| window.rfind("。")).or_else(|| window.rfind('.'))
+        .map(|at| at + window[at..].chars().next().map_or(0, char::len_utf8))
+        .filter(|at| *at > 0);
+    match cut {
+        Some(at) => tail[at..].to_string(),
+        None => tail,
+    }
+}
+
+/// 思考增量：静默写入会话级 `thinking` 快照，批末统一推送
+/// （与 message_append_quiet 同一套节流，思考 delta 的频率同样是 token 级）。
+/// 子代理的思考不记录：那属于子代理抽屉的内容，混进主线程快照会让用户分不清
+/// 「主线程在等子代理」和「主线程自己在想」。
+fn thinking_append_quiet(cell: &Cell, text: &str) {
+    if text.is_empty() { return; }
+    if let Ok(mut data) = cell.data.lock() {
+        let now = chrono::Utc::now().timestamp_millis();
+        match data.thinking.as_mut() {
+            Some(thinking) if thinking.active => {
+                thinking.text.push_str(text);
+                thinking.total_chars += text.chars().count() as u64;
+                thinking.updated_at = now;
+                let tail = thinking_tail(&thinking.text);
+                thinking.text = tail;
+            }
+            // 上一段已结束（正文/工具已开始）：开新的一段。
+            _ => {
+                data.thinking = Some(crate::models::ai_chat::AiThinking {
+                    text: thinking_tail(text),
+                    started_at: now,
+                    updated_at: now,
+                    active: true,
+                    blocks: data.thinking.as_ref().map_or(1, |previous| previous.blocks + 1),
+                    total_chars: text.chars().count() as u64,
+                });
+            }
+        }
+        touch(&mut data);
+    }
+}
+
+/// 完整快照里的整段思考：没有 delta 流可追加时，直接用这段覆盖当前思考段。
+/// 已有更长的活动段时不覆盖（delta 与快照会重复到达，快照可能反而是旧的）。
+fn thinking_replace_quiet(cell: &Cell, text: &str) {
+    if let Ok(mut data) = cell.data.lock() {
+        let chars = text.chars().count();
+        let replace = match data.thinking.as_ref() {
+            Some(thinking) => !thinking.active || thinking.text.chars().count() < chars,
+            None => true,
+        };
+        if !replace { return; }
+        let now = chrono::Utc::now().timestamp_millis();
+        let blocks = data.thinking.as_ref().map_or(1, |previous| previous.blocks.max(1));
+        data.thinking = Some(crate::models::ai_chat::AiThinking {
+            text: thinking_tail(text),
+            started_at: data.thinking.as_ref().map_or(now, |previous| previous.started_at),
+            updated_at: now,
+            active: false,
+            blocks,
+            total_chars: chars as u64,
+        });
+        touch(&mut data);
+    }
+}
+
+/// 思考块结束：保留文本供前端展开回看，但标记为非活动，下次思考开新段。
+fn thinking_finish(cell: &Cell) {
+    if let Ok(mut data) = cell.data.lock() {
+        match data.thinking.as_mut() {
+            Some(thinking) if thinking.active => {
+                thinking.active = false;
+                thinking.updated_at = chrono::Utc::now().timestamp_millis();
+                touch(&mut data);
+            }
+            _ => return,
+        }
+    }
+}
+
+/// 回合收尾时清空思考快照：它只是「此刻在做什么」的实时状态，不是聊天记录。
+fn thinking_clear(data: &mut AiSession) {
+    if data.thinking.take().is_some() { touch(data); }
+}
+
 /// 常驻 CLI 子进程 + 它的进程树。退出时整棵树一起回收：CLI 会派生 node / shell /
 /// 子代理等后代，只杀直接子进程会留下孤儿。Windows 走 Job Object（不再 spawn
 /// `taskkill`：GUI 子系统下它会弹控制台并打报错，且 PID 复用后可能杀错进程），
@@ -1236,7 +1375,10 @@ fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control
     if session.provider == "claude" {
         command.args(&permissions.claude_args);
         command.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-            "--permission-prompt-tool", "stdio"]);
+            "--permission-prompt-tool", "stdio",
+            // 子代理的文本与思考默认不转发：不加这个开关时，子代理抽屉里只能看到
+            // 工具调用与结果，「该子代理干了什么、说了什么」完全缺失。
+            "--forward-subagent-text"]);
         if let Some(id) = &session.thread_id { command.arg("--resume").arg(id); }
         if let Some(model) = &session.model { command.arg("--model").arg(model); }
     } else {
@@ -1390,13 +1532,35 @@ impl ClaudeOutputState {
                             None => message_append_quiet(cell, &key, event["content_block"]["text"].as_str().unwrap_or("")),
                         }
                     }
+                    // 新块（正文/工具）开始：上一段思考到此收尾，折叠态停止滚动。
+                    if block.kind != "thinking" { thinking_finish(cell); }
                 } else if event["delta"]["type"] == "text_delta" {
                     block.kind = "text".into();
                     match &agent {
                         Some(name) => message_sub_quiet(cell, &key, &group, event["delta"]["text"].as_str().unwrap_or(""), name),
                         None => message_append_quiet(cell, &key, event["delta"]["text"].as_str().unwrap_or("")),
                     }
+                } else if event["delta"]["type"] == "thinking_delta" {
+                    // 思考内容只做主线程的实时状态，不进 messages（见 AiThinking）：
+                    // 它不是聊天记录，历史回放与安卓端都不该按消息渲染它。
+                    block.kind = "thinking".into();
+                    if agent.is_none() {
+                        thinking_append_quiet(cell, event["delta"]["thinking"].as_str().unwrap_or(""));
+                    }
                 }
+            }
+            "content_block_stop" => {
+                // 思考块结束：标记为非活动，前端折叠态停止滚动，等待正文或下一次思考。
+                let Some(index) = event["index"].as_u64() else { return; };
+                let tracking = match parent {
+                    Some(parent) => self.current_sub_messages.get(parent)
+                        .map(|id| format!("sub:{parent}:{id}")),
+                    None => Some(self.current_message.clone()),
+                };
+                let was_thinking = tracking.and_then(|tracking| self.messages.get(&tracking))
+                    .and_then(|blocks| blocks.blocks.get(&index))
+                    .is_some_and(|block| block.kind == "thinking");
+                if was_thinking { thinking_finish(cell); }
             }
             _ => {}
         }
@@ -1501,10 +1665,20 @@ impl ClaudeOutputState {
                     Some(name) => message_with_subagent(cell, &format!("{turn}-sub-text-{}-{id}-{index}", parent.unwrap_or("")), &format!("{turn}:{}", parent.unwrap_or("")), "assistant", text, name),
                     None => message(cell, &format!("{turn}-text-{id}-{index}"), "assistant", text, false),
                 }
+                // 正文已经落地：这段思考结束，实时状态不再展示。
+                if subagent.is_none() { thinking_finish(cell); }
+            }
+            // 完整快照里的思考块：部分模型/代理不发 thinking_delta，只在 assistant 事件里
+            // 带完整思考。此时没有增量可追加，直接把这一段作为当前思考段呈现。
+            if kind == "thinking" && subagent.is_none() {
+                let text = item["thinking"].as_str().unwrap_or("");
+                if !text.trim().is_empty() { thinking_replace_quiet(cell, text); }
             }
             if kind == "tool_use" {
-                // 主线程发起 Task 时登记 tool_use_id → 子代理名，供后续带 parent 的事件取用。
-                if item["name"] == "Task" && parent.is_none() {
+                // 主线程发起子代理时登记 tool_use_id → 子代理名，供后续带 parent 的事件取用。
+                // 新版 CLI 把该工具改名为 `Agent`，旧版叫 `Task`，两者都要认——
+                // 漏认时子代理消息会全部回落成通用名 "subagent"。
+                if subagent_tool_name(item["name"].as_str().unwrap_or("")) && parent.is_none() {
                     if let Some(tool_id) = item["id"].as_str() {
                         let display = item["input"]["subagent_type"].as_str()
                             .or(item["input"]["description"].as_str())
@@ -1766,7 +1940,8 @@ impl ClaudeAgents {
             }
             data.agents.push(AiAgent {
                 task_id, tool_use_id, name, description,
-                status: "running".into(), background, parent_task_id, depth,
+                status: "running".into(), task_type: text_field(value, "task_type"),
+                background, parent_task_id, depth,
                 started_at: now, ended_at: None, summary: None, duration_ms: None, tool_uses: None,
             });
         });
@@ -1817,6 +1992,7 @@ impl ClaudeAgents {
                     .or_else(|| summary.clone()).unwrap_or_else(|| "subagent".into());
                 data.agents.push(AiAgent {
                     task_id, tool_use_id, name, description: summary.clone(), status: status.into(),
+                    task_type: text_field(value, "task_type"),
                     background: false, parent_task_id: None, depth: 1,
                     started_at: now.saturating_sub(duration_ms.unwrap_or(0)), ended_at: Some(now),
                     summary, duration_ms, tool_uses,
@@ -1855,7 +2031,7 @@ impl ClaudeAgents {
             Some(AiAgent {
                 task_id, tool_use_id,
                 description: text_field(task, "description"), name,
-                status, background: task["is_backgrounded"] == true || task["awaited"] != true,
+                status, task_type: text_field(task, "task_type"), background: task["is_backgrounded"] == true || task["awaited"] != true,
                 parent_task_id: text_field(task, "parent_task_id"),
                 depth: task["spawn_depth"].as_u64().map(|depth| depth as u32).unwrap_or(1),
                 started_at: now, ended_at: None, summary: None, duration_ms: None, tool_uses: None,
@@ -1883,9 +2059,17 @@ impl ClaudeAgents {
     }
 }
 
-/// 用户可见子代理的过滤：内部杂务（ambient）与不上转录的条目不属于面板。
+/// 用户可见子代理的过滤：内部杂务（ambient）、不上转录的条目，以及**后台命令**
+/// （`task_type == "local_bash"`，例如后台跑 `sleep` / `cargo test`）都不属于面板。
+///
+/// `task_*` 事件对子代理与后台 Bash 命令是同构下发的，唯一可靠的区分是 `task_type`：
+/// 子代理是 `local_agent`（还有 `remote_agent` / `local_workflow` 等代理形式），
+/// 而 `local_bash` / `background_shell` 是命令，没有任何子代理消息可展示——
+/// 若不过滤，点开它们只会看到「该子代理尚未产生输出」的空抽屉。
 fn is_visible_task(task: &Value) -> bool {
-    task["ambient"] != true && task["skip_transcript"] != true && task["task_id"].as_str().is_some_and(|id| !id.is_empty())
+    if task["ambient"] == true || task["skip_transcript"] == true { return false; }
+    if task["task_id"].as_str().is_none_or(str::is_empty) { return false; }
+    !matches!(task["task_type"].as_str(), Some("local_bash" | "background_shell"))
 }
 fn visible_task_id(value: &Value) -> Option<String> {
     if !is_visible_task(value) { return None; }
@@ -2800,11 +2984,148 @@ mod tests {
     }
     fn stop(index: u64) -> Value { stream(json!({"type": "content_block_stop", "index": index})) }
     fn assistant(id: &str, content: Value) -> Value { json!({"type": "assistant", "message": {"id": id, "content": content}}) }
+    /// 排队消息可原地编辑：只改队列里的文本，不新增消息、不动当前回合。
+    #[test]
+    fn pending_input_text_can_be_edited_in_place() {
+        let saved = SavedCell::new();
+        {
+            let mut data = saved.0.data.lock().unwrap();
+            data.pending_inputs = vec![
+                crate::models::ai_chat::PendingInput { text: "原始内容".into(), request_id: "req-1".into(), images: Vec::new() },
+                crate::models::ai_chat::PendingInput { text: "第二条".into(), request_id: "req-2".into(), images: Vec::new() },
+            ];
+        }
+        let before_messages = saved.0.data.lock().unwrap().messages.len();
+        change_pending_input_locked(&saved.0, "req-1", Some("改过的内容".into())).unwrap();
+        let data = saved.0.data.lock().unwrap();
+        assert_eq!(data.pending_inputs[0].text, "改过的内容");
+        assert_eq!(data.pending_inputs[1].text, "第二条", "其他排队消息不受影响");
+        assert_eq!(data.pending_inputs.len(), 2, "编辑不该改变队列长度");
+        assert_eq!(data.messages.len(), before_messages, "排队消息不是聊天记录，编辑不产生消息");
+    }
+
+    /// 编辑失败的两条边界：空文本被拒；已被 worker 取走的消息不能再改。
+    #[test]
+    fn pending_input_edit_rejects_blank_and_already_sent() {
+        // 空校验发生在加载会话之前，所以不存在的会话也能验证到这条分支。
+        let blank = update_pending_input("00000000-0000-4000-8000-000000000000", "o", "req-1", "  ".into());
+        assert_eq!(blank.err().as_deref(), Some("消息不能为空"));
+        let saved = SavedCell::new();
+        {
+            let mut data = saved.0.data.lock().unwrap();
+            data.pending_inputs = vec![
+                crate::models::ai_chat::PendingInput { text: "原始内容".into(), request_id: "req-1".into(), images: Vec::new() },
+            ];
+        }
+        // 已经被取走（队列里没有这个 requestId）时给出明确错误，而不是静默成功。
+        let missing = match change_pending_input_locked(&saved.0, "req-gone", Some("新内容".into())) {
+            Ok(_) => panic!("已被取走的消息不该编辑成功"),
+            Err(error) => error,
+        };
+        assert!(missing.contains("已发送或已移出队列"), "错误应说明原因：{missing}");
+        assert_eq!(saved.0.data.lock().unwrap().pending_inputs.len(), 1, "失败的编辑不改队列");
+    }
+
+    /// 思考是实时状态：随实时帧下发（metadata）但不落盘，避免每批 delta 重写会话文件。
+    #[test]
+    fn thinking_is_emitted_but_never_persisted() {
+        let saved = SavedCell::new();
+        {
+            let mut data = saved.0.data.lock().unwrap();
+            data.thinking = Some(crate::models::ai_chat::AiThinking {
+                text: "实时思考".into(), started_at: 1, updated_at: 2, active: true, blocks: 3, total_chars: 9,
+            });
+            touch(&mut data);
+        }
+        // 实时帧：metadata 必须带上思考快照，否则前端拿不到。
+        let metadata = saved.0.data.lock().unwrap().metadata();
+        assert_eq!(metadata.thinking.as_ref().map(|t| t.text.as_str()), Some("实时思考"));
+        assert_eq!(metadata.thinking.as_ref().map(|t| t.blocks), Some(3));
+        // 落盘：会话文件里不能出现 thinking 字段。
+        persist(&saved.0).unwrap();
+        let file = serde_json::from_slice::<Value>(&fs::read(&saved.0.path).unwrap()).unwrap();
+        assert!(file.get("thinking").is_none(), "思考不该写进磁盘");
+        assert_eq!(file["messages"].as_array().map(|m| m.len()), Some(0), "思考也不该进聊天记录");
+    }
+
+    /// 回合收尾清空思考快照：回合结束后不该再显示「正在想什么」。
+    #[test]
+    fn thinking_is_cleared_when_the_turn_finishes() {
+        let mut data = cell().data.lock().unwrap().clone();
+        data.thinking = Some(crate::models::ai_chat::AiThinking {
+            text: "旧思考".into(), started_at: 1, updated_at: 1, active: true, blocks: 1, total_chars: 3,
+        });
+        thinking_clear(&mut data);
+        assert!(data.thinking.is_none());
+    }
+
     fn replay(events: &[Value]) -> Vec<AiMessage> {
         let cell = cell();
         let mut state = ClaudeOutputState::default();
         for event in events { apply_claude_event(&cell, "turn", &mut state, event).unwrap(); }
         cell.data.into_inner().unwrap().messages
+    }
+    fn thinking_delta(index: u64, text: &str) -> Value {
+        stream(json!({"type": "content_block_delta", "index": index,
+            "delta": {"type": "thinking_delta", "thinking": text}}))
+    }
+
+    /// 思考不再被丢弃：delta 累积进会话级快照，且不写进 messages（不是聊天记录）。
+    #[test]
+    fn claude_thinking_deltas_fill_session_snapshot_without_becoming_messages() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        for event in [start("msg-1"), block(0, "thinking"),
+            thinking_delta(0, "先看会话数据"), thinking_delta(0, "，再定位渲染逻辑")] {
+            apply_claude_event(&cell, "turn", &mut state, &event).unwrap();
+        }
+        let data = cell.data.lock().unwrap();
+        assert!(data.messages.is_empty(), "思考不应进入消息流");
+        let thinking = data.thinking.as_ref().expect("应记录思考快照");
+        assert_eq!(thinking.text, "先看会话数据，再定位渲染逻辑");
+        assert!(thinking.active);
+        assert_eq!(thinking.blocks, 1);
+    }
+
+    /// 正文开始后当前段思考收尾；再来的思考开新的一段并累加段数。
+    #[test]
+    fn claude_thinking_segments_close_on_text_and_restart() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        for event in [start("msg-1"), block(0, "thinking"), thinking_delta(0, "第一段"),
+            stop(0), block(1, "text"), delta(1, "正文"), stop(1),
+            start("msg-2"), block(0, "thinking"), thinking_delta(0, "第二段")] {
+            apply_claude_event(&cell, "turn", &mut state, &event).unwrap();
+        }
+        let data = cell.data.lock().unwrap();
+        let thinking = data.thinking.as_ref().unwrap();
+        assert_eq!(thinking.text, "第二段", "新段应覆盖上一段的尾部内容");
+        assert_eq!(thinking.blocks, 2);
+        assert!(thinking.active, "正在输出的这一段是活动的");
+        assert!(data.messages.iter().any(|m| m.role == "assistant" && m.text == "正文"));
+    }
+
+    /// 思考过长时只保留尾部：整段（实测单段可达 2.3 万字）全量下发会撑爆 IPC。
+    #[test]
+    fn thinking_tail_keeps_only_the_end() {
+        let text = format!("开头应该被丢掉。{}", "尾部内容".repeat(2000));
+        let tail = thinking_tail(&text);
+        assert!(tail.chars().count() <= THINKING_TAIL_CHARS);
+        assert!(tail.contains("尾部内容"));
+        assert!(!tail.contains("开头应该被丢掉"));
+    }
+
+    /// 只在 assistant 快照里出现的思考（没有 delta 流）也要能显示。
+    #[test]
+    fn claude_complete_thinking_block_without_deltas_is_kept() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        apply_claude_event(&cell, "turn", &mut state,
+            &assistant("msg-1", json!([{"type": "thinking", "thinking": "整段思考"}])),).unwrap();
+        let data = cell.data.lock().unwrap();
+        let thinking = data.thinking.as_ref().expect("快照里的思考也要保留");
+        assert_eq!(thinking.text, "整段思考");
+        assert!(!thinking.active, "快照到达时该段已结束");
     }
 
     #[test]
@@ -3425,6 +3746,55 @@ mod todo_agent_tests {
     }
 
     #[test]
+    fn background_shell_tasks_are_not_listed_as_subagents() {
+        let cell = cell();
+        let mut agents = ClaudeAgents::default();
+        // CLI 对后台 Bash 命令也下发同构的 task_* 事件：它不是子代理，不能进 chip 带，
+        // 否则点开只有空抽屉（用户报障的成因之一）。
+        agents.observe(&cell, &task_event("task_started", json!({
+            "task_id": "bash-1", "tool_use_id": "tool-bash", "description": "后台运行 sleep 60",
+            "is_backgrounded": true, "task_type": "local_bash",
+        })));
+        assert!(cell.data.lock().unwrap().agents.is_empty(), "后台命令不进子代理面板");
+        // 子代理的 task_type 是 local_agent：必须保留，并记录类型供前端判断。
+        agents.observe(&cell, &task_event("task_started", json!({
+            "task_id": "agent-1", "tool_use_id": "tool-agent", "subagent_type": "Explore",
+            "description": "找代码", "task_type": "local_agent",
+        })));
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.agents.len(), 1);
+        assert_eq!(data.agents[0].task_type.as_deref(), Some("local_agent"));
+        // 快照同样要剔除后台命令。
+        drop(data);
+        agents.observe(&cell, &task_event("background_tasks_changed", json!({"tasks": [
+            {"task_id": "bash-2", "status": "running", "task_type": "local_bash"},
+            {"task_id": "agent-1", "status": "running", "task_type": "local_agent"},
+        ]})));
+        assert_eq!(cell.data.lock().unwrap().agents.len(), 1);
+    }
+
+    #[test]
+    fn subagent_tool_alias_registers_display_name() {
+        // 新版 CLI 的子代理工具叫 `Agent`：漏认时子代理消息会回落成通用名。
+        assert!(subagent_tool_name("Agent"));
+        assert!(subagent_tool_name("Task"));
+        assert!(!subagent_tool_name("Bash"));
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        let event = json!({"type": "assistant", "message": {"id": "m-1", "content": [
+            {"type": "tool_use", "id": "toolu-agent", "name": "Agent",
+             "input": {"subagent_type": "Explore", "description": "检索代码"}}
+        ]}});
+        apply_claude_event(&cell, "turn", &mut state, &event).unwrap();
+        let sub = json!({"type": "assistant", "parent_tool_use_id": "toolu-agent",
+            "message": {"id": "sub-1", "content": [{"type": "text", "text": "找到了"}]}});
+        apply_claude_event(&cell, "turn", &mut state, &sub).unwrap();
+        let data = cell.data.lock().unwrap();
+        assert!(data.messages.iter().any(|message| message.subagent.as_deref() == Some("Explore")));
+        assert!(data.messages.iter().all(|message| message.subagent.as_deref() != Some("subagent")));
+    }
+
+    #[test]
     fn repeated_notifications_replace_previous_report() {
         let cell = cell();
         let mut agents = ClaudeAgents::default();
@@ -3590,16 +3960,39 @@ mod todo_agent_tests {
         let mut data = cell().data.lock().map(|guard| guard.clone()).unwrap();
         data.agents = vec![
             AiAgent { task_id: "a".into(), tool_use_id: None, name: "A".into(), description: None,
-                status: "running".into(), background: false, parent_task_id: None, depth: 1,
+                status: "running".into(), task_type: None, background: false, parent_task_id: None, depth: 1,
                 started_at: 0, ended_at: None, summary: None, duration_ms: None, tool_uses: None },
             AiAgent { task_id: "b".into(), tool_use_id: None, name: "B".into(), description: None,
-                status: "completed".into(), background: false, parent_task_id: None, depth: 1,
+                status: "completed".into(), task_type: None, background: false, parent_task_id: None, depth: 1,
                 started_at: 0, ended_at: Some(5), summary: None, duration_ms: Some(5), tool_uses: None },
         ];
         settle_agents(&mut data, "stopped");
         assert_eq!(data.agents[0].status, "stopped");
         assert_eq!(data.agents[1].status, "completed");
         assert_eq!(data.agents[1].duration_ms, Some(5));
+    }
+
+    #[test]
+    fn prune_drops_background_shell_agents_from_history() {
+        let mut data: AiSession = serde_json::from_value(json!({
+            "id": "legacy", "title": "旧会话", "provider": "claude", "projectPath": "/tmp",
+            "model": null, "status": "idle", "error": null, "updatedAt": 1, "revision": 1,
+            "approvals": [],
+            "messages": [
+                {"id": "t-tool-bash-1", "role": "tool", "text": "Bash\n{\"command\":\"sleep 60\"}", "createdAt": 0},
+                {"id": "t-tool-agent-1", "role": "tool", "text": "Task\n{\"subagent_type\":\"Explore\"}", "createdAt": 0},
+            ],
+            "agents": [
+                {"taskId": "a", "toolUseId": "bash-1", "name": "后台运行 sleep 60", "status": "completed",
+                 "background": true, "depth": 1, "startedAt": 0},
+                {"taskId": "b", "toolUseId": "agent-1", "name": "Explore", "status": "completed",
+                 "background": false, "depth": 1, "startedAt": 0},
+                {"taskId": "c", "name": "老记录", "status": "completed", "background": false, "depth": 1, "startedAt": 0},
+            ],
+        })).unwrap();
+        prune_non_subagent_agents(&mut data);
+        let ids: Vec<&str> = data.agents.iter().map(|agent| agent.task_id.as_str()).collect();
+        assert_eq!(ids, vec!["b", "c"], "后台命令按工具名剔除，无 tool_use 的老记录保留");
     }
 
     #[test]

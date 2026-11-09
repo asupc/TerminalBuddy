@@ -340,7 +340,7 @@ mod tests {
             status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
             updated_at: 0, revision: 1, result_revision: 0, usage: Some(initial()),
             usage_checkpoint: None, owner: "o".into(), thread_id: None, request_ids: Vec::new(),
-            pending_inputs: Vec::new(), slash_catalog: None, todos: Vec::new(), agents: Vec::new(),
+            pending_inputs: Vec::new(), slash_catalog: None, todos: Vec::new(), agents: Vec::new(), thinking: None,
         }
     }
 

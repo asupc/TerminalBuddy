@@ -35,6 +35,33 @@ pub struct AiMessage {
 
 fn is_false(value: &bool) -> bool { !*value }
 
+/// 主线程当前的思考内容（Claude 的 thinking 块）。
+///
+/// 长回合里模型可能连续思考几十分钟才输出第一句正文（实测一个会话里 164 段思考、
+/// 42 万字，前 28 分钟一条正文都没有）。这段过程过去被后端直接丢弃，界面上只剩
+/// 一个「已等待 N 秒」的呼吸灯，看起来像卡死；终端里反而能实时看到。
+///
+/// 这里只保留**当前一段**思考的尾部若干字符作为实时状态，不写进 `messages`：
+/// 思考不是聊天记录（不该进历史回放、也不该让安卓端按消息渲染），
+/// 前端在「AI 正在思考中」气泡里滚动显示最新一行，点开可看全文。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiThinking {
+    /// 思考正文（只保留尾部，前端展开时显示这一段）。
+    pub text: String,
+    /// 本段思考开始的时刻。
+    pub started_at: i64,
+    pub updated_at: i64,
+    /// 是否仍在输出：思考块结束后为 false，正文/工具开始后前端淡出。
+    pub active: bool,
+    /// 本回合已经开始的思考段数（过程量，折叠态展示「第 N 段思考」）。
+    #[serde(default)]
+    pub blocks: u32,
+    /// 本回合思考累计字符数（截断前统计，用来说明模型在有效工作）。
+    #[serde(default)]
+    pub total_chars: u64,
+}
+
 /// 会话当前任务清单：`TodoWrite` 全量快照的直接投影。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +89,10 @@ pub struct AiAgent {
     pub description: Option<String>,
     /// running | completed | failed | stopped | killed | paused
     pub status: String,
+    /// CLI 的任务类型：`local_agent`（子代理）、`local_bash`（后台命令）等。
+    /// 只有代理类任务才会产生子代理消息，前端据此区分 chip 与空抽屉。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
     #[serde(default)]
     pub background: bool,
     /// 嵌套子代理的父任务 id。
@@ -191,6 +222,9 @@ pub struct AiSession {
     /// 本轮派发过的子代理状态（`task_started` / `task_updated` / `task_notification`）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agents: Vec<AiAgent>,
+    /// 主线程当前思考的实时快照（不落盘、不入聊天记录）：见 [`AiThinking`]。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<AiThinking>,
 }
 
 impl AiSession {
@@ -207,9 +241,11 @@ impl AiSession {
             // 排队消息是客户端可见的元数据：实时帧需要它来刷新「N 条排队中」。
             pending_inputs: self.pending_inputs.clone(),
             slash_catalog: self.slash_catalog.clone(),
-            // 任务清单与子代理状态是底部面板的实时数据源，必须随每一帧下发。
+            // 任务清单与子代理状态是底部面板的实时数据源，必须随每一帧下发；
+            // 思考快照同理（流式中每秒都在变，长回合靠它判断模型仍在推进）。
             todos: self.todos.clone(),
             agents: self.agents.clone(),
+            thinking: self.thinking.clone(),
         }
     }
 }
