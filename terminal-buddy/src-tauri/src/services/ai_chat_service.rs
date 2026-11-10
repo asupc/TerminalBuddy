@@ -223,6 +223,11 @@ fn save_new_session(mut data: AiSession) -> Result<AiSession> {
     let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{}.json", data.id)) });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
+    // 新建/恢复会话即时广播：桌面端据此补开聊天标签（不抢焦点），
+    // 与终端会话的 `terminal-created` 对齐。手机 App 建会话时桌面端也能看到。
+    if let Some(app) = APP.get() {
+        let _ = app.emit("ai-session-created", json!({"type": "created", "session": data.metadata()}));
+    }
     Ok(data)
 }
 
