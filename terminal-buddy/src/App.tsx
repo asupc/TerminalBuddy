@@ -1,5 +1,6 @@
 import { useTerminalTaskSummaries } from './hooks/useTerminalTaskSummaries';
 import { useAgentTabStatusSync } from './hooks/useAgentTabStatusSync';
+import { useAgentSessionCreatedSync } from './hooks/useAgentSessionCreatedSync';
 import { useDesktopOpenSessionSync } from './hooks/useDesktopOpenSessionSync';
 ﻿import { lazy, Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -60,6 +61,7 @@ import { PRESET_THEMES } from './types';
 function App() {
   useTerminalTaskSummaries();
   useAgentTabStatusSync();
+  useAgentSessionCreatedSync();
   useDesktopOpenSessionSync();
   const setProfiles = useAppStore(s => s.setProfiles);
   const setProjects = useAppStore(s => s.setProjects);

@@ -226,7 +226,15 @@ export interface AiSessionUpdateFrame {
   messages: AiMessage[];
 }
 
+/** 新建/恢复会话推送帧：桌面端据此在标签栏补开聊天标签（不抢焦点）。 */
+export interface AiSessionCreatedFrame {
+  type: 'created';
+  session: AiSession;
+}
+
 export const AI_SESSION_UPDATE_EVENT = 'ai-session-update';
+/** 新建或从历史恢复了一个原生会话（可能来自手机 App / 其他客户端）。 */
+export const AI_SESSION_CREATED_EVENT = 'ai-session-created';
 /** 会话被删除（可能来自其他客户端），payload 为会话 ID。 */
 export const AI_SESSION_REMOVED_EVENT = 'ai-session-removed';
 

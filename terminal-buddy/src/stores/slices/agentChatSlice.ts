@@ -48,6 +48,16 @@ export const createAgentChatSlice = (
 		persistNow(get);
 	},
 
+	// 其他端（如手机 App）新建会话时在标签栏补开标签，但不打断电脑端当前操作：
+	// activeAgentTabKey / activeSpecialTab 一律不动。
+	addAgentTab: (tab) => {
+		set((state) => {
+			if (state.agentTabs.some((item) => item.key === tab.key)) return state;
+			return { agentTabs: [...state.agentTabs, tab] };
+		});
+		persistNow(get);
+	},
+
 	closeAgentTab: (key) => {
 		set((state) => {
 			const agentTabs = state.agentTabs.filter((item) => item.key !== key);

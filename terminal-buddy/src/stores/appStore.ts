@@ -387,6 +387,8 @@ export interface AppState {
 	agentTabs: AgentTab[];
 	activeAgentTabKey: string | null;
 	openAgentTab: (tab: AgentTab) => void;
+	/** 仅追加标签、不切换焦点：用于其他端新建会话时在后台补开标签。 */
+	addAgentTab: (tab: AgentTab) => void;
 	closeAgentTab: (key: string) => void;
 	updateAgentTab: (key: string, patch: Partial<NativeAgentTab> & Partial<RelayAgentTab>) => void;
 	setActiveAgentTab: (key: string) => void;
