@@ -228,7 +228,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
               </div>
             ) : (
               <div
-                className={`tree-item tab-nav-item${provider ? ' tab-nav-task-item' : ''} ${activeSpecialTab === null && activeSessionId === child.id ? 'active' : ''}`}
+                className={`tree-item tab-nav-item ${activeSpecialTab === null && activeSessionId === child.id ? 'active' : ''}`}
                 style={{ paddingLeft: `${indent + 12}px` }}
                 title={provider && childSession?.createdAt ? `${childSession.profileName} · 运行 ${formatDuration(Date.now() - childSession.createdAt)}` : undefined}
                 onMouseDown={() => { useAppStore.getState().setLastClickRegion('tab'); }}
@@ -250,7 +250,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
               >
                 {child.icon || renderLedDot(child.id, (child.data as TerminalSession | undefined)?.tabColor)}
                 {provider ? (
-                  <SessionTaskLabel task={task} fallbackName={fallbackName} fallbackProvider={provider} fallbackModel={launchInfo?.model} color={childSession?.tabColor} manualTitle={childSession?.manualTitle} />
+                  <SessionTaskLabel task={task} fallbackName={fallbackName} fallbackProvider={provider} color={childSession?.tabColor} manualTitle={childSession?.manualTitle} />
                 ) : (
                 <span className="tree-name" title={child.label} style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
                   {child.label}

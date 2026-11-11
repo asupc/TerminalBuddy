@@ -618,96 +618,44 @@
   font-weight: 600;
 }
 
-/* AI 会话固定两行：摘要或会话名在第一行，工具与模型标签在第二行。 */
-.tab-nav-item.tab-nav-task-item {
-  align-items: flex-start;
-  gap: 6px;
-  min-height: 48px;
-  padding-top: 6px;
-  padding-bottom: 6px;
-}
-
-.tab-nav-task-item > .tab-nav-dot {
-  margin-top: 5px;
-}
-
+/* AI 会话行与原生会话标签一致：Agent Logo 与摘要单行排列。 */
 .tab-nav-task-label {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.tab-nav-task-meta {
   display: flex;
   align-items: center;
   gap: 5px;
+  flex: 1;
   min-width: 0;
-  min-height: 18px;
-  flex-shrink: 0;
   overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 10px;
-  line-height: 16px;
-  white-space: nowrap;
 }
 
 .tab-nav-task-provider {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  height: 18px;
-  padding: 0 5px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  width: 14px;
+  height: 14px;
   color: var(--accent);
-  font-weight: 600;
+}
+
+.tab-nav-task-provider-logo {
+  width: 13px;
+  height: 13px;
+  font-size: 13px;
 }
 
 .tab-nav-task-provider[data-provider="codex"] {
-  border-color: color-mix(in srgb, var(--success, #65d5a5) 42%, transparent);
-  background: color-mix(in srgb, var(--success, #65d5a5) 14%, transparent);
   color: var(--success, #65d5a5);
 }
 
 .tab-nav-task-provider[data-provider="claude"] {
-  border-color: color-mix(in srgb, var(--warning, #d9a35f) 30%, transparent);
-  background: color-mix(in srgb, var(--warning, #d9a35f) 18%, transparent);
   color: var(--warning, #d9a35f);
-}
-
-.tab-nav-task-provider[data-provider="pi"] {
-  border-color: color-mix(in srgb, #b18cf0 42%, transparent);
-  background: color-mix(in srgb, #b18cf0 16%, transparent);
-  color: #b18cf0;
-}
-
-.tab-nav-task-model {
-  flex: 0 1 auto;
-  min-width: 0;
-  height: 18px;
-  padding: 0 5px;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--blue, #70a7e5) 30%, transparent);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--blue, #70a7e5) 16%, transparent);
-  color: var(--blue, #70a7e5);
-  text-overflow: ellipsis;
-}
-
-.tab-nav-task-model[data-pending="true"] {
-  border-color: var(--border);
-  background: color-mix(in srgb, var(--border) 35%, transparent);
-  color: var(--text-muted, var(--text-secondary));
 }
 
 .tab-nav-task-summary {
   display: block;
-  flex-shrink: 0;
-  min-height: 18px;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   color: inherit;
   font-size: 12px;
@@ -715,13 +663,4 @@
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.tab-nav-task-item > .tree-item-end {
-  margin-top: 1px;
-}
-
-.tab-nav-task-item > .tab-nav-owner-badge,
-.tab-nav-task-item > .tab-nav-takeover-badge {
-  margin-top: 3px;
 }
