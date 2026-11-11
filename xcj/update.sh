@@ -153,6 +153,9 @@ in_terminal_buddy_tree() {
   local pid="$$" exe ppid
   while [ "${pid}" -gt 1 ]; do
     exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+    # 本脚本换二进制用的是 mv 原子替换，运行中进程的 exe 链接会变成「原路径 (deleted)」。
+    # 不去掉后缀就会被误判为「不在服务进程树内」，从而走同步重启路径、把自己一并杀掉。
+    exe="${exe% (deleted)}"
     [ "${exe}" = "${BIN}" ] && return 0
     ppid="$(ps -o ppid= -p "${pid}" 2>/dev/null | tr -d '[:space:]')"
     [ -n "${ppid}" ] || break
