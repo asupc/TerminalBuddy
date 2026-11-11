@@ -1,5 +1,5 @@
 //! 日志格式变化或在 Shell 中手动启动 CLI 时，通过正在打开的 rollout 文件关联会话。
-//! 文件必须确实由终端的 Codex 子进程占用；目录、时间只用于缩小扫描范围。
+//! 文件必须由确切属于该终端的 Codex 进程占用；目录、时间只用于缩小扫描范围。
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -11,6 +11,58 @@ pub(super) struct CodexProcessScope {
     pub process_id: u32,
     pub root: PathBuf,
     pub started_at: SystemTime,
+}
+
+/// tmux / HUD 会让 CLI 脱离 PTY 的进程树，但仍继承创建终端时注入的 ID。
+/// 只读取这一项，环境中的 Hook token 等敏感信息不会进入关联结果。
+#[cfg(not(windows))]
+fn inherited_terminal_id(pid: u32) -> Option<String> {
+    let environment = fs::read(format!("/proc/{pid}/environ")).ok()?;
+    environment.split(|byte| *byte == 0).find_map(|entry| {
+        let id = entry.strip_prefix(b"TERMINAL_BUDDY_TERMINAL_ID=")?;
+        std::str::from_utf8(id).ok().filter(|id| !id.is_empty()).map(str::to_string)
+    })
+}
+
+#[cfg(windows)]
+fn inherited_terminal_id(_pid: u32) -> Option<String> { None }
+
+fn associate_codex_processes(
+    terminal_pids: &[(String, u32)],
+    processes: &[(u32, u32, String)],
+    inherited_id: impl Fn(u32) -> Option<String>,
+) -> HashMap<String, HashMap<u32, usize>> {
+    let roots: HashMap<_, _> = terminal_pids.iter().map(|(id, pid)| (*pid, id)).collect();
+    let terminal_ids: HashSet<_> = terminal_pids.iter().map(|(id, _)| id.as_str()).collect();
+    let parents: HashMap<_, _> = processes.iter().map(|(pid, parent, _)| (*pid, *parent)).collect();
+    let mut result = HashMap::<String, HashMap<u32, usize>>::new();
+    for (pid, _, name) in processes {
+        if !name.contains("codex") { continue; }
+        let mut current = *pid;
+        let mut visited = HashSet::new();
+        let mut terminal_id = None;
+        while visited.insert(current) {
+            if terminal_id.is_none() {
+                terminal_id = roots.get(&current).map(|id| (*id).clone());
+            }
+            let Some(parent) = parents.get(&current) else { break; };
+            current = *parent;
+        }
+        let terminal_id = terminal_id.or_else(|| inherited_id(*pid)
+            .filter(|id| terminal_ids.contains(id.as_str())));
+        if let Some(id) = terminal_id {
+            // 从完整进程树计算深度，普通子进程与脱离 PTY 的进程使用同一标尺；
+            // 外层 CLI 排在它启动的嵌套 CLI 前面，避免子代理抢走主会话绑定。
+            result.entry(id).or_default().insert(*pid, visited.len());
+        }
+    }
+    result
+}
+
+/// 会话发现和呼吸灯存活判断共用，避免一处能找到会话、另一处却判定 CLI 已退出。
+pub(super) fn codex_processes(terminal_pids: &[(String, u32)]) -> HashMap<String, HashMap<u32, usize>> {
+    if terminal_pids.is_empty() { return HashMap::new(); }
+    associate_codex_processes(terminal_pids, &crate::commands::claude_session::get_all_processes(), inherited_terminal_id)
 }
 
 fn root_session(path: &Path) -> Option<String> {
@@ -120,22 +172,12 @@ fn open_rollouts(process_ids: &HashSet<u32>, root: &Path, since: SystemTime) -> 
 
 pub(super) fn discover(scopes: Vec<CodexProcessScope>) -> HashMap<String, (String, PathBuf)> {
     if scopes.is_empty() { return HashMap::new(); }
-    let processes = crate::commands::claude_session::get_all_processes();
+    let terminal_pids: Vec<_> = scopes.iter().map(|scope| (scope.terminal_id.clone(), scope.process_id)).collect();
+    let mut associated = codex_processes(&terminal_pids);
     let mut trees = Vec::new();
     let mut roots = HashMap::<PathBuf, (SystemTime, HashSet<u32>)>::new();
     for scope in scopes {
-        let mut pending = vec![(scope.process_id, 0_usize)];
-        let mut visited = HashSet::new();
-        let mut codex_pids = HashMap::new();
-        while let Some((pid, depth)) = pending.pop() {
-            if !visited.insert(pid) { continue; }
-            for (child, parent, name) in &processes {
-                if *parent != pid { continue; }
-                pending.push((*child, depth + 1));
-                if name.contains("codex") { codex_pids.insert(*child, depth + 1); }
-            }
-        }
-        if codex_pids.is_empty() { continue; }
+        let Some(codex_pids) = associated.remove(&scope.terminal_id) else { continue; };
         let root = roots.entry(scope.root.clone()).or_insert_with(|| (scope.started_at, HashSet::new()));
         root.0 = root.0.min(scope.started_at);
         root.1.extend(codex_pids.keys().copied());
@@ -164,4 +206,49 @@ pub(super) fn discover(scopes: Vec<CodexProcessScope>) -> HashMap<String, (Strin
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn process(pid: u32, parent: u32, name: &str) -> (u32, u32, String) {
+        (pid, parent, name.to_string())
+    }
+
+    #[test]
+    fn associates_hud_codex_outside_terminal_process_tree() {
+        let terminals = vec![("terminal-a".to_string(), 10)];
+        let processes = vec![
+            process(10, 1, "bash"), process(11, 10, "python3"), process(12, 11, "tmux: client"),
+            process(20, 1, "tmux: server"), process(21, 20, "python3"), process(22, 21, "codex"),
+            process(23, 22, "codex"), process(30, 1, "codex"), process(31, 1, "codex"),
+        ];
+        let owners = associate_codex_processes(&terminals, &processes, |pid| match pid {
+            22 | 23 => Some("terminal-a".to_string()),
+            30 => Some("closed-terminal".to_string()),
+            _ => None,
+        });
+        let pids = &owners["terminal-a"];
+        assert_eq!(pids.len(), 2);
+        assert!(pids[&22] < pids[&23]);
+        assert_eq!(owners.len(), 1);
+    }
+
+    #[test]
+    fn process_tree_owner_takes_precedence_over_inherited_id() {
+        let terminals = vec![("terminal-a".to_string(), 10), ("terminal-b".to_string(), 20)];
+        let processes = vec![process(10, 1, "bash"), process(11, 10, "codex.exe"), process(20, 1, "bash")];
+        let owners = associate_codex_processes(&terminals, &processes, |_| Some("terminal-b".to_string()));
+        assert!(owners["terminal-a"].contains_key(&11));
+        assert!(!owners.contains_key("terminal-b"));
+    }
+
+    #[test]
+    fn exited_detached_codex_does_not_keep_terminal_alive() {
+        let terminals = vec![("terminal-a".to_string(), 10)];
+        let processes = vec![process(10, 1, "bash"), process(20, 1, "tmux: server"), process(21, 20, "python3")];
+        let owners = associate_codex_processes(&terminals, &processes, |_| Some("terminal-a".to_string()));
+        assert!(owners.is_empty());
+    }
 }

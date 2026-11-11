@@ -127,25 +127,6 @@ impl TrackedRollout {
     }
 }
 
-/// 用进程树确认 CLI 仍在该终端内，退出 Codex 回到 shell 时熄灯。
-fn live_codex_terminals(pids: &[(String, u32)]) -> HashSet<String> {
-    let processes = crate::commands::claude_session::get_all_processes();
-    let parents: HashMap<_, _> = processes.iter().map(|(pid, parent, _)| (*pid, *parent)).collect();
-    let roots: HashMap<_, _> = pids.iter().map(|(id, pid)| (*pid, id)).collect();
-    let mut live = HashSet::new();
-    for (pid, _, name) in &processes {
-        if !name.contains("codex") { continue; }
-        let mut current = *pid;
-        let mut visited = HashSet::new();
-        while visited.insert(current) {
-            if let Some(id) = roots.get(&current) { live.insert((*id).clone()); break; }
-            let Some(parent) = parents.get(&current) else { break; };
-            current = *parent;
-        }
-    }
-    live
-}
-
 fn publish(app: &AppHandle, terminal_id: &str, tracked: &TrackedRollout, phase: &str) {
     if terminal_task_service::current_binding(terminal_id) != Some(("codex".to_string(), tracked.session_id.clone())) { return; }
     let mut current = activities().lock().unwrap_or_else(|error| error.into_inner());
@@ -181,7 +162,7 @@ pub fn start(app: AppHandle) {
                 if last_scan.map_or(true, |at| at.elapsed() >= Duration::from_secs(4)) {
                     // 发现与灯态不受 showTaskSummary 控制，手动启动与 resume 也走同一绑定链。
                     terminal_task_service::summaries(pids.clone());
-                    live = live_codex_terminals(&pids);
+                    live = super::terminal_task_process::codex_processes(&pids).into_keys().collect();
                     last_scan = Some(Instant::now());
                 }
                 let bindings = terminal_task_service::session_bindings();
