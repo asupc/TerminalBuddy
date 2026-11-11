@@ -187,6 +187,7 @@ pub(crate) fn terminal_processes(ids: &[String], service: &TerminalService) -> V
 pub struct TerminalTaskSummaries {
     enabled: bool,
     summaries: HashMap<String, crate::services::terminal_task_service::TerminalTaskSummary>,
+    activities: HashMap<String, crate::services::ClaudeHookTerminalEvent>,
 }
 
 /// 前端只传终端 ID；会话 ID 和文件路径始终由服务端发现。
@@ -196,8 +197,9 @@ pub async fn get_terminal_task_summaries(
     service: State<'_, TerminalService>,
 ) -> Result<TerminalTaskSummaries, String> {
     let enabled = crate::services::SettingsService::get_settings().show_task_summary;
-    if !enabled { return Ok(TerminalTaskSummaries { enabled, summaries: HashMap::new() }); }
+    let activities = crate::services::codex_activity_service::snapshot(&terminal_ids);
+    if !enabled { return Ok(TerminalTaskSummaries { enabled, summaries: HashMap::new(), activities }); }
     let pids = terminal_processes(&terminal_ids, &service);
     let summaries = super::claude_task(move || Ok(crate::services::terminal_task_service::summaries(pids))).await?;
-    Ok(TerminalTaskSummaries { enabled, summaries })
+    Ok(TerminalTaskSummaries { enabled, summaries, activities })
 }

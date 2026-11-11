@@ -95,10 +95,11 @@ export { sessionReplayTabKey } from '../utils/sessionHistory';
 
 export type WorkspaceSpecialTab = "git-history" | "claude-replay" | "agent-chat" | null;
 
-export type TerminalRuntimeKind = "shell" | "claude";
+export type TerminalRuntimeKind = "shell" | "claude" | "codex";
 export type TerminalActivityPhase = "idle" | "running" | "attention" | "completed" | "failed";
 
 export interface TerminalActivityDetails {
+	provider?: "claude" | "codex";
 	taskTitle?: string;
 	summary?: string;
 }

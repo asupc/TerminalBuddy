@@ -434,19 +434,21 @@ export const createSessionsSlice = (
 		set((state) => {
 			const current = state.terminalActivities[sessionId];
 			if (current?.lastHookAt !== undefined && current.lastHookAt >= updatedAt) return state;
+			const provider = details?.provider ?? current?.provider ?? "claude";
+			const previous = current?.provider === provider ? current : undefined;
 			applied = true;
 			return {
 				terminalActivities: {
 					...state.terminalActivities,
 					[sessionId]: {
-						runtimeKind: "claude",
-						provider: current?.provider ?? "claude",
+						runtimeKind: provider,
+						provider,
 						source: "hook",
 						phase,
 						updatedAt,
 						lastHookAt: updatedAt,
-						taskTitle: details?.taskTitle ?? current?.taskTitle,
-						summary: details?.summary ?? current?.summary,
+						taskTitle: details?.taskTitle ?? previous?.taskTitle,
+						summary: details?.summary ?? previous?.summary,
 					},
 				},
 			};

@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { applyTerminalEvent } from '../services/claudeNotification';
+import type { ClaudeHookTerminalEvent } from '../services/tauri/claudeHook';
 
 export interface TerminalTaskSummary {
   provider: 'claude' | 'codex';
@@ -26,7 +28,11 @@ let settingsRevision = 0;
 
 export async function refreshTaskSummaries(terminalIds: string[]): Promise<void> {
   const revision = settingsRevision;
-  const result = await invoke<Pick<TaskSummaryState, 'enabled' | 'summaries'>>('get_terminal_task_summaries', { terminalIds });
+  const result = await invoke<Pick<TaskSummaryState, 'enabled' | 'summaries'> & { activities?: Record<string, ClaudeHookTerminalEvent> }>('get_terminal_task_summaries', { terminalIds });
+  // 状态恢复独立于摘要设置；快照只恢复灯态，不重发历史完成通知。
+  for (const event of Object.values(result.activities ?? {})) {
+    if (terminalIds.includes(event.terminalId)) applyTerminalEvent(event, false);
+  }
   if (revision !== settingsRevision || useTaskSummaryStore.getState().saving) return;
   const previous = useTaskSummaryStore.getState();
   if (previous.enabled !== result.enabled || JSON.stringify(previous.summaries) !== JSON.stringify(result.summaries)) {

@@ -39,7 +39,7 @@ export interface ClaudeHookTerminalEvent {
   eventName: string;
   phase: ClaudeHookTerminalPhase;
   occurredAt: number;
-  provider?: 'claude';
+  provider?: 'claude' | 'codex';
   notificationType?: 'permission_prompt' | 'idle_prompt' | string;
   title?: string;
   message?: string;

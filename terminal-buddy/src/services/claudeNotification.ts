@@ -241,25 +241,33 @@ export function handleClaudeTerminalInputActivity(terminalId: string): void {
   }
 }
 
-function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
+export function applyTerminalEvent(event: ClaudeHookTerminalEvent, notify = true): void {
+  notify = notify && event.eventName !== 'CodexTranscriptSnapshot';
   const store = useAppStore.getState();
   if (event.phase === 'ended') {
     if (!store.endClaudeHookSession(event.terminalId, event.occurredAt)) return;
-    if (event.sessionId) {
-    store.setClaudeSessionId(event.terminalId, event.sessionId);
-  }
+    if (event.sessionId && event.provider !== 'codex') {
+      store.setClaudeSessionId(event.terminalId, event.sessionId);
+    }
     cancelAttentionForTerminal(event.terminalId);
     cancelClaudeActivityExpiry(event.terminalId);
     return;
   }
   // 事件摘要进活动态（总览面板 / 指示灯 tooltip）；Stop/StopFailure 带 taskTitle/summary
   const details = {
+    provider: event.provider ?? 'claude',
     taskTitle: event.taskTitle,
     summary: event.summary ?? event.message,
   };
   if (!store.applyClaudeHookActivity(event.terminalId, event.phase, event.occurredAt, details)) return;
   if (event.sessionId) {
-    store.setClaudeSessionId(event.terminalId, event.sessionId);
+    if (event.provider === 'codex') {
+      const existing = store.agentSessionBindings[event.terminalId];
+      store.setAgentSessionBinding(event.terminalId, existing?.provider === 'codex' && existing.sessionId === event.sessionId
+        ? existing : { provider: 'codex', sessionId: event.sessionId });
+    } else {
+      store.setClaudeSessionId(event.terminalId, event.sessionId);
+    }
   }
   if (event.phase === 'idle') {
     // 转录中的用户中断不会触发 Stop；退回空闲时清除执行过期计时和待发送通知。
@@ -271,13 +279,13 @@ function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
   } else if (event.phase === 'attention') {
     cancelClaudeActivityExpiry(event.terminalId);
     cancelPendingClaudeCompletion(event.terminalId);
-    if (event.eventName === 'Notification') {
+    if (notify && event.eventName === 'Notification') {
       scheduleAttention(event.eventId, event.terminalId, isCurrent => showAttentionNotification(event, isCurrent));
     }
   } else if (event.phase === 'completed' || event.phase === 'failed') {
     cancelClaudeActivityExpiry(event.terminalId);
     cancelAttentionForTerminal(event.terminalId);
-    scheduleCompletion({
+    if (notify) scheduleCompletion({
       eventId: event.eventId,
       terminalId: event.terminalId,
       phase: event.phase,

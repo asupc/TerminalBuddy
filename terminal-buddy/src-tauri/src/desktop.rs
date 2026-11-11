@@ -404,6 +404,7 @@ pub fn run() {
             }
             bootstrap_bot_connections(app.handle())?;
             bootstrap_claude_hook(app.handle());
+            crate::services::codex_activity_service::start(app.handle().clone());
             // 模型终端残留的临时 --settings 文件：上次异常退出可能没清掉，
             // 启动时按落盘小表精确删除 + 24h 兜底（后台线程，不阻塞窗口）。
             let _cleanup_task = crate::runtime::async_runtime::spawn_blocking(|| {
