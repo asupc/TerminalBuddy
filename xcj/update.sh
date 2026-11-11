@@ -231,6 +231,19 @@ already_up_to_date() {
   [ "${cur_web}" = "$(stamp_get WEB_SHA)" ] \
     || { log "已部署 web 与上次记录不一致（可能被手工替换），本次照常构建"; return 1; }
   if ! running_process_matches_file; then
+    # 兜底防自激循环：本脚本常被配置成终端 Profile 的启动命令（如「update-local」），
+    # 服务重启后网页端恢复页签会自动再跑一次。若这次又判「仅需重启」并重启服务，
+    # 就会形成 重启 → 恢复页签重跑 → 再重启 的死循环。DEPLOYED_AT 很近说明后台任务
+    # 刚完成（或正在完成）重启，直接认定已是最新，把重启交给那一次任务。
+    local deployed_at deployed_ts now_ts
+    deployed_at="$(stamp_get DEPLOYED_AT)"
+    deployed_ts="$(date -d "${deployed_at}" +%s 2>/dev/null || true)"
+    now_ts="$(date +%s)"
+    if [ -n "${deployed_ts}" ] && [ $(( now_ts - deployed_ts )) -ge 0 ] \
+       && [ $(( now_ts - deployed_ts )) -lt "${SELF_UPDATE_LOOP_GUARD:-180}" ]; then
+      log "部署记录显示 ${deployed_at} 刚完成更新（进程尚未反映新版本），判定为已是最新，跳过本次重启"
+      return 0
+    fi
     log "部署文件未变但运行中进程尚未加载（上次更新后未重启），本次仅重启生效"
     return 1
   fi
@@ -506,8 +519,11 @@ running_process_matches_file() {
   local pid ino_proc ino_bin
   pid="$(systemctl show -p MainPID --value "${SERVICE}" 2>/dev/null || true)"
   { [ -n "${pid}" ] && [ "${pid}" != 0 ]; } || return 1
-  ino_proc="$(stat -c %i "/proc/${pid}/exe" 2>/dev/null || true)"
-  ino_bin="$(stat -c %i "${BIN}" 2>/dev/null || true)"
+  # 注意必须带 -L：/proc/PID/exe 是指向真实二进制的符号链接，不带 -L 的 stat
+  # 取到的是 procfs 链接自身的 inode（每次都可能不同），永远不可能等于 BIN 的 inode，
+  # 会导致「已是最新」判定和「仅需重启」判定全部失效。
+  ino_proc="$(stat -Lc %i "/proc/${pid}/exe" 2>/dev/null || true)"
+  ino_bin="$(stat -Lc %i "${BIN}" 2>/dev/null || true)"
   [ -n "${ino_proc}" ] && [ "${ino_proc}" = "${ino_bin}" ]
 }
 
