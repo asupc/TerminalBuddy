@@ -8,16 +8,14 @@ import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
 import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
 import { currentClaudeCommand } from '../../utils/agentCommands';
-import type { EnabledAgents, ExtraParamMode, Profile } from '../../types';
-import { projectEnabledAgents } from '../../types';
+import type { ExtraParamMode, Profile } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
-import { ConfirmDialog, Dialog } from '../shared/Dialog';
+import { ConfirmDialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
-import { ProjectLaunchMenuItems } from '../shared/ProjectLaunchMenuItems';
-import { open as openDirectory } from '@tauri-apps/plugin-dialog';
-import { saveProjects } from '../../services/tauri';
-import type { Project } from '../../types';
-import { effectiveProfilePath, normalizeProjectPath } from '../../utils/projectPath';
+import { ProjectContextMenu } from '../shared/ProjectContextMenu';
+import { ProjectEditDialog } from '../shared/ProjectEditDialog';
+import { ProjectDeleteDialog } from '../shared/ProjectDeleteDialog';
+import { effectiveProfilePath } from '../../utils/projectPath';
 import { isDockerClient, supportsSystemExplorerOpen } from '../../services/platform';
 import './ConfigNav.css';
 
@@ -49,7 +47,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
 }) => {
   const profiles = useAppStore(s => s.profiles);
   const projects = useAppStore(s => s.projects);
-  const setProjects = useAppStore(s => s.setProjects);
   const selectedProfileId = useAppStore(s => s.selectedProfileId);
   const selectProfile = useAppStore(s => s.selectProfile);
   const removeProfile = useAppStore(s => s.removeProfile);
@@ -113,11 +110,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const [renamingProfileName, setRenamingProfileName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmDeleteProject, setConfirmDeleteProject] = useState<string | null>(null);
-  const [editingProject, setEditingProject] = useState<Project | null | undefined>();
-  const [projectName, setProjectName] = useState('');
-  const [projectPath, setProjectPath] = useState('');
-  const [projectAgents, setProjectAgents] = useState<Required<EnabledAgents>>({ claude: true, codex: true });
-  const [projectError, setProjectError] = useState('');
+  // 项目编辑对话框目标名：null 关闭；空字符串新建；否则编辑 / 按该名称新建。
+  const [editingProject, setEditingProject] = useState<string | null>(null);
 
   // Build project nodes and their profiles
   const treeItems = useMemo(() => {
@@ -232,29 +226,21 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       return;
     }
 
-    if (groupContextMenu) {
-      const next = fitContextMenuToViewport(groupContextMenu.x, groupContextMenu.y, menuWidth, menuHeight);
-      if (next.x !== groupContextMenu.x || next.y !== groupContextMenu.y) {
-        setGroupContextMenu(prev => prev ? { ...prev, ...next } : prev);
-      }
-      return;
-    }
-
     if (blankContextMenu) {
       const next = fitContextMenuToViewport(blankContextMenu.x, blankContextMenu.y, menuWidth, menuHeight);
       if (next.x !== blankContextMenu.x || next.y !== blankContextMenu.y) {
         setBlankContextMenu(prev => prev ? { ...prev, ...next } : prev);
       }
     }
-  }, [contextMenu, groupContextMenu, blankContextMenu]);
+  }, [contextMenu, blankContextMenu]);
 
   useLayoutEffect(() => {
-    if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
+    if (!contextMenu && !blankContextMenu) return;
     adjustContextMenuPosition();
-  }, [contextMenu, groupContextMenu, blankContextMenu, adjustContextMenuPosition, extraParamPresets, projects, profiles]);
+  }, [contextMenu, blankContextMenu, adjustContextMenuPosition, extraParamPresets, projects, profiles]);
 
   useEffect(() => {
-    if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
+    if (!contextMenu && !blankContextMenu) return;
     const close = () => closeContextMenu();
     document.addEventListener('mousedown', close);
     document.addEventListener('keydown', close);
@@ -264,13 +250,13 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       document.removeEventListener('keydown', close);
       document.removeEventListener('wheel', close);
     };
-  }, [contextMenu, groupContextMenu, blankContextMenu]);
+  }, [contextMenu, blankContextMenu]);
 
   useEffect(() => {
-    if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
+    if (!contextMenu && !blankContextMenu) return;
     window.addEventListener('resize', adjustContextMenuPosition);
     return () => window.removeEventListener('resize', adjustContextMenuPosition);
-  }, [contextMenu, groupContextMenu, blankContextMenu, adjustContextMenuPosition]);
+  }, [contextMenu, blankContextMenu, adjustContextMenuPosition]);
 
   const handleDeleteProfile = async (profileId: string) => {
     setConfirmDelete(profileId);
@@ -289,45 +275,9 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   };
 
   const editProject = (name?: string) => {
-    const project = projects.find(p => p.name === name) || null;
-    setEditingProject(project);
-    setProjectName(project?.name || name || '');
-    setProjectPath(project?.path || '');
-    setProjectAgents(projectEnabledAgents(project));
-    setProjectError('');
+    // 命中已登记项目时进入编辑，否则以该名称预填新建（与右键菜单的行为一致）。
+    setEditingProject(name ?? '');
     closeContextMenu();
-  };
-
-  const saveProject = async () => {
-    const name = projectName.trim();
-    const path = projectPath.trim();
-    if (!name || !/^(?:[a-z]:[\\/]|\\\\|\/)/i.test(path)) {
-      setProjectError('请输入项目名称和绝对路径'); return;
-    }
-    if (projects.some(p => p.name.toLowerCase() === name.toLowerCase() && p.name !== editingProject?.name)) {
-      setProjectError('项目名称已存在'); return;
-    }
-    const updated = [...projects.filter(p => p.name !== editingProject?.name), { name, path, enabledAgents: { ...projectAgents } }];
-    // Legacy projects with no inferred path remain visible until edited; only persist valid paths.
-    try {
-      await saveProjects(updated.filter(p => p.path.trim()));
-      if (editingProject) {
-        let changed = false;
-        for (const profile of profiles.filter(p => (p.group || '默认') === editingProject.name)) {
-          // Legacy profiles had their group's path copied into startupPath. Convert
-          // only exact matches to inheritance; other directories remain overrides.
-          const inherits = editingProject.path &&
-            normalizeProjectPath(profile.startupPath) === normalizeProjectPath(editingProject.path);
-          if (profile.group !== name || inherits) {
-            await updateProfile({ ...profile, group: name, startupPath: inherits ? '' : profile.startupPath });
-            changed = true;
-          }
-        }
-        if (changed) setProfiles(await getAllProfiles());
-      }
-      setProjects(updated);
-      setEditingProject(undefined);
-    } catch (error) { setProjectError(String(error)); }
   };
 
   /** 叶子模型启动：引用命令整体替换 startup_commands（independent），shell/路径/env 仍生效，
@@ -636,39 +586,15 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       )}
 
       {groupContextMenu && (
-        <div ref={contextMenuRef} className="context-menu" style={{ left: groupContextMenu.x, top: groupContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
-          {(() => {
-            const project = projects.find(item => item.name === groupContextMenu.group);
-            if (!project?.path) return null;
-            return <>
-              {/* 启动区（命令行 / 预设 / Agent 模型）与会话标签栏「新建配置终端」悬停菜单共用 */}
-              <ProjectLaunchMenuItems project={project} onLaunched={closeContextMenu} />
-              <div className="context-menu-separator" />
-              {supportsSystemExplorerOpen() && (
-                <div className="context-menu-item" onClick={async () => {
-                  closeContextMenu();
-                  try { await openInExplorer(project.path); }
-                  catch (err) { console.error(err); }
-                }}>打开目录</div>
-              )}
-              <div className="context-menu-item" onClick={() => {
-                navigator.clipboard.writeText(project.path).catch(() => {});
-                closeContextMenu();
-              }}>复制启动路径</div>
-            </>;
-          })()}
-          <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
-            添加配置
-          </div>
-          <div className="context-menu-item" onClick={() => editProject(groupContextMenu.group)}>
-            编辑项目
-          </div>
-          {!profiles.some(p => p.group === groupContextMenu.group) && (
-            <div className="context-menu-item danger" onClick={() => {
-              setConfirmDeleteProject(groupContextMenu.group); closeContextMenu();
-            }}>删除项目</div>
-          )}
-        </div>
+        <ProjectContextMenu
+          x={groupContextMenu.x}
+          y={groupContextMenu.y}
+          groupName={groupContextMenu.group}
+          onAddProfile={onAddProfile}
+          onEditProject={editProject}
+          onDeleteProject={setConfirmDeleteProject}
+          onClose={closeContextMenu}
+        />
       )}
 
       {blankContextMenu && (
@@ -683,61 +609,11 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
         </div>
       )}
 
-      {editingProject !== undefined && (
-        <Dialog
-          title={editingProject ? '编辑项目' : '新建项目'}
-          className="project-edit-dialog"
-          onClose={() => setEditingProject(undefined)}
-          footer={(
-            <>
-              <button type="button" className="btn-secondary" onClick={() => setEditingProject(undefined)}>取消</button>
-              <button type="submit" form="project-edit-form" className="btn-primary">保存</button>
-            </>
-          )}
-        >
-          <form id="project-edit-form" onSubmit={event => { event.preventDefault(); void saveProject(); }}>
-            <div className="form-group">
-              <label htmlFor="project-edit-name">项目名称 *</label>
-              <input id="project-edit-name" value={projectName} onChange={event => { setProjectName(event.target.value); setProjectError(''); }} placeholder="项目名称" autoFocus />
-            </div>
-            <div className="form-group">
-              <label htmlFor="project-edit-path">项目路径 *</label>
-              <div className="input-with-button">
-                <input id="project-edit-path" value={projectPath} onChange={event => { setProjectPath(event.target.value); setProjectError(''); }} placeholder={'C:\\Projects\\MyProject'} />
-                <button type="button" className="browse-btn" onClick={() => void openDirectory({ directory: true, multiple: false, defaultPath: projectPath || undefined }).then(path => {
-                  if (typeof path === 'string') { setProjectPath(path); setProjectError(''); }
-                }).catch(error => setProjectError('浏览目录失败：' + String(error)))}>浏览</button>
-              </div>
-            </div>
-            <div className="form-group">
-              <label>启用的 Agent</label>
-              <div className="project-edit-agents">
-                <label className="project-edit-agent-toggle">
-                  <input type="checkbox" checked={projectAgents.claude} onChange={event => setProjectAgents(value => ({ ...value, claude: event.target.checked }))} />
-                  Claude Code
-                </label>
-                <label className="project-edit-agent-toggle">
-                  <input type="checkbox" checked={projectAgents.codex} onChange={event => setProjectAgents(value => ({ ...value, codex: event.target.checked }))} />
-                  Codex
-                </label>
-              </div>
-              <small>右键项目时可按启用的 Agent 展开供应商与模型启动；基础命令在设置 → Agent 管理中配置。</small>
-            </div>
-            {projectError && <div className="error" role="alert">{projectError}</div>}
-          </form>
-        </Dialog>
+      {editingProject !== null && (
+        <ProjectEditDialog targetName={editingProject || undefined} onClose={() => setEditingProject(null)} />
       )}
       {confirmDeleteProject && (
-        <ConfirmDialog title="删除项目" message={`确定删除项目「${confirmDeleteProject}」吗？`}
-          onClose={() => setConfirmDeleteProject(null)}
-          onConfirm={() => void (async () => {
-            const updated = projects.filter(p => p.name !== confirmDeleteProject);
-            try {
-              await saveProjects(updated.filter(p => p.path.trim()));
-              setProjects(updated);
-              setConfirmDeleteProject(null);
-            } catch (error) { console.error('删除项目失败:', error); }
-          })()} confirmText="删除" />
+        <ProjectDeleteDialog projectName={confirmDeleteProject} onClose={() => setConfirmDeleteProject(null)} />
       )}
       {confirmDelete && (
         <ConfirmDialog

@@ -19,6 +19,9 @@ import { TabContextMenu } from './TabContextMenu';
 import { NewTerminalMenu } from './NewTerminalMenu';
 import { AgentTabContextMenu } from './AgentTabContextMenu';
 import { AgentIcon } from '../agent-chat/AgentIcon';
+import { ProjectContextMenu } from '../shared/ProjectContextMenu';
+import { ProjectEditDialog } from '../shared/ProjectEditDialog';
+import { ProjectDeleteDialog } from '../shared/ProjectDeleteDialog';
 import './TabNav.css';
 
 interface TabSidebarProps {
@@ -28,6 +31,8 @@ interface TabSidebarProps {
   onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => void;
   onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => void;
   onStartTextEditor: () => void;
+  /** 「添加配置」入口：与会话标签栏分组右键菜单共用配置编辑弹窗。 */
+  onAddProfile: (defaultGroup?: string) => void;
 }
 
 /**
@@ -38,7 +43,7 @@ type SessionLeaf =
   | { kind: 'terminal'; session: TerminalSession }
   | { kind: 'agent'; tab: NativeAgentTab };
 
-export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
+export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor, onAddProfile }) => {
   const sessions = useAppStore(s => s.sessions);
   const taskSummaries = useTaskSummaryStore(s => s.summaries);
   const projects = useAppStore(s => s.projects);
@@ -75,6 +80,10 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   // 原生会话叶子的右键菜单：数据源是聊天标签而非终端会话，单独保存一份。
   const [agentTabMenu, setAgentTabMenu] = useState<{ x: number; y: number; key: string } | null>(null);
+  // 分组节点的右键菜单：与「项目与命令」面板的项目右键保持同步。
+  const [groupContextMenu, setGroupContextMenu] = useState<{ x: number; y: number; group: string } | null>(null);
+  const [editingProject, setEditingProject] = useState<string | null>(null);
+  const [deletingProject, setDeletingProject] = useState<string | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
@@ -754,6 +763,13 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
               e.preventDefault();
               setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId });
             }}
+            onGroupContextMenu={(e, groupId) => {
+              // 编辑器分组不是项目 / 配置分组，不提供项目菜单。
+              if (groupId === '文本编辑') return;
+              setTabContextMenu(null);
+              setAgentTabMenu(null);
+              setGroupContextMenu({ x: e.clientX, y: e.clientY, group: groupId });
+            }}
             onAgentContextMenu={(e, tab) => {
               e.preventDefault();
               setAgentTabMenu({ x: e.clientX, y: e.clientY, key: tab.key });
@@ -812,6 +828,23 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           />
         );
       })()}
+      {groupContextMenu && (
+        <ProjectContextMenu
+          x={groupContextMenu.x}
+          y={groupContextMenu.y}
+          groupName={groupContextMenu.group}
+          onAddProfile={onAddProfile}
+          onEditProject={(group) => setEditingProject(group)}
+          onDeleteProject={(group) => setDeletingProject(group)}
+          onClose={() => setGroupContextMenu(null)}
+        />
+      )}
+      {editingProject !== null && (
+        <ProjectEditDialog targetName={editingProject || undefined} onClose={() => setEditingProject(null)} />
+      )}
+      {deletingProject && (
+        <ProjectDeleteDialog projectName={deletingProject} onClose={() => setDeletingProject(null)} />
+      )}
       {showContextMenu && (
         <NewTerminalMenu
           x={contextMenuPos.x}

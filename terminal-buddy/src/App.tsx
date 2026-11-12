@@ -769,6 +769,7 @@ function App() {
               onStartTerminal={handleStartTerminal}
               onStartBlankTerminal={handleStartBlankTerminal}
               onStartTextEditor={handleStartTextEditor}
+              onAddProfile={handleAddProfile}
             />
           </div>
         )}

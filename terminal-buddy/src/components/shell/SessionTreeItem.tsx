@@ -24,6 +24,8 @@ interface SessionTreeItemProps {
   renameInputRef: React.RefObject<HTMLInputElement | null>;
   onCloseSession: (sessionId: string) => void;
   onContextMenu: (e: React.MouseEvent, sessionId: string) => void;
+  /** 分组节点的右键菜单：与「项目与命令」面板的项目右键保持一致。 */
+  onGroupContextMenu: (e: React.MouseEvent, groupId: string) => void;
   /** 原生会话叶子（聊天标签）的右键菜单；与终端会话的菜单分开，因为数据源不同。 */
   onAgentContextMenu: (e: React.MouseEvent, tab: NativeAgentTab) => void;
 }
@@ -49,6 +51,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
   renameInputRef,
   onCloseSession,
   onContextMenu,
+  onGroupContextMenu,
   onAgentContextMenu,
 }) => {
   const sessions = useAppStore(s => s.sessions);
@@ -123,6 +126,12 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
         className="tree-item tree-group-item"
         style={{ paddingLeft: `${indent}px` }}
         onClick={() => onToggleCollapse(item.id)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          // 阻止冒泡到会话标签容器的空白区域菜单。
+          e.stopPropagation();
+          onGroupContextMenu(e, item.id);
+        }}
       >
         <span className={`tree-arrow${isCollapsed ? '' : ' expanded'}`}>
           <ChevronRight aria-hidden="true" />
@@ -151,6 +160,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
               renameInputRef={renameInputRef}
               onCloseSession={onCloseSession}
               onContextMenu={onContextMenu}
+              onGroupContextMenu={onGroupContextMenu}
               onAgentContextMenu={onAgentContextMenu}
             />
           );
