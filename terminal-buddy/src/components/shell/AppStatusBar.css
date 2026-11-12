@@ -141,6 +141,85 @@
   margin-left: auto;
 }
 
+/* 底部状态栏中的 Git 操作：GitNavBar 的紧凑平铺形态，不再占用左侧面板。 */
+.app-statusbar .git-nav-bar {
+  height: 100%;
+  min-height: 0;
+  margin: 0 0 0 4px;
+  padding: 0 2px 0 4px;
+  gap: 1px;
+  border: 0;
+  border-left: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.app-statusbar .git-branch-button {
+  height: 100%;
+  flex: 0 1 auto;
+  max-width: 180px;
+  padding: 0 6px;
+  border-radius: 0;
+}
+
+.app-statusbar .git-change-badge {
+  height: 16px;
+  min-width: 16px;
+  padding: 0 4px;
+}
+
+.app-statusbar .git-sync-meta {
+  max-width: none;
+  height: 100%;
+}
+
+.app-statusbar .git-operation-status {
+  max-width: 96px;
+  height: 18px;
+  padding: 0 5px;
+}
+
+.app-statusbar .git-actions {
+  gap: 0;
+}
+
+.app-statusbar .git-icon-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 0;
+}
+
+.app-statusbar .git-icon-btn .git-toolbar-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* 分支浮层通过 portal 挂到 body，从状态栏向上弹出，避免被状态栏 overflow 裁剪。 */
+.git-popover.git-popover-floating {
+  position: fixed;
+  top: auto;
+  right: auto;
+  width: 220px;
+  z-index: 9000;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.28);
+}
+
+@media (max-width: 1100px) {
+  .app-statusbar .git-branch-name,
+  .app-statusbar .git-sync-meta {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .app-statusbar .git-icon-btn.history,
+  .app-statusbar .git-operation-status {
+    display: none;
+  }
+}
+
 @media (max-width: 720px) {
   .app-statusbar-optional { display: none; }
   .app-statusbar-path-full { display: none; }

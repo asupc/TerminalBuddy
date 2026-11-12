@@ -7,7 +7,6 @@ import {
   Cpu,
   FileText,
   Folder,
-  GitBranch,
   Globe2,
   MemoryStick,
   Monitor,
@@ -17,10 +16,11 @@ import {
 } from 'lucide-react';
 import type { Profile, TerminalType } from '../../types';
 import { isTerminalWorking, useAppStore } from '../../stores/appStore';
-import { useGitRepositoryStatus } from '../../hooks/useGitRepositoryStatus';
 import { useSystemResources } from '../../hooks/useSystemResources';
+import { FileManagerDialog } from '../file-explorer/FileManagerDialog';
+import { GitNavBar } from '../git/GitNavBar';
 import { ResourceTrendPopover } from './ResourceTrendPopover';
-import { getWebApiStatus, type GitRepositoryStatus } from '../../services/tauri';
+import { getWebApiStatus } from '../../services/tauri';
 import { isBrowserClient } from '../../services/platform';
 import { APP_VERSION } from '../../version';
 import './AppStatusBar.css';
@@ -88,16 +88,6 @@ function shortenPath(path: string): string {
   const parts = path.split(/[\\/]+/).filter(Boolean);
   if (parts.length <= 2) return path;
   return `…${separator}${parts.slice(-2).join(separator)}`;
-}
-
-function gitStatusTitle(status: GitRepositoryStatus): string {
-  const sync = [
-    status.ahead > 0 ? `领先 ${status.ahead}` : '',
-    status.behind > 0 ? `落后 ${status.behind}` : '',
-  ].filter(Boolean).join(' · ');
-  const changes = status.changedCount > 0 ? `${status.changedCount} 处未提交变更` : '工作区干净';
-  const action = status.changedCount > 0 ? '点击查看变更文件' : '点击打开 Git 历史';
-  return [`Git · ${status.branch}`, sync, changes, action].filter(Boolean).join(' · ');
 }
 
 interface WebApiBarStatus {
@@ -234,10 +224,9 @@ const StatusBarResources = memo(function StatusBarResources() {
   const currentDirectory = useAppStore(s => s.currentDirectory);
   const terminalActivities = useAppStore(s => s.terminalActivities);
   const profiles = useAppStore(s => s.profiles);
-  const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
-  const openGitChangesTab = useAppStore(s => s.openGitChangesTab);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const showToast = useAppStore(s => s.showToast);
+  const [fileManagerOpen, setFileManagerOpen] = useState(false);
 
   const session = activeSessionId ? sessions.find(item => item.id === activeSessionId) : undefined;
   const profile = session?.profileId ? profiles.find(item => item.id === session.profileId) : undefined;
@@ -252,9 +241,13 @@ const StatusBarResources = memo(function StatusBarResources() {
       || (isTerminal ? currentDirectory : '')
       || null
     : null;
-  // Git 只对本地 Shell 有意义：SSH / 容器路径不是本机仓库。
-  const git = useGitRepositoryStatus(
-    session && isTerminal && LOCAL_SHELL_TYPES.has(session.terminalType) ? directory : null,
+  // Git 操作直接平铺在状态栏：只对本地 Shell 有意义，SSH / 容器路径不是本机仓库。
+  const gitDirectory = session && isTerminal && LOCAL_SHELL_TYPES.has(session.terminalType)
+    ? directory
+    : null;
+  // 只有本地 Shell 的目录属于本机文件系统；远程会话路径在远端，点击仍复制路径。
+  const canBrowseLocal = Boolean(
+    session && directory && isTerminal && LOCAL_SHELL_TYPES.has(session.terminalType),
   );
   const web = useWebApiBarStatus();
   const working = isTerminal && session ? isTerminalWorking(terminalActivities[session.id]) : false;
@@ -317,35 +310,24 @@ const StatusBarResources = memo(function StatusBarResources() {
           <button
             type="button"
             className="app-statusbar-item app-statusbar-clickable"
-            title={`复制路径 ${directory}`}
-            onClick={() => copyDirectory(directory)}
+            title={canBrowseLocal ? `打开文件管理 · ${directory}（右键复制路径）` : `复制路径 ${directory}`}
+            onClick={() => {
+              if (canBrowseLocal) setFileManagerOpen(true);
+              else copyDirectory(directory);
+            }}
+            onContextMenu={event => {
+              if (!canBrowseLocal) return;
+              event.preventDefault();
+              copyDirectory(directory);
+            }}
           >
             <Folder className="app-statusbar-icon" aria-hidden="true" />
             <span className="app-statusbar-path-full">{directory}</span>
             <span className="app-statusbar-path-short">{shortenPath(directory)}</span>
           </button>
 
-          {git && (
-            <button
-              type="button"
-              className="app-statusbar-item app-statusbar-clickable app-statusbar-optional"
-              title={gitStatusTitle(git)}
-              onClick={() => {
-                if (git.changedCount > 0) {
-                  openGitChangesTab({ repoRoot: git.repoRoot, branch: git.branch });
-                } else {
-                  openGitHistoryTab({ repoRoot: git.repoRoot, branch: git.branch });
-                }
-              }}
-            >
-              <GitBranch className="app-statusbar-icon" aria-hidden="true" />
-              <span>{git.branch}</span>
-              {git.ahead > 0 && <span className="app-statusbar-sync">↑{git.ahead}</span>}
-              {git.behind > 0 && <span className="app-statusbar-sync">↓{git.behind}</span>}
-              {git.changedCount > 0 && (
-                <span className="app-statusbar-changes">{git.changedCount} 处变更</span>
-              )}
-            </button>
+          {gitDirectory && (
+            <GitNavBar variant="statusbar" currentDirectory={gitDirectory} />
           )}
         </>
       )}
@@ -384,6 +366,14 @@ const StatusBarResources = memo(function StatusBarResources() {
           <span className="app-statusbar-mono">v{APP_VERSION}</span>
         </span>
       </span>
+
+      {directory && (
+        <FileManagerDialog
+          open={fileManagerOpen}
+          initialPath={directory}
+          onClose={() => setFileManagerOpen(false)}
+        />
+      )}
     </div>
   );
 });
