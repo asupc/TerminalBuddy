@@ -1448,6 +1448,9 @@ impl TerminalService {
         startup_path_override: Option<&str>,
         extra_param_tag: Option<&str>,
         extra_param_tag_color: Option<&str>,
+        // 历史会话恢复：命令没有模型引用时补一份只含 hooks 的临时 `--settings`。
+        // 普通新建终端不传，行为保持不变。
+        inject_claude_hooks: bool,
         app: AppHandle,
         owner: TerminalOwner,
         creator: TerminalCreator,
@@ -1498,6 +1501,27 @@ impl TerminalService {
                 ));
                 return Err(error);
             }
+        };
+        // 历史会话恢复的命令没有模型引用，按调用方要求补一份只含 hooks 的
+        // 临时 settings，否则恢复出来的会话收不到 Hook 桥接的事件。
+        let startup_commands = if inject_claude_hooks {
+            match crate::services::llm_provider_service::inject_managed_hooks_in_commands(
+                startup_commands,
+                &terminal_id,
+                terminal_type,
+            ) {
+                Ok(commands) => commands,
+                Err(error) => {
+                    crate::services::llm_provider_service::cleanup_temp_settings_for_terminal(&terminal_id);
+                    log_debug(&format!(
+                        "[create] FAILED, id={}, type={}, stage=inject-hooks, error={}",
+                        terminal_id, terminal_type, error
+                    ));
+                    return Err(error);
+                }
+            }
+        } else {
+            startup_commands
         };
         let profile_env: Vec<(String, String)> = profile
             .as_ref()
@@ -1791,6 +1815,9 @@ impl TerminalService {
         initial_command: Option<&str>,
         extra_param_tag: Option<&str>,
         extra_param_tag_color: Option<&str>,
+        // 历史会话恢复：没有模型引用的 Claude 命令补一份只含 hooks 的临时
+        // `--settings`。普通空白终端不传，行为保持不变。
+        inject_claude_hooks: bool,
         app: AppHandle,
         owner: TerminalOwner,
         creator: TerminalCreator,
@@ -1866,6 +1893,27 @@ impl TerminalService {
                     ));
                     return Err(error);
                 }
+            };
+            // 历史会话恢复（`claude ... --resume`）按调用方要求补一份只含 hooks
+            // 的临时 settings，让会话事件能回到 TerminalBuddy。
+            let command = if inject_claude_hooks {
+                match crate::services::llm_provider_service::inject_managed_hooks(
+                    command,
+                    &terminal_id,
+                    effective_type,
+                ) {
+                    Ok(injected) => injected,
+                    Err(error) => {
+                        crate::services::llm_provider_service::cleanup_temp_settings_for_terminal(&terminal_id);
+                        log_debug(&format!(
+                            "[create-blank] FAILED, id={}, type={}, stage=inject-hooks, error={}",
+                            terminal_id, effective_type, error
+                        ));
+                        return Err(error);
+                    }
+                }
+            } else {
+                command
             };
             reject_control_chars("启动命令", &command)?;
             init_commands.push(command);
@@ -1992,6 +2040,8 @@ pub async fn start_terminal(
     startup_path: Option<String>,
     extra_param_tag: Option<String>,
     extra_param_tag_color: Option<String>,
+    // 恢复历史会话时置 true：命令不带模型引用也能拿到 hooks 临时 settings。
+    inject_claude_hooks: Option<bool>,
     app: AppHandle,
     terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
@@ -2007,6 +2057,7 @@ pub async fn start_terminal(
             startup_path.as_deref(),
             extra_param_tag.as_deref(),
             extra_param_tag_color.as_deref(),
+            inject_claude_hooks.unwrap_or(false),
             app,
             TerminalOwner::Pc,
             TerminalCreator::Desktop,
@@ -2130,6 +2181,8 @@ pub async fn start_blank_terminal(
     // 项目启动的空白终端需要把项目名写入后端分组，容器重启恢复后
     // 手机端 `GET /terminals` 才能继续按项目分组展示。
     group_override: Option<String>,
+    // 恢复历史会话时置 true：命令不带模型引用也能拿到 hooks 临时 settings。
+    inject_claude_hooks: Option<bool>,
     app: AppHandle,
     terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
@@ -2145,6 +2198,7 @@ pub async fn start_blank_terminal(
             initial_command.as_deref(),
             extra_param_tag.as_deref(),
             extra_param_tag_color.as_deref(),
+            inject_claude_hooks.unwrap_or(false),
             app,
             TerminalOwner::Pc,
             TerminalCreator::Desktop,

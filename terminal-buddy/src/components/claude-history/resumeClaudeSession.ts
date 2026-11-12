@@ -164,6 +164,8 @@ export async function resumeClaudeSession(
         effectivePreset?.name,
         effectivePreset?.tagColor ?? null,
         vendorRef ? 'independent' : 'append',
+        // 恢复命令通常没有模型引用，让后端补一份只含 hooks 的临时 --settings。
+        true,
       ),
       onStarted: (terminalId) => {
         // 记录本次恢复的会话 ID：Docker 容器重启后靠它重新拼出 --resume。
@@ -208,6 +210,8 @@ export async function resumeClaudeSession(
       effectivePreset?.name,
       effectivePreset?.tagColor ?? null,
       project?.name,
+      // 无供应商引用的恢复命令同样让后端补 hooks 临时 --settings。
+      true,
     ),
     onStarted: (terminalId) => {
       // 空白终端路径同样记录会话 ID，保证重启恢复时能续接。

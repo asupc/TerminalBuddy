@@ -184,6 +184,9 @@ pub struct StartTerminalRequest {
     /// profile_id 为空时注入的启动命令（项目自定义启动命令 / claude --resume）
     #[serde(default)]
     pub startup_command: Option<String>,
+    /// 历史会话恢复：命令没有模型引用时补 hooks 临时 settings
+    #[serde(default)]
+    pub inject_claude_hooks: Option<bool>,
 }
 
 #[cfg(test)]

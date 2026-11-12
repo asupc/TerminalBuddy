@@ -851,6 +851,125 @@ pub fn expand_claude_refs_in_commands(
         .collect()
 }
 
+/// 本地 shell 类型：只有这些终端里的命令在本机执行，才能注入临时 `--settings`
+/// 文件；ssh / docker / k8s 的命令在远端执行，本机路径与 HTTP Hook 都不可达。
+pub fn is_local_shell_terminal(terminal_type: &str) -> bool {
+    matches!(
+        terminal_type,
+        "powershell" | "pwsh" | "cmd" | "bash" | "sh" | "zsh"
+    )
+}
+
+fn is_claude_program(token: &str) -> bool {
+    let token = token.trim_matches(|c| c == '"' || c == '\'');
+    let token = token.trim_end_matches(|c| c == '&' || c == ';' || c == '|');
+    let token = token.trim_matches(|c| c == '"' || c == '\'');
+    let name = token.rsplit(['/', '\\']).next().unwrap_or(token);
+    matches!(name, "claude" | "claude.exe" | "claude.cmd" | "claude.bat")
+}
+
+/// 命令里「执行 claude」那个 token 的结束字节位置。
+/// 只认命令起始位置（行首或 `&&` / `||` / `;` / `|` 之后）的 token，
+/// 避免把 `echo "claude ..."` 里的参数误当成启动命令。
+fn claude_command_end(command: &str) -> Option<usize> {
+    let bytes = command.as_bytes();
+    let mut index = 0;
+    let mut at_command_start = true;
+    while index < bytes.len() {
+        if bytes[index].is_ascii_whitespace() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && !bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        let token = &command[start..index];
+        if at_command_start && is_claude_program(token) {
+            return Some(index);
+        }
+        // 链式分隔符结尾的 token 开启下一条命令（如 `cd x &&`、`foo;`）。
+        at_command_start = token.ends_with("&&")
+            || token.ends_with("||")
+            || token.ends_with(';')
+            || token.ends_with('|');
+    }
+    None
+}
+
+fn has_settings_arg(command: &str) -> bool {
+    command
+        .split_whitespace()
+        .any(|token| token == "--settings" || token.starts_with("--settings="))
+}
+
+fn temp_settings_registered(terminal_id: &str) -> bool {
+    temp_file_registry()
+        .lock()
+        .map(|registry| registry.contains_key(terminal_id))
+        .unwrap_or(false)
+}
+
+/// 给没有模型引用的本地 Claude 启动命令补一个只含 TerminalBuddy hooks 的
+/// 一次性 `--settings` 文件。
+///
+/// 历史会话双击恢复、profile / Agent 基础命令启动都不经过引用展开，命令里
+/// 没有 `--settings`，Claude Code 就收不到 Hook 桥接（任务状态、决策弹窗、
+/// 完成/失败通知全部失效）。临时文件只写 `hooks` 键，其余配置仍按官方优先级
+/// 从用户级 settings.json 继承；引用展开的命令已随临时配置下发 hooks，跳过。
+pub fn inject_managed_hooks_in_commands(
+    commands: Vec<String>,
+    terminal_id: &str,
+    terminal_type: &str,
+) -> Result<Vec<String>, String> {
+    if !is_local_shell_terminal(terminal_type) || temp_settings_registered(terminal_id) {
+        return Ok(commands);
+    }
+    let mut injected = false;
+    let mut output = Vec::with_capacity(commands.len());
+    for command in commands {
+        if injected || has_settings_arg(&command) {
+            output.push(command);
+            continue;
+        }
+        let Some(insert_at) = claude_command_end(&command) else {
+            output.push(command);
+            continue;
+        };
+        let settings = json!({ "hooks": super::claude_hook_settings::managed_hooks_object() });
+        let path = write_temp_settings(&settings)?;
+        let quoted = match quote_cmd_argument("临时 Hook 配置", &path.to_string_lossy()) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = fs::remove_file(&path);
+                return Err(error);
+            }
+        };
+        if let Err(error) = register_temp_file(terminal_id, &path) {
+            let _ = fs::remove_file(&path);
+            return Err(error);
+        }
+        let mut next = String::with_capacity(command.len() + quoted.len() + 12);
+        next.push_str(&command[..insert_at]);
+        next.push_str(" --settings ");
+        next.push_str(&quoted);
+        next.push_str(&command[insert_at..]);
+        output.push(next);
+        injected = true;
+    }
+    Ok(output)
+}
+
+/// 单条命令版本（空白终端入队前调用）。
+pub fn inject_managed_hooks(
+    command: String,
+    terminal_id: &str,
+    terminal_type: &str,
+) -> Result<String, String> {
+    let mut commands = inject_managed_hooks_in_commands(vec![command], terminal_id, terminal_type)?;
+    Ok(commands.remove(0))
+}
+
 /// 删除指定终端的临时 settings 文件与映射条目（幂等，供关闭清理调用）。
 /// 清理路径不阻断终端关闭，映射读写失败仅记录（文件删除仍尽力执行）。
 pub fn cleanup_temp_settings_for_terminal(terminal_id: &str) {
@@ -1356,6 +1475,72 @@ mod tests {
                 expand_leading_claude_ref("claude --resume x", "term-2").unwrap(),
                 "claude --resume x"
             );
+        });
+    }
+
+    #[test]
+    fn claude_command_end_only_matches_command_position() {
+        assert_eq!(claude_command_end("claude --resume abc"), Some(6));
+        assert_eq!(claude_command_end("  claude.cmd --resume abc"), Some(12));
+        assert_eq!(claude_command_end("cd /tmp && claude --resume abc"), Some(17));
+        assert_eq!(claude_command_end("cd /tmp; claude --resume abc"), Some(15));
+        // 引号包裹的非 claude 参数不应被当成启动命令
+        assert_eq!(claude_command_end("echo \"claude --resume\""), None);
+        assert_eq!(claude_command_end("git log --grep claude"), None);
+        assert_eq!(claude_command_end("codex --resume abc"), None);
+    }
+
+    #[test]
+    fn inject_hooks_only_for_local_claude_commands() {
+        assert!(!is_local_shell_terminal("ssh"));
+        assert!(is_local_shell_terminal("powershell"));
+        with_test_data_dir(|| {
+            // 远端命令原样返回
+            let commands = inject_managed_hooks_in_commands(
+                vec!["claude --resume abc".to_string()],
+                "term-ssh",
+                "ssh",
+            )
+            .unwrap();
+            assert_eq!(commands, vec!["claude --resume abc".to_string()]);
+            // 已带 --settings 的命令（引用展开结果）跳过
+            let commands = inject_managed_hooks_in_commands(
+                vec!["claude --settings /tmp/x.json --resume abc".to_string()],
+                "term-ref",
+                "powershell",
+            )
+            .unwrap();
+            assert_eq!(commands, vec!["claude --settings /tmp/x.json --resume abc".to_string()]);
+            // 本地恢复命令补上 hooks 临时文件
+            let commands = inject_managed_hooks_in_commands(
+                vec!["claude --dangerously-skip-permissions --resume abc".to_string()],
+                "term-local",
+                "powershell",
+            )
+            .unwrap();
+            let command = &commands[0];
+            assert!(command.starts_with("claude --settings "), "实际：{}", command);
+            assert!(command.ends_with("--resume abc"), "实际：{}", command);
+            let path = command
+                .split_whitespace()
+                .nth(2)
+                .map(|token| token.trim_matches(|c| c == '"' || c == '\''))
+                .map(PathBuf::from)
+                .unwrap();
+            let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(
+                content["hooks"],
+                crate::services::claude_hook_settings::managed_hooks_object()
+            );
+            // 同一终端第二次注入会复用已有临时文件，不叠加 --settings
+            let commands = inject_managed_hooks_in_commands(
+                vec!["claude --resume def".to_string()],
+                "term-local",
+                "powershell",
+            )
+            .unwrap();
+            assert_eq!(commands, vec!["claude --resume def".to_string()]);
+            cleanup_temp_settings_for_terminal("term-local");
         });
     }
 }

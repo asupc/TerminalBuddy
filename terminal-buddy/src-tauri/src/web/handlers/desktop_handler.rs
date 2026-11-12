@@ -213,6 +213,9 @@ struct TerminalRequest {
     startup_path: Option<String>, initial_command: Option<String>, extra_param_tag: Option<String>, extra_param_tag_color: Option<String>,
     /// 项目启动的空白终端归属分组（桌面端浏览器版恢复页签时带上项目名）。
     group_override: Option<String>,
+    /// 历史会话恢复：命令没有模型引用时补 hooks 临时 settings。
+    #[serde(default)]
+    inject_claude_hooks: Option<bool>,
 }
 
 struct Job {
@@ -288,11 +291,12 @@ async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, ap
                     if request.terminal_type.is_empty() { crate::commands::terminal::default_terminal_type() } else { &request.terminal_type },
                     request.display_name.as_deref(), request.group_override.as_deref(), request.initial_rows, request.initial_cols,
                     request.startup_path.as_deref(), request.initial_command.as_deref(), request.extra_param_tag.as_deref(),
-                    request.extra_param_tag_color.as_deref(), app.clone(), TerminalOwner::Web, creator,
+                    request.extra_param_tag_color.as_deref(), request.inject_claude_hooks.unwrap_or(false),
+                    app.clone(), TerminalOwner::Web, creator,
                 ) } else { service.create_terminal(
                     &request.profile_id, request.display_name.as_deref(), request.extra_startup_params.as_deref(), request.extra_startup_mode.as_deref(),
                     request.initial_rows, request.initial_cols, request.startup_path.as_deref(), request.extra_param_tag.as_deref(), request.extra_param_tag_color.as_deref(),
-                    app.clone(), TerminalOwner::Web, creator,
+                    request.inject_claude_hooks.unwrap_or(false), app.clone(), TerminalOwner::Web, creator,
                 ) }.map_err(ApiError::BadRequest)?;
                 if let Some(info) = service.list_terminals_info_for(TerminalActor::Web).into_iter().find(|i| i.id == id) {
                     let _ = app.emit("terminal-created", info);
