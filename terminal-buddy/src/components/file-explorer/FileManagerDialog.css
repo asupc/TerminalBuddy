@@ -1,0 +1,455 @@
+/* 应用内文件管理器弹窗：布局对齐 Windows 资源管理器（工具栏 + 地址栏 + 列表）。 */
+.file-manager-dialog {
+  --file-manager-grid: minmax(0, 1fr) 148px 116px 84px;
+  width: min(920px, calc(100vw - 48px));
+  height: min(620px, calc(100vh - 96px));
+  min-width: 420px;
+  min-height: 320px;
+}
+
+.file-manager-dialog .tb-dialog-body {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  padding: 0;
+  overflow: hidden;
+}
+
+.file-manager {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-elevated);
+}
+
+.file-manager-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.file-manager-toolbar-secondary {
+  gap: 8px;
+  padding: 6px 12px;
+}
+
+.file-manager-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.file-manager-tool svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
+}
+
+.file-manager-tool:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-hover);
+}
+
+.file-manager-tool:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.file-manager-tool:focus-visible,
+.file-manager-text-button:focus-visible,
+.file-manager-address-action:focus-visible,
+.file-manager-search-clear:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.file-manager-address {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-height-sm);
+  margin-left: 4px;
+  padding: 0 2px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.file-manager-address:focus-within {
+  border-color: var(--accent);
+}
+
+.file-manager-address-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--warning);
+  stroke-width: 1.8;
+}
+
+.file-manager-address-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 12px;
+}
+
+.file-manager-address-input:focus {
+  outline: none;
+}
+
+.file-manager-address-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.file-manager-address-action svg {
+  width: 13px;
+  height: 13px;
+}
+
+.file-manager-address-action:hover {
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
+}
+
+.file-manager-search {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 220px;
+  max-width: 45%;
+  height: var(--control-height-sm);
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.file-manager-search:focus-within {
+  border-color: var(--accent);
+}
+
+.file-manager-search-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.file-manager-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.file-manager-search input:focus {
+  outline: none;
+}
+
+.file-manager-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.file-manager-search-clear svg {
+  width: 12px;
+  height: 12px;
+}
+
+.file-manager-search-clear:hover {
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
+}
+
+.file-manager-text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--control-height-sm);
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.file-manager-text-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.file-manager-text-button:hover {
+  border-color: color-mix(in srgb, var(--text-secondary) 62%, var(--border));
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-tertiary));
+  color: var(--text-primary);
+}
+
+.file-manager-columns,
+.file-manager-row {
+  display: grid;
+  grid-template-columns: var(--file-manager-grid);
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.file-manager-columns {
+  flex: none;
+  height: 28px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.file-manager-column {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.file-manager-column:hover {
+  color: var(--text-primary);
+}
+
+.file-manager-column:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.file-manager-column-modified,
+.file-manager-column-type,
+.file-manager-column-size {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-manager-column-size {
+  justify-content: flex-end;
+}
+
+.file-manager-sort {
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.file-manager-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+/* 列表容器只用键盘快捷键，不需要全局 :focus-visible 的 2px 蓝色描边。
+   选择器带上 [tabindex] 提高特异性，压过 global.css 里的 [tabindex]:focus-visible 规则。 */
+.file-manager-dialog .file-manager-list[tabindex]:focus,
+.file-manager-dialog .file-manager-list[tabindex]:focus-visible {
+  outline: none;
+}
+
+.file-manager-row {
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: default;
+  user-select: none;
+}
+
+.file-manager-row:hover {
+  background: var(--list-hover-bg);
+}
+
+.file-manager-row.selected {
+  background: var(--list-active-bg);
+  box-shadow: inset 0 0 0 1px var(--list-active-border-color);
+}
+
+.file-manager-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.file-manager-file-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--text-tertiary);
+  stroke-width: 1.7;
+}
+
+.file-manager-file-icon.folder {
+  color: var(--warning);
+  fill: color-mix(in srgb, var(--warning) 22%, transparent);
+}
+
+.file-manager-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.file-manager-cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
+.file-manager-column-size {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 11px;
+  text-align: right;
+  justify-content: flex-end;
+}
+
+.file-manager-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 160px;
+  padding: 24px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.file-manager-state-error {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.file-manager-spinner {
+  width: 15px;
+  height: 15px;
+  animation: file-manager-spin 900ms linear infinite;
+}
+
+@keyframes file-manager-spin {
+  to { transform: rotate(360deg); }
+}
+
+.file-manager-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  height: 28px;
+  padding: 0 18px 0 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.file-manager-footer-selected {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.file-manager-footer-hint {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 720px) {
+  .file-manager-dialog {
+    --file-manager-grid: minmax(0, 1fr);
+    width: calc(100vw - 32px);
+    min-width: 0;
+  }
+
+  .file-manager-column-modified,
+  .file-manager-column-type,
+  .file-manager-column-size,
+  .file-manager-footer-hint {
+    display: none;
+  }
+
+  .file-manager-search {
+    max-width: none;
+    flex: 1 1 auto;
+  }
+
+  .file-manager-text-button span {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-manager-spinner { animation: none; }
+}

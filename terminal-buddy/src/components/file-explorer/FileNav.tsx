@@ -681,11 +681,11 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
           </div>
         </Dialog>
       )}
-      {/* 控制器按仓库常驻；面板隐藏仅隐藏工具栏，不丢失进行中的任务与结果。 */}
+      {/* Git 操作已平铺到底部状态栏；这里只保留按仓库常驻的控制器，供文件右键菜单继续复用。 */}
       <GitOperationsHost
         ref={gitNavRef}
         currentDirectory={isSsh ? '' : gitTargetDirectory}
-        visible={fileTreeVisible && rootDirectories.length > 0 && !isSsh}
+        visible={false}
         onRepositoryChanged={handleRefresh}
       />
       {rootDirectories.length > 0 && !focusedRootPath && (
