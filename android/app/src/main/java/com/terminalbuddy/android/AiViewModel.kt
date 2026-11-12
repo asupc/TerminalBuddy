@@ -78,8 +78,18 @@ data class AiUiState(
         .filter { it.desktopOpen || it.id in openedSessionIds }
         .sortedByDescending { it.updatedAt }
     val launchProject get() = projects.find { it.path == projectPath }
+    /**
+     * 服务端 catalog 没有某助手供应商时补一个「服务端默认配置」：项目启用了该助手就仍然可选。
+     * 兼容两种环境：服务端版本较旧（catalog 不返回 `default:<agent>`），
+     * 或服务端尚未给该助手配置任何供应商。创建会话时会省略 providerId，走服务端默认 CLI 配置。
+     */
+    private val fallbackProviders get() = listOf("claude", "codex")
+        .filter { agent -> providers.none { it.agent == agent } }
+        .map { agent -> AiProvider("default:$agent", agent, "服务端默认配置",
+            models = listOf(AiModel("")), localDefault = true) }
+    val allProviders get() = providers + fallbackProviders
     /** 只列出当前项目启用的 Agent 对应供应商。 */
-    fun projectProviders(project: AiProject) = providers.filter { project.enabledAgents.enabled(it.agent) }
+    fun projectProviders(project: AiProject) = allProviders.filter { project.enabledAgents.enabled(it.agent) }
     fun projectModels(project: AiProject, agent: String? = null) = projectProviders(project)
         .filter { agent == null || it.agent == agent }
         .flatMap { provider -> provider.models.map { AiLaunchModel(provider, it) } }
@@ -96,7 +106,7 @@ data class AiUiState(
     val selectedModelOption: AiModel?
         get() {
             val session = selected ?: return null
-            return providers.find { it.agent == session.provider && it.id == session.providerId }
+            return allProviders.find { it.agent == session.provider && it.id == session.providerId }
                 ?.models?.find { it.id == session.model.orEmpty() }
         }
     val selectedModelLabel get() = selectedModelOption?.title ?: selected?.modelLabel.orEmpty()

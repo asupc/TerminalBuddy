@@ -414,7 +414,7 @@ private fun SimpleComposer(
                 }
             }
             AiChoiceField("工作项目", Icons.Outlined.FolderOpen, ui.projectPath, "选择一个项目",
-                ui.projects.map { AiChoice(it.path, it.name, it.path) }, enabled, vm::selectProject,
+                ui.projects.distinctBy { it.path }.map { AiChoice(it.path, it.name, it.path) }, enabled, vm::selectProject,
                 compact = true, inlineLabel = true)
             if (project != null && projectProfiles.isNotEmpty()) {
                 SimpleProjectCommands(projectProfiles, terminalUi, terminalVm)

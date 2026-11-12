@@ -385,7 +385,9 @@ internal fun AiChoiceField(
                 Modifier.fillMaxWidth().weight(1f, fill = false),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
             ) {
-                items(choices, key = { it.id }) { choice ->
+                // 不用 id 作为 key：服务端项目可能重复登记同一路径（或多个同名模型），
+                // 重复 key 会让 LazyColumn 直接抛异常闪退；条目数量很少，按位置复用即可。
+                items(choices) { choice ->
                     Surface(
                         onClick = { expanded = false; select(choice.id) },
                         color = if (choice.id == selectedId) TbColors.Accent.copy(alpha = .12f) else Color.Transparent,

@@ -160,6 +160,12 @@ data class AiCatalog(val providers: List<AiProvider> = emptyList())
 data class AiProvider(
     val id: String, val agent: String, val name: String, val isDefault: Boolean = false,
     val models: List<AiModel> = emptyList(),
+    /**
+     * 客户端兜底项：服务端 catalog 没有返回该助手的供应商时，只要项目启用了该助手，
+     * 就用「服务端默认配置」占位。创建会话时不能把兜底 id 发给服务端（旧版服务端不认识），
+     * 而是省略 providerId，让服务端按默认 CLI 配置启动。
+     */
+    val localDefault: Boolean = false,
 ) {
     val agentLabel get() = when (agent) {
         "codex" -> "Codex"

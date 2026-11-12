@@ -79,7 +79,7 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel, more: () -> Unit) {
                 }
             }
             AiChoiceField("工作项目", Icons.Outlined.FolderOpen, ui.projectPath, "选择一个项目",
-                ui.projects.map { AiChoice(it.path, it.name, it.path) }, enabled, vm::selectProject,
+                ui.projects.distinctBy { it.path }.map { AiChoice(it.path, it.name, it.path) }, enabled, vm::selectProject,
                 compact = true, inlineLabel = true)
             if (agents.isNotEmpty() && !singleAgent) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("选择助手", style = MaterialTheme.typography.labelMedium.copy(lineHeight = 13.sp), color = TbColors.TextMuted)

@@ -269,7 +269,8 @@ class AiRepository(context: Context) {
 
     suspend fun resumeCodexHistory(id: String, target: AiProvider, model: AiModel): AiSession =
         ApiJson.decodeFromJsonElement(request("POST", listOf("ai", "codex-history", id, "resume"), jsonBody {
-            put("providerId", target.id)
+            // 兜底的「服务端默认配置」不是服务端真实供应商，发出去会被旧版服务端判为已删除。
+            if (!target.localDefault && target.id.isNotBlank()) put("providerId", target.id)
             if (model.id.isNotBlank()) put("model", model.id)
         }))
     /** 后台正文补偿固定使用任务所属账号，且不占用页面请求队列。 */
@@ -286,7 +287,8 @@ class AiRepository(context: Context) {
                 jsonBody {
                     put("projectPath", project.path)
                     put("provider", provider.agent)
-                    put("providerId", provider.id)
+                    // 兜底的「服务端默认配置」不是服务端真实供应商：省略 providerId 让服务端按默认 CLI 配置启动。
+                    if (!provider.localDefault && provider.id.isNotBlank()) put("providerId", provider.id)
                     if (model.isNotBlank()) put("model", model.trim())
                     // 恢复历史会话时服务端以历史所在项目为准，此处的项目路径仅作初始提示。
                     if (!resumeSessionId.isNullOrBlank()) put("resumeSessionId", resumeSessionId)
