@@ -422,18 +422,16 @@
   display: none;
 }
 
+/* 「新建配置终端」子菜单：顶部与所在行对齐（left/top 由 JS 按行 rect 与视口计算），
+   不再使用垂直居中，避免鼠标一进入子菜单就落到某个配置/项目行上误触三级菜单。 */
 .new-terminal-profile-menu {
   position: fixed;
-  top: 50%;
-  transform: translateY(-50%);
+  z-index: 260;
   overflow: visible;
   max-height: none;
 }
 
 .context-menu-item.submenu-active > .new-terminal-profile-menu {
-  position: fixed;
-  top: 50%;
-  transform: translateY(-50%);
   display: block;
 }
 
