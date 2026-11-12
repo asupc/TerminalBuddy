@@ -532,10 +532,6 @@ const StatusBarResources = memo(function StatusBarResources() {
           anchor={agentHistoryAnchor}
           anchorRef={agentHistoryRef}
           onClose={() => setAgentHistoryOpen(null)}
-          onOpenFullHistory={() => {
-            setAgentHistoryOpen(null);
-            useAppStore.getState().openHistoryPanel(openAgentTarget.provider);
-          }}
         />,
         document.body,
       )}

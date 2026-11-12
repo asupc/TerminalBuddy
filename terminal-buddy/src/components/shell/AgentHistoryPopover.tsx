@@ -26,8 +26,6 @@ interface AgentHistoryPopoverProps {
   anchor: { left: number; bottom: number };
   anchorRef: RefObject<HTMLElement | null>;
   onClose: () => void;
-  /** 跳到完整会话历史面板（支持搜索、回放与批量操作）。 */
-  onOpenFullHistory: () => void;
 }
 
 interface ContextMenuState {
@@ -70,7 +68,7 @@ const RECENT_LIMIT = 20;
 
 /**
  * 状态栏 Agent 历史浮层：只列当前 Agent 在当前项目下的历史会话。
- * 双击 / Enter / 播放按钮恢复会话；底部入口跳到完整历史面板做搜索、回放等重操作。
+ * 双击 / Enter / 播放按钮恢复会话；搜索框可在浮层内直接过滤标题。
  */
 export function AgentHistoryPopover({
   provider,
@@ -78,7 +76,6 @@ export function AgentHistoryPopover({
   anchor,
   anchorRef,
   onClose,
-  onOpenFullHistory,
 }: AgentHistoryPopoverProps) {
   const history = useMemo(() => sessionHistory(provider), [provider]);
   const projects = useAppStore(s => s.projects);
@@ -463,9 +460,6 @@ export function AgentHistoryPopover({
 
       <div className="agent-history-footer">
         <span>{visibleItems.length} 条 · 双击恢复 · 右键选模型</span>
-        <button type="button" className="agent-history-full-btn" onClick={onOpenFullHistory}>
-          打开完整历史 →
-        </button>
       </div>
 
       {contextMenu && contextMenuItem && createPortal(

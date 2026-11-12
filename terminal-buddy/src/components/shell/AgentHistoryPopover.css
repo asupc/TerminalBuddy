@@ -250,21 +250,6 @@
   font-size: 10.5px;
 }
 
-.agent-history-full-btn {
-  padding: 2px 4px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--accent);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.agent-history-full-btn:hover {
-  background: var(--list-hover-bg);
-}
-
 /* 右键菜单：复用 ClaudeModelMenuSection 的供应商/模型区，样式对齐历史面板右键菜单。 */
 .agent-history-context {
   position: fixed;
