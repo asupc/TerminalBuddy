@@ -14,6 +14,11 @@ export interface TreeNodeProps {
   depth: number;
   parentPath: string;
   selectedPath: string | null;
+  /** 展开状态由父级统一保存：刷新/删除导致重新挂载时不会丢失已展开的目录。 */
+  expandedPaths: Set<string>;
+  onExpandedChange: (path: string, expanded: boolean) => void;
+  /** 刷新/删除后自增，已展开目录据此重新拉取子项。 */
+  refreshVersion: number;
   onActivate: (path: string) => void;
   onSelect: (path: string) => void;
   onNavigate: (path: string) => void;
@@ -25,11 +30,12 @@ export interface TreeNodeProps {
 
 
 
-export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedPath, onActivate, onSelect, onNavigate, onContextMenu, onRename, renamingPath, setRenamingPath }) => {
-  const [expanded, setExpanded] = useState(false);
+export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedPath, expandedPaths, onExpandedChange, refreshVersion, onActivate, onSelect, onNavigate, onContextMenu, onRename, renamingPath, setRenamingPath }) => {
+  const expanded = expandedPaths.has(node.path);
   const [children, setChildren] = useState<FileNode[]>([]);
   const [visibleChildCount, setVisibleChildCount] = useState(DIRECTORY_RENDER_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const itemRef = useRef<HTMLDivElement>(null);
   const pinToTopAfterLoadRef = useRef(false);
@@ -45,65 +51,71 @@ export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedP
     (e.currentTarget as HTMLElement).focus();
   }, [node.is_directory, node.path, onActivate, onSelect, parentPath]);
 
-  const handleArrowClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleToggle = useCallback((pinToTop: boolean) => {
     if (!node.is_directory) return;
-    pinToTopAfterLoadRef.current = false;
-    if (!expanded) {
+    const nextExpanded = !expanded;
+    if (nextExpanded) {
+      pinToTopAfterLoadRef.current = pinToTop;
+      if (pinToTop) scrollFileTreeItemToTop(itemRef.current);
       // 展开子目录也算进入目录：提前缓存 Git 归属，不等到文件右键时再检测。
       void loadGitRepositoryStatus(node.path, { exact: true })
         .catch(error => console.error('Failed to prefetch expanded directory Git status:', error));
-      setLoading(true);
-      listDirectory(node.path, exclusionPatterns).then((entries) => {
-        setChildren(entries);
-        setVisibleChildCount(DIRECTORY_RENDER_PAGE_SIZE);
-        setLoading(false);
-      }).catch((err) => {
-        console.error('Failed to load directory:', err);
-        setLoading(false);
-      });
+    } else {
+      pinToTopAfterLoadRef.current = false;
     }
-    setExpanded(!expanded);
-  }, [node.path, node.is_directory, expanded, exclusionPatterns]);
+    onExpandedChange(node.path, nextExpanded);
+  }, [node.path, node.is_directory, expanded, onExpandedChange]);
 
-  const handleDoubleClick = useCallback(async () => {
+  const handleArrowClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    handleToggle(false);
+  }, [handleToggle]);
+
+  const handleDoubleClick = useCallback(() => {
     if (node.is_directory) {
       onNavigate(node.path);
-      if (!expanded) {
-        pinToTopAfterLoadRef.current = true;
-        scrollFileTreeItemToTop(itemRef.current);
-        setLoading(true);
-        listDirectory(node.path, exclusionPatterns).then((entries) => {
-          setChildren(entries);
-          setVisibleChildCount(DIRECTORY_RENDER_PAGE_SIZE);
-          setLoading(false);
-        }).catch((err) => {
-          console.error('Failed to load directory:', err);
-          setLoading(false);
-        });
-      } else {
-        pinToTopAfterLoadRef.current = false;
-      }
-      setExpanded(!expanded);
+      handleToggle(true);
       return;
     }
     // 开关开启时，双击 .bat 直接运行（等同“在系统中打开”）；否则按文本文件在编辑器中打开
     const runBat = node.path.toLowerCase().endsWith('.bat') && getAppSettings().doubleClickRunBat;
     if (!runBat && isTextFile(node.path)) {
-      try {
-        const size = await getFileSize(node.path);
+      getFileSize(node.path).then((size) => {
         if (size > 1024 * 1024) {
           void showAlert('文件过大，无法在编辑器中打开（超过 1MB）');
           return;
         }
-      } catch {
+        useAppStore.getState().openEditorSession(node.path);
+      }).catch(() => {
         // 无法获取大小时尝试打开
-      }
-      useAppStore.getState().openEditorSession(node.path);
+        useAppStore.getState().openEditorSession(node.path);
+      });
     } else {
       openPath(node.path).catch((err) => console.error('Failed to open file:', err));
     }
-  }, [node.is_directory, node.path, expanded, exclusionPatterns, onNavigate]);
+  }, [node.is_directory, node.path, expanded, handleToggle, onNavigate]);
+
+  // 已展开的目录在刷新（含删除后刷新）时重新拉取子项；折叠时保留旧列表，避免无谓请求。
+  useEffect(() => {
+    if (!node.is_directory || !expanded) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    listDirectory(node.path, exclusionPatterns).then((entries) => {
+      if (cancelled) return;
+      setChildren(entries);
+      setVisibleChildCount(DIRECTORY_RENDER_PAGE_SIZE);
+      setHasLoaded(true);
+    }).catch((err) => {
+      if (cancelled) return;
+      console.error('Failed to load directory:', err);
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [node.path, node.is_directory, expanded, exclusionPatterns, refreshVersion]);
 
   useLayoutEffect(() => {
     if (!expanded || loading || !pinToTopAfterLoadRef.current) return;
@@ -220,7 +232,7 @@ export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedP
           <span className="tree-name">{node.name}</span>
         )}
       </div>
-      {loading && (
+      {loading && !hasLoaded && (
         <div className="tree-loading" style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
           加载中...
         </div>
@@ -234,6 +246,9 @@ export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedP
               depth={depth + 1}
               parentPath={node.path}
               selectedPath={selectedPath}
+              expandedPaths={expandedPaths}
+              onExpandedChange={onExpandedChange}
+              refreshVersion={refreshVersion}
               onActivate={onActivate}
               onSelect={onSelect}
               onNavigate={onNavigate}

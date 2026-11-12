@@ -3,7 +3,7 @@ import { ChevronRight, Folder, FolderOpen } from 'lucide-react';
 import { listDirectory } from '../../services/tauri';
 import type { FileNode } from '../../services/tauri';
 import { TreeNode } from './TreeNode';
-import { compareNodes, scrollFileTreeItemToTop, directoryName, DIRECTORY_RENDER_PAGE_SIZE } from './file-utils';
+import { compareNodes, scrollFileTreeItemToTop, directoryName, replacePathPrefix, DIRECTORY_RENDER_PAGE_SIZE } from './file-utils';
 import { useAppStore } from '../../stores/appStore';
 
 export interface ConfiguredFileRootProps {
@@ -51,6 +51,8 @@ export const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   const [visibleNodeCount, setVisibleNodeCount] = useState(DIRECTORY_RENDER_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
   const [pathError, setPathError] = useState(false);
+  // 子目录展开状态统一保存在根节点：刷新/删除会重新挂载子节点，状态在这里才不会丢。
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const itemRef = useRef<HTMLDivElement>(null);
   const pinToTopAfterLoadRef = useRef(false);
   const mountedRef = useRef(false);
@@ -62,7 +64,36 @@ export const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
     }
     pinToTopAfterLoadRef.current = false;
     setExpanded(false);
+    setExpandedPaths(new Set());
   }, [collapseVersion]);
+
+  const handleChildExpandedChange = useCallback((childPath: string, childExpanded: boolean) => {
+    setExpandedPaths(prev => {
+      if (prev.has(childPath) === childExpanded) return prev;
+      const next = new Set(prev);
+      if (childExpanded) next.add(childPath);
+      else next.delete(childPath);
+      return next;
+    });
+  }, []);
+
+  // 重命名目录后把已展开路径迁移到新路径，避免刷新时已打开的目录自动折叠。
+  const handleRenameNode = useCallback(async (renamedPath: string, newName: string) => {
+    await onRename(renamedPath, newName);
+    const separator = Math.max(renamedPath.lastIndexOf('/'), renamedPath.lastIndexOf('\\'));
+    if (separator < 0) return;
+    const newPath = `${renamedPath.slice(0, separator)}/${newName}`;
+    setExpandedPaths(prev => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const expandedPath of prev) {
+        const mapped = replacePathPrefix(expandedPath, renamedPath, newPath);
+        if (mapped !== expandedPath) changed = true;
+        next.add(mapped);
+      }
+      return changed ? next : prev;
+    });
+  }, [onRename]);
 
   useEffect(() => {
     if (autoExpandToken) setExpanded(true);
@@ -172,22 +203,25 @@ export const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
       </div>
       {expanded && (
         <div className="file-nav-root-children">
-          {loading && <div className="tree-loading file-nav-root-loading">加载中...</div>}
+          {loading && nodes.length === 0 && <div className="tree-loading file-nav-root-loading">加载中...</div>}
           {!loading && !pathError && sortedNodes.length === 0 && (
             <div className="empty-hint file-nav-root-empty">目录为空</div>
           )}
-          {!loading && sortedNodes.slice(0, visibleNodeCount).map((node) => (
+          {sortedNodes.slice(0, visibleNodeCount).map((node) => (
             <TreeNode
               key={node.path}
               node={node}
               depth={1}
               parentPath={path}
               selectedPath={selectedPath}
+              expandedPaths={expandedPaths}
+              onExpandedChange={handleChildExpandedChange}
+              refreshVersion={refreshVersion}
               onActivate={onActivate}
               onSelect={onSelect}
               onNavigate={onNavigate}
               onContextMenu={onContextMenu}
-              onRename={onRename}
+              onRename={handleRenameNode}
               renamingPath={renamingPath}
               setRenamingPath={setRenamingPath}
             />
