@@ -80,7 +80,8 @@ export function focusTerminalById(terminalId: string): void {
  * - 该会话已在某个终端运行 → 聚焦原终端，不重复 resume
  * - 否则用「启动命令里跑 claude」的连接开新终端，`--resume <id>`（连同启动参数预设）
  *   作为该连接的追加参数
- * - 没有这类连接时退回空白终端，claude 命令交给后端排进启动命令批次
+ * - 没有这类连接时退回空白终端，按 Agent 管理的基础命令参数（如
+ *   `--dangerously-skip-permissions`）+ `--resume <id>` 执行
  * - 有 `vendorRef` 时走 independent 语义：`[引用] [preset.params] --resume <id>`，
  *   不继承 profile.startup_commands；blank 路必须存快照以便重启恢复
  *
@@ -112,13 +113,18 @@ export async function resumeClaudeSession(
   const name = session.title || 'Claude 会话';
   const profile = pickClaudeProfile(store.profiles, session.projectDir);
   const project = projectForDirectory(store.projects, session.projectDir);
-  // 指定模型恢复时继承所选连接启动命令里 claude 的参数（无连接时取 Agent 管理的基础命令）。
-  const inheritArgs = inheritableClaudeArgs(profile?.startupCommands, currentClaudeCommand());
+  // 连接自带的 claude 参数优先；连接命令没带参数时回落到 Agent 管理的基础命令。
+  const profileArgs = inheritableClaudeArgs(profile?.startupCommands);
+  const baseArgs = inheritableClaudeArgs(undefined, currentClaudeCommand());
+  const inheritArgs = profileArgs || baseArgs;
   const resumeArg = `--resume ${session.sessionId}`;
+  // 空白终端路径没有 profile 可继承启动命令，必须自己带上基础命令参数
+  // （如 --dangerously-skip-permissions）；有 profile 时仅在其命令没带参数时补上，避免重复。
+  const appendedBaseArgs = profile ? (profileArgs ? '' : baseArgs) : inheritArgs;
   // 快照里存整条含引用的命令（不含 --resume，恢复时临时拼）。
   const snapshotParams = vendorRef
     ? buildClaudeRefCommand(vendorRef.providerId, vendorRef.modelId, [inheritArgs, effectivePreset?.params].filter(Boolean).join(' '))
-    : [effectivePreset?.params.trim(), resumeArg].filter(Boolean).join(' ');
+    : [appendedBaseArgs, effectivePreset?.params.trim(), resumeArg].filter(Boolean).join(' ');
   // 本次启动实际跑的命令（含 --resume）。
   const launchParams = vendorRef ? `${snapshotParams} ${resumeArg}` : snapshotParams;
   const base = {
