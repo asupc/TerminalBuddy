@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { Profile, SessionHistoryProvider, TerminalType } from '../../types';
 import { isTerminalWorking, useAppStore } from '../../stores/appStore';
+import { useAgentAvailability } from '../../hooks/useAgentAvailability';
 import { useSystemResources } from '../../hooks/useSystemResources';
 import { FileManagerDialog } from '../file-explorer/FileManagerDialog';
 import { GitNavBar } from '../git/GitNavBar';
@@ -59,6 +60,13 @@ const TYPE_LABELS: Record<TerminalType, string> = {
 };
 
 const browserClient = isBrowserClient();
+
+/** 历史入口固定按 Claude / Codex 排序，切换标签时位置不会跳动。 */
+const AGENT_KINDS: readonly SessionHistoryProvider[] = ['claude', 'codex'];
+
+function agentHistoryLabel(provider: SessionHistoryProvider): string {
+  return provider === 'codex' ? 'Codex' : 'Claude Code';
+}
 
 /** 只有本地 Shell 的启动目录才是本地路径，SSH / 容器路径不能拿来检测本地 Git。 */
 const LOCAL_SHELL_TYPES: ReadonlySet<TerminalType> = new Set([
@@ -239,9 +247,11 @@ const StatusBarResources = memo(function StatusBarResources() {
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const showToast = useAppStore(s => s.showToast);
   const [fileManagerOpen, setFileManagerOpen] = useState(false);
-  const [agentHistoryOpen, setAgentHistoryOpen] = useState(false);
+  // 可能同时列出多个 Agent 的历史入口，记住当前展开的是哪一个。
+  const [agentHistoryOpen, setAgentHistoryOpen] = useState<SessionHistoryProvider | null>(null);
   const [agentHistoryAnchor, setAgentHistoryAnchor] = useState<{ left: number; bottom: number } | null>(null);
-  const agentHistoryRef = useRef<HTMLButtonElement>(null);
+  // 触发浮层的按钮，供浮层判断「点的是入口本身」而不是外部点击。
+  const agentHistoryRef = useRef<HTMLElement | null>(null);
 
   const session = activeSessionId ? sessions.find(item => item.id === activeSessionId) : undefined;
   const profile = session?.profileId ? profiles.find(item => item.id === session.profileId) : undefined;
@@ -322,22 +332,45 @@ const StatusBarResources = memo(function StatusBarResources() {
 
   const agentProvider = agentTarget?.provider;
   const agentProjectDir = agentTarget?.projectDir;
-  // 切换标签或 Agent 后，旧浮层的项目上下文已失效。
-  useEffect(() => { setAgentHistoryOpen(false); }, [agentProvider, agentProjectDir]);
 
-  const toggleAgentHistory = useCallback(() => {
-    if (agentHistoryOpen) {
-      setAgentHistoryOpen(false);
+  // 本机装了哪些 Agent：装了几个就列几个历史入口，当前会话的 Agent 始终保留。
+  // 没有打开任何 Agent 时入口依然在，projectDir 为 null 表示展开全部项目的最近会话。
+  const agentAvailability = useAgentAvailability();
+  const agentTargets = useMemo<{ provider: SessionHistoryProvider; projectDir: string | null }[]>(() => {
+    const available = agentAvailability
+      ? AGENT_KINDS.filter(kind => agentAvailability[kind])
+      : [...AGENT_KINDS];
+    if (!agentProvider || !agentProjectDir) {
+      return available.map(provider => ({ provider, projectDir: null }));
+    }
+    const providers = agentAvailability
+      ? AGENT_KINDS.filter(kind => kind === agentProvider || agentAvailability[kind])
+      : [agentProvider];
+    return providers.map(provider => ({ provider, projectDir: agentProjectDir }));
+  }, [agentProvider, agentProjectDir, agentAvailability]);
+  const openAgentTarget = agentHistoryOpen
+    ? agentTargets.find(target => target.provider === agentHistoryOpen) ?? null
+    : null;
+
+  // 切换标签或 Agent 后，旧浮层的项目上下文已失效。
+  useEffect(() => { setAgentHistoryOpen(null); }, [agentProvider, agentProjectDir]);
+
+  const toggleAgentHistory = useCallback((
+    provider: SessionHistoryProvider,
+    trigger: HTMLElement,
+  ) => {
+    if (agentHistoryOpen === provider) {
+      setAgentHistoryOpen(null);
       return;
     }
-    const rect = agentHistoryRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    agentHistoryRef.current = trigger;
+    const rect = trigger.getBoundingClientRect();
     const width = Math.min(400, window.innerWidth - 16);
     setAgentHistoryAnchor({
       left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
       bottom: window.innerHeight - rect.top + 6,
     });
-    setAgentHistoryOpen(true);
+    setAgentHistoryOpen(provider);
   }, [agentHistoryOpen]);
 
   const copyDirectory = useCallback((path: string) => {
@@ -392,24 +425,31 @@ const StatusBarResources = memo(function StatusBarResources() {
         </span>
       )}
 
-      {agentTarget && (
+      {agentTargets.length > 0 && (
         <>
           <span className="app-statusbar-divider app-statusbar-optional" aria-hidden="true" />
-          <button
-            ref={agentHistoryRef}
-            type="button"
-            className={`app-statusbar-item app-statusbar-clickable${agentHistoryOpen ? ' active' : ''}`}
-            title={`查看 ${agentTarget.provider === 'codex' ? 'Codex' : 'Claude Code'} 在当前项目的历史会话`}
-            aria-haspopup="dialog"
-            aria-expanded={agentHistoryOpen}
-            onClick={toggleAgentHistory}
-          >
-            <AgentIcon
-              provider={agentTarget.provider}
-              className={`app-statusbar-agent-logo provider-${agentTarget.provider}`}
-            />
-            <span className="app-statusbar-agent-history-label">历史</span>
-          </button>
+          {agentTargets.map(target => {
+            const open = agentHistoryOpen === target.provider;
+            return (
+              <button
+                key={target.provider}
+                type="button"
+                className={`app-statusbar-item app-statusbar-clickable${open ? ' active' : ''}`}
+                title={target.projectDir
+                  ? `查看 ${agentHistoryLabel(target.provider)} 在当前项目的历史会话`
+                  : `查看 ${agentHistoryLabel(target.provider)} 最近的会话历史`}
+                aria-haspopup="dialog"
+                aria-expanded={open}
+                onClick={event => toggleAgentHistory(target.provider, event.currentTarget)}
+              >
+                <AgentIcon
+                  provider={target.provider}
+                  className={`app-statusbar-agent-logo provider-${target.provider}`}
+                />
+                <span className="app-statusbar-agent-history-label">历史</span>
+              </button>
+            );
+          })}
         </>
       )}
 
@@ -484,16 +524,17 @@ const StatusBarResources = memo(function StatusBarResources() {
         />
       )}
 
-      {agentHistoryOpen && agentTarget && agentHistoryAnchor && createPortal(
+      {openAgentTarget && agentHistoryAnchor && createPortal(
         <AgentHistoryPopover
-          provider={agentTarget.provider}
-          projectDir={agentTarget.projectDir}
+          key={`${openAgentTarget.provider}\u0000${openAgentTarget.projectDir ?? '*'}`}
+          provider={openAgentTarget.provider}
+          projectDir={openAgentTarget.projectDir}
           anchor={agentHistoryAnchor}
           anchorRef={agentHistoryRef}
-          onClose={() => setAgentHistoryOpen(false)}
+          onClose={() => setAgentHistoryOpen(null)}
           onOpenFullHistory={() => {
-            setAgentHistoryOpen(false);
-            useAppStore.getState().openHistoryPanel(agentTarget.provider);
+            setAgentHistoryOpen(null);
+            useAppStore.getState().openHistoryPanel(openAgentTarget.provider);
           }}
         />,
         document.body,

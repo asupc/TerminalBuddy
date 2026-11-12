@@ -20,8 +20,8 @@ import './AgentHistoryPopover.css';
 
 interface AgentHistoryPopoverProps {
   provider: SessionHistoryProvider;
-  /** 只展示该目录（项目根或会话当前目录）下的历史会话。 */
-  projectDir: string;
+  /** 只展示该目录（项目根或会话当前目录）下的历史会话；null 表示不限项目。 */
+  projectDir: string | null;
   /** 相对视口的定位：距左边缘、距底部（状态栏上沿之上）。 */
   anchor: { left: number; bottom: number };
   anchorRef: RefObject<HTMLElement | null>;
@@ -65,6 +65,8 @@ function formatTokens(input: number, output: number): string {
 /** 浮层每次打开都会挂载一次；短时间内重复扫描同一来源没有意义。 */
 const rescanAt = new Map<string, number>();
 const RESCAN_THROTTLE_MS = 30_000;
+/** 不限项目时只列最近的会话：状态栏浮层是快捷入口，不是完整历史面板。 */
+const RECENT_LIMIT = 20;
 
 /**
  * 状态栏 Agent 历史浮层：只列当前 Agent 在当前项目下的历史会话。
@@ -98,7 +100,18 @@ export function AgentHistoryPopover({
   const listRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
 
-  const projectName = projectForDirectory(projects, projectDir)?.name ?? projectDir;
+  const projectName = projectDir
+    ? projectForDirectory(projects, projectDir)?.name ?? projectDir
+    : '';
+
+  // 不限项目时逐条补上所属项目名：优先匹配已登记项目，未登记的退回目录末段。
+  const projectLabelFor = useCallback((dir: string): string => {
+    if (!dir) return '未知目录';
+    const registered = projectForDirectory(projects, dir);
+    if (registered) return registered.name;
+    const leaf = dir.split(/[\\/]+/).filter(Boolean).pop();
+    return leaf || dir;
+  }, [projects]);
 
   const load = useCallback(async (options: { rescan?: boolean; silent?: boolean } = {}) => {
     const request = ++requestRef.current;
@@ -107,8 +120,13 @@ export function AgentHistoryPopover({
     setError(null);
     try {
       if (options.rescan) await history.rescan().catch(() => {});
-      const next = await history.list(false, projectDir);
-      if (request === requestRef.current) setItems(next);
+      const next = await history.list(false, projectDir ?? undefined);
+      if (request === requestRef.current) {
+        // 不限项目时按最近交互时间倒序截取，最多 20 条。
+        setItems(projectDir
+          ? next
+          : [...next].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, RECENT_LIMIT));
+      }
     } catch (loadError) {
       if (request === requestRef.current) setError(String(loadError));
     } finally {
@@ -123,7 +141,7 @@ export function AgentHistoryPopover({
   useEffect(() => {
     let cancelled = false;
     void load();
-    const scanKey = `${provider}\u0000${projectDir}`;
+    const scanKey = `${provider}\u0000${projectDir ?? '*'}`;
     if (Date.now() - (rescanAt.get(scanKey) ?? 0) >= RESCAN_THROTTLE_MS) {
       rescanAt.set(scanKey, Date.now());
       history.rescan()
@@ -314,7 +332,9 @@ export function AgentHistoryPopover({
       <div className="agent-history-header">
         <AgentIcon provider={provider} className={`agent-history-agent-logo provider-${provider}`} />
         <span className="agent-history-title">{agentLabel} 历史</span>
-        <span className="agent-history-project" title={projectDir}>{projectName}</span>
+        <span className="agent-history-project" title={projectDir ?? '所有项目'}>
+          {projectDir ? projectName : `所有项目 · 最近 ${RECENT_LIMIT} 条`}
+        </span>
         <button
           type="button"
           className={`agent-history-icon-btn${refreshing ? ' spinning' : ''}`}
@@ -362,12 +382,21 @@ export function AgentHistoryPopover({
         )}
         {!loading && !error && visibleItems.length === 0 && (
           <div className="agent-history-empty">
-            {query.trim() ? '没有匹配的会话' : `当前项目还没有 ${agentLabel} 历史会话`}
+            {query.trim()
+              ? '没有匹配的会话'
+              : projectDir
+                ? `当前项目还没有 ${agentLabel} 历史会话`
+                : `还没有 ${agentLabel} 历史会话`}
           </div>
         )}
         {visibleItems.map(item => {
           const title = item.customTitle || item.title;
           const tokens = formatTokens(item.inputTokens, item.outputTokens);
+          const metaParts = [
+            formatWhen(item.updatedAt),
+            item.messageCount > 0 ? `${item.messageCount} 条` : '',
+            tokens,
+          ].filter(Boolean);
           return (
             <div
               key={item.sessionId}
@@ -417,9 +446,15 @@ export function AgentHistoryPopover({
                 </button>
               </div>
               <div className="agent-history-item-meta">
-                {formatWhen(item.updatedAt)}
-                {item.messageCount > 0 && ` · ${item.messageCount} 条`}
-                {tokens && ` · ${tokens}`}
+                {!projectDir && (
+                  <>
+                    <span className="agent-history-item-project" title={item.projectDir}>
+                      {projectLabelFor(item.projectDir)}
+                    </span>
+                    {metaParts.length > 0 && ' · '}
+                  </>
+                )}
+                {metaParts.join(' · ')}
               </div>
             </div>
           );

@@ -203,6 +203,17 @@
   font-size: 10.5px;
 }
 
+/* 不限项目的列表中，行首用项目名区分会话来源。 */
+.agent-history-item-project {
+  display: inline-block;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
 .agent-history-empty {
   padding: 26px 12px;
   color: var(--text-tertiary);
