@@ -34,6 +34,7 @@ import './TerminalPanel.css';
 const TerminalInstance = lazy(() => import('./TerminalInstance').then(m => ({ default: m.TerminalInstance })));
 const TextEditor = lazy(() => import('../text-editor/TextEditor').then(m => ({ default: m.TextEditor })));
 const GitHistoryPage = lazy(() => import('../git/GitHistoryPage').then(m => ({ default: m.GitHistoryPage })));
+const GitChangesPage = lazy(() => import('../git/GitChangesPage').then(m => ({ default: m.GitChangesPage })));
 const ClaudeReplayPage = lazy(() => import('../claude-history/ReplayPage').then(m => ({ default: m.ReplayPage })));
 const AgentChatPage = lazy(() => import('../agent-chat/AgentChatPage').then(m => ({ default: m.AgentChatPage })));
 
@@ -42,6 +43,7 @@ export const TerminalPanel: FC = () => {
   const taskSummaries = useTaskSummaryStore(s => s.summaries);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
+  const gitChangesTab = useAppStore(s => s.gitChangesTab);
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
   const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
@@ -244,7 +246,7 @@ export const TerminalPanel: FC = () => {
   };
 
   const renderTerminalContent = () => {
-    if (splitMode === 'off' && sessions.length === 0 && !gitHistoryTab && !claudeReplayTab && agentTabs.length === 0) {
+    if (splitMode === 'off' && sessions.length === 0 && !gitHistoryTab && !gitChangesTab && !claudeReplayTab && agentTabs.length === 0) {
       return (
         <div className="terminal-empty">
           <SquareTerminal className="empty-icon" aria-hidden="true" />
@@ -292,7 +294,7 @@ export const TerminalPanel: FC = () => {
 
   return (
     <div className="terminal-panel">
-      {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab || claudeReplayTab || agentTabs.length > 0) && (
+      {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab || gitChangesTab || claudeReplayTab || agentTabs.length > 0) && (
         <TerminalTabBar />
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
@@ -303,6 +305,17 @@ export const TerminalPanel: FC = () => {
               <GitHistoryPage
                 repoRoot={gitHistoryTab.repoRoot}
                 branch={gitHistoryTab.branch}
+              />
+            </Suspense>
+          </div>
+        )}
+        {gitChangesTab && activeSpecialTab === 'git-changes' && (
+          <div className="git-history-tab-content">
+            <Suspense fallback={<div className="lazy-panel-loading">加载未提交变更…</div>}>
+              <GitChangesPage
+                key={gitChangesTab.repoRoot}
+                repoRoot={gitChangesTab.repoRoot}
+                branch={gitChangesTab.branch}
               />
             </Suspense>
           </div>

@@ -1222,6 +1222,11 @@ fn git_get_history_file_diff_impl(
     if file_path.is_empty() {
         return Err("文件路径不能为空".to_string());
     }
+    // 与工作区 diff 一致：只接受仓库内相对路径，绝对路径与 `..` 一律拒绝。
+    ensure_repo_relative_path(&file_path)?;
+    if let Some(old_path) = old_path.as_deref() {
+        ensure_repo_relative_path(old_path)?;
+    }
 
     let old_content = if status_code == "A" {
         String::new()
@@ -1249,6 +1254,106 @@ fn git_get_history_file_diff_impl(
         old_content,
         new_content,
         binary,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorktreeFileDiff {
+    path: String,
+    old_path: Option<String>,
+    old_content: String,
+    new_content: String,
+    binary: bool,
+}
+
+/// 工作区 diff 预览的文本上限：超过后按二进制处理，避免把大文件塞进 WebView。
+const MAX_WORKTREE_DIFF_BYTES: u64 = 2 * 1024 * 1024;
+
+fn looks_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8000).any(|byte| *byte == 0)
+}
+
+/// 拒绝绝对路径与 `..`，防止前端传入的状态路径越出仓库目录。
+fn ensure_repo_relative_path(file_path: &str) -> Result<(), String> {
+    let path = Path::new(file_path);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err("文件路径必须位于仓库内".to_string());
+    }
+    Ok(())
+}
+
+/// 读取工作区当前文件；已删除或非普通文件返回空内容。
+fn read_worktree_text(root: &Path, relative_path: &str) -> Result<(String, bool), String> {
+    let full_path = root.join(relative_path);
+    let metadata = match fs::metadata(&full_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((String::new(), false))
+        }
+        Err(error) => return Err(format!("读取文件信息失败：{error}")),
+    };
+    if !metadata.is_file() {
+        return Ok((String::new(), false));
+    }
+    if metadata.len() > MAX_WORKTREE_DIFF_BYTES {
+        return Ok((String::new(), true));
+    }
+    let bytes = fs::read(&full_path).map_err(|error| format!("读取文件失败：{error}"))?;
+    if looks_binary(&bytes) {
+        return Ok((String::new(), true));
+    }
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), false))
+}
+
+/// 未提交文件的完整内容对比：旧内容取 HEAD，新内容取工作区。
+/// 新增文件 / 空仓库时旧内容为空，已删除文件的新内容为空。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn git_get_worktree_file_diff(
+    path: String,
+    file_path: String,
+    old_path: Option<String>,
+) -> Result<GitWorktreeFileDiff, String> {
+    git_task(move || git_get_worktree_file_diff_impl(path, file_path, old_path)).await
+}
+
+fn git_get_worktree_file_diff_impl(
+    path: String,
+    file_path: String,
+    old_path: Option<String>,
+) -> Result<GitWorktreeFileDiff, String> {
+    let root = require_repo_root(&path)?;
+    let file_path = file_path.trim().to_string();
+    if file_path.is_empty() {
+        return Err("文件路径不能为空".to_string());
+    }
+    ensure_repo_relative_path(&file_path)?;
+    let old_path = old_path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let old_reference = old_path.as_deref().unwrap_or(file_path.as_str());
+    ensure_repo_relative_path(old_reference)?;
+
+    let (old_content, old_binary) = match git_show_revision_file(&root, "HEAD", old_reference) {
+        Ok(Some(text)) if looks_binary(text.as_bytes()) => (String::new(), true),
+        Ok(Some(text)) => (text, false),
+        // 新增文件或空仓库（HEAD 不存在）没有旧内容。
+        Ok(None) => (String::new(), false),
+        Err(_) => (String::new(), false),
+    };
+
+    let (new_content, new_binary) = read_worktree_text(&root, &file_path)?;
+
+    Ok(GitWorktreeFileDiff {
+        path: file_path,
+        old_path,
+        old_content,
+        new_content,
+        binary: old_binary || new_binary,
     })
 }
 
@@ -1520,7 +1625,8 @@ fn git_get_history_impl(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_push_args, drain_git_channel_until, push_log_args, GitDrainOutcome, GitPushOptions,
+        build_push_args, drain_git_channel_until, ensure_repo_relative_path, looks_binary,
+        push_log_args, GitDrainOutcome, GitPushOptions,
     };
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
@@ -1642,5 +1748,68 @@ mod tests {
         assert!(started.elapsed() >= Duration::from_millis(200));
         assert!(started.elapsed() < Duration::from_secs(5));
         drop(tx);
+    }
+
+    #[test]
+    fn worktree_diff_rejects_paths_outside_the_repository() {
+        assert!(ensure_repo_relative_path("src/main.ts").is_ok());
+        assert!(ensure_repo_relative_path("a/b/c.rs").is_ok());
+        assert!(ensure_repo_relative_path("../outside.txt").is_err());
+        assert!(ensure_repo_relative_path("a/../../outside.txt").is_err());
+        assert!(ensure_repo_relative_path("").is_ok());
+    }
+
+    #[test]
+    fn worktree_diff_detects_binary_content() {
+        assert!(!looks_binary(b"plain text\n"));
+        assert!(!looks_binary("中文内容".as_bytes()));
+        assert!(looks_binary(b"PNG\0rest"));
+        // 只检查开头 8000 字节，尾部 NUL 不影响文本判定。
+        let mut late_nul = vec![b'a'; 9000];
+        late_nul[8500] = 0;
+        assert!(!looks_binary(&late_nul));
+    }
+
+    /// 真实仓库里的工作区 diff：旧内容取 HEAD，新内容取工作区，未跟踪文件旧内容为空。
+    #[test]
+    #[cfg(unix)]
+    fn worktree_diff_reads_head_and_working_tree() {
+        use std::fs;
+        use std::process::Command;
+
+        let dir = std::env::temp_dir().join(format!("tb-worktree-diff-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let run_git = |args: &[&str]| {
+            let output = Command::new("git").args(args).current_dir(&dir).output().unwrap();
+            assert!(
+                output.status.success(),
+                "git {:?} 失败：{}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run_git(&["init", "-q"]);
+        run_git(&["config", "user.email", "test@example.com"]);
+        run_git(&["config", "user.name", "test"]);
+        fs::write(dir.join("a.txt"), "old\n").unwrap();
+        run_git(&["add", "."]);
+        run_git(&["commit", "-qm", "init"]);
+        fs::write(dir.join("a.txt"), "new\n").unwrap();
+        fs::write(dir.join("b.txt"), "untracked\n").unwrap();
+
+        let path = dir.to_string_lossy().to_string();
+        let modified =
+            super::git_get_worktree_file_diff_impl(path.clone(), "a.txt".to_string(), None).unwrap();
+        assert_eq!(modified.old_content, "old\n");
+        assert_eq!(modified.new_content, "new\n");
+        assert!(!modified.binary);
+
+        let added =
+            super::git_get_worktree_file_diff_impl(path, "b.txt".to_string(), None).unwrap();
+        assert_eq!(added.old_content, "");
+        assert_eq!(added.new_content, "untracked\n");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

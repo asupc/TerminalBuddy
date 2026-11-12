@@ -42,6 +42,9 @@ export interface GitHistoryTab {
 	branch: string;
 }
 
+/** 未提交变更页：与历史页同结构，但展示工作区文件列表与 diff。 */
+export type GitChangesTab = GitHistoryTab;
+
 export interface ClaudeReplayTab {
 	provider?: SessionHistoryProvider;
 	sessionId: string;
@@ -93,7 +96,7 @@ export const relayAgentTabKey = (terminalId: string) => `relay:${terminalId}`;
 
 export { sessionReplayTabKey } from '../utils/sessionHistory';
 
-export type WorkspaceSpecialTab = "git-history" | "claude-replay" | "agent-chat" | null;
+export type WorkspaceSpecialTab = "git-history" | "git-changes" | "claude-replay" | "agent-chat" | null;
 
 export type TerminalRuntimeKind = "shell" | "claude" | "codex";
 export type TerminalActivityPhase = "idle" | "running" | "attention" | "completed" | "failed";
@@ -377,6 +380,9 @@ export interface AppState {
 	gitHistoryTab: GitHistoryTab | null;
 	openGitHistoryTab: (tab: GitHistoryTab) => void;
 	closeGitHistoryTab: () => void;
+	gitChangesTab: GitChangesTab | null;
+	openGitChangesTab: (tab: GitChangesTab) => void;
+	closeGitChangesTab: () => void;
 	claudeReplayTab: ClaudeReplayTab | null;
 	claudeReplayTabs: ClaudeReplayTab[];
 	openClaudeReplayTab: (tab: ClaudeReplayTab) => void;

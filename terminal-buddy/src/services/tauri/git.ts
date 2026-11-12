@@ -151,6 +151,14 @@ export const listenGitPushOutput = (
     callback(payload.chunk);
   }
 });
+export interface GitWorktreeFileDiff {
+  path: string;
+  oldPath: string | null;
+  oldContent: string;
+  newContent: string;
+  binary: boolean;
+}
+
 export const gitGetChangedFiles = (path: string) =>
   invoke<GitChangedFile[]>('git_get_changed_files', { path });
 export const gitCommitPaths = (path: string, message: string, paths: string[]) =>
@@ -177,3 +185,7 @@ export const gitGetHistoryFileDiff = (
     statusCode,
     binary,
   });
+
+/** 未提交文件的完整内容对比：旧内容取 HEAD，新内容取工作区。 */
+export const gitGetWorktreeFileDiff = (path: string, filePath: string, oldPath: string | null) =>
+  invoke<GitWorktreeFileDiff>('git_get_worktree_file_diff', { path, filePath, oldPath });

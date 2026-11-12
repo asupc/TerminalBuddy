@@ -2,7 +2,7 @@ import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { FileText, X } from 'lucide-react';
-import { isTerminalWorking, useAppStore, sessionReplayTabKey, type NativeAgentTab } from '../../stores/appStore';
+import { isTerminalWorking, useAppStore, sessionReplayTabKey, type GitChangesTab, type NativeAgentTab } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWidth, getBackendAppSettings, writeFileContent, readFileContent } from '../../services/tauri';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -41,7 +41,8 @@ interface TabSidebarProps {
  */
 type SessionLeaf =
   | { kind: 'terminal'; session: TerminalSession }
-  | { kind: 'agent'; tab: NativeAgentTab };
+  | { kind: 'agent'; tab: NativeAgentTab }
+  | { kind: 'git-changes'; tab: GitChangesTab };
 
 export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor, onAddProfile }) => {
   const sessions = useAppStore(s => s.sessions);
@@ -52,6 +53,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
+  const gitChangesTab = useAppStore(s => s.gitChangesTab);
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
   const claudeReplayTabs = useAppStore(s => s.claudeReplayTabs);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
@@ -195,11 +197,16 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     const terminalSessions = sessions.filter(s => s.sessionType !== 'editor');
     const nativeTabs = agentTabs.filter(tab => tab.shape === 'native');
     const leaves: SessionLeaf[] = [
+      // 未提交变更页属于某个项目，跟着项目分组一起展示，而不是固定在分组外。
+      ...(gitChangesTab ? [{ kind: 'git-changes' as const, tab: gitChangesTab }] : []),
       ...terminalSessions.map(session => ({ kind: 'terminal' as const, session })),
       ...nativeTabs.map(tab => ({ kind: 'agent' as const, tab })),
     ];
 
     const tree = buildGroupTree(leaves, leaf => {
+      if (leaf.kind === 'git-changes') {
+        return projectForDirectory(projects, leaf.tab.repoRoot)?.name || '默认';
+      }
       if (leaf.kind === 'agent') {
         // 原生会话记录的是项目目录；与终端一致，用已登记项目名作为分组。
         return projectForDirectory(projects, leaf.tab.projectPath)?.name || '默认';
@@ -229,6 +236,14 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
         children: [
           ...toTreeItems(node.children),
           ...node.items.map(leaf => {
+            if (leaf.kind === 'git-changes') {
+              return {
+                id: '__git_changes__',
+                label: '未提交变更',
+                icon: <span className="tab-nav-dot" style={{ background: '#55b988' }} />,
+                data: { kind: 'git-changes' as const, tab: leaf.tab },
+              };
+            }
             if (leaf.kind === 'agent') {
               const tab = leaf.tab;
               const light = getNativeAgentLight(tab.status);
@@ -332,7 +347,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     }
 
     return items;
-  }, [sessions, agentTabs, projects, profiles, tabGroups, terminalActivities, settingsVersion, taskSummaries]);
+  }, [sessions, agentTabs, projects, profiles, tabGroups, terminalActivities, settingsVersion, taskSummaries, gitChangesTab]);
 
   // Mirror the project/profile grouping in the configuration navigation.
   const submenuTree = useMemo(() => {
@@ -609,7 +624,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlightedIndex]);
 
-  if (sessions.length === 0 && !gitHistoryTab && claudeReplayTabs.length === 0 && agentTabs.length === 0) return null;
+  if (sessions.length === 0 && !gitHistoryTab && !gitChangesTab && claudeReplayTabs.length === 0 && agentTabs.length === 0) return null;
 
   // 终端接力标签是终端的对话视图，终端本身已在项目分组里；这里只保留接力标签的独立入口。
   const relayAgentTabs = agentTabs.filter(tab => tab.shape === 'relay');

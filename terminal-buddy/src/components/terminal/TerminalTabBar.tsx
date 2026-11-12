@@ -1,6 +1,6 @@
 import { terminalTabTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
-import { FileText, GitBranch, History, SquareTerminal, X } from 'lucide-react';
+import { FileDiff, FileText, GitBranch, History, SquareTerminal, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
@@ -26,6 +26,9 @@ export const TerminalTabBar: FC = () => {
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
+  const gitChangesTab = useAppStore(s => s.gitChangesTab);
+  const openGitChangesTab = useAppStore(s => s.openGitChangesTab);
+  const closeGitChangesTab = useAppStore(s => s.closeGitChangesTab);
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
   const claudeReplayTabs = useAppStore(s => s.claudeReplayTabs);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
@@ -391,6 +394,32 @@ export const TerminalTabBar: FC = () => {
             title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>
         </div>
       ))}
+      {gitChangesTab && (
+        <div
+          className={`terminal-tab ${activeSpecialTab === 'git-changes' ? 'active' : ''}`}
+          onClick={() => openGitChangesTab(gitChangesTab)}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              closeGitChangesTab();
+            }
+          }}
+          onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+          title={`${gitChangesTab.repoRoot} - 未提交变更`}
+        >
+          <FileDiff className="terminal-tab-history-icon" aria-hidden="true" />
+          <span className="terminal-tab-name">未提交变更</span>
+          <button
+            className="terminal-tab-close"
+            onClick={(e) => {
+              e.stopPropagation();
+              closeGitChangesTab();
+            }}
+            title="关闭"
+            aria-label="关闭未提交变更"
+          ><X aria-hidden="true" /></button>
+        </div>
+      )}
       {gitHistoryTab && (
         <div
           className={`terminal-tab ${activeSpecialTab === 'git-history' ? 'active' : ''}`}

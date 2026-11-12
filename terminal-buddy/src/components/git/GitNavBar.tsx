@@ -38,6 +38,7 @@ export interface GitNavBarHandle {
 export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
   ({ currentDirectory, showToolbar = true, onRepositoryChanged }, ref) => {
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
+  const openGitChangesTab = useAppStore(s => s.openGitChangesTab);
   const initialCachedStatus = getCachedGitRepositoryStatus(currentDirectory, { exact: true });
   const initialStatus = initialCachedStatus?.status;
   const [status, setStatus] = useState<GitRepositoryStatus | null>(initialStatus
@@ -748,12 +749,14 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
         <span className="git-branch-name">{status.branch}</span>
       </button>
       {hasChanges && (
-        <span
+        <button
+          type="button"
           className="git-change-badge"
-          title={`变更 ${status.changedCount}，已暂存 ${status.stagedCount}，未暂存 ${status.unstagedCount}，未跟踪 ${status.untrackedCount}`}
+          title={`变更 ${status.changedCount}，已暂存 ${status.stagedCount}，未暂存 ${status.unstagedCount}，未跟踪 ${status.untrackedCount} · 点击查看变更文件`}
+          onClick={() => openGitChangesTab({ repoRoot: status.repoRoot, branch: status.branch })}
         >
           {status.changedCount}
-        </span>
+        </button>
       )}
       {(action || lastOperation === 'pull' || lastOperation === 'push' || lastOperation === 'commit') && (
         <button type="button" className="git-operation-status" onClick={showOperationDialog} title="查看 Git 操作进度或上次结果">

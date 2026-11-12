@@ -57,6 +57,7 @@ export const createProfilesSlice = (
 	settingsDialogOpen: false,
 	settingsDialogSection: null,
 	gitHistoryTab: null,
+	gitChangesTab: null,
 	claudeReplayTab: null,
 	claudeReplayTabs: [],
 	activeSpecialTab: null,
@@ -67,6 +68,12 @@ export const createProfilesSlice = (
 		set((state) => ({
 			gitHistoryTab: null,
 			activeSpecialTab: state.activeSpecialTab === "git-history" ? null : state.activeSpecialTab,
+		})),
+	openGitChangesTab: (tab) => set({ gitChangesTab: tab, activeSpecialTab: "git-changes" }),
+	closeGitChangesTab: () =>
+		set((state) => ({
+			gitChangesTab: null,
+			activeSpecialTab: state.activeSpecialTab === "git-changes" ? null : state.activeSpecialTab,
 		})),
 	openClaudeReplayTab: (tab) => set((state) => ({
 		claudeReplayTabs: state.claudeReplayTabs.some(item => sessionReplayTabKey(item) === sessionReplayTabKey(tab))
