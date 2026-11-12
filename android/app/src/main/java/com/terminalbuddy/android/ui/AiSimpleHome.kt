@@ -69,7 +69,6 @@ internal fun AiSimpleHome(
     terminalUi: ServerTerminalUiState, terminalVm: ServerTerminalViewModel,
     agentUi: TerminalAgentUiState, agentVm: TerminalAgentViewModel,
     openAgent: (TerminalAgentSession) -> Unit,
-    startAgent: (agent: String, providerId: String, modelId: String, projectPath: String, projectName: String) -> Unit,
     profile: () -> Unit, accounts: () -> Unit, delete: (AiSession) -> Unit,
 ) {
     var tab by rememberSaveable(ui.activeAccountId) { mutableStateOf(SimpleHomeTab.Opened) }
@@ -148,12 +147,8 @@ internal fun AiSimpleHome(
                     val provider = ui.launchProvider
                     val model = ui.launchModel
                     if (project != null && provider != null && model != null && ui.canCreate) {
-                        // 与桌面端共用「新会话形态」设置：原生会话走聊天页，终端接力沿用 PTY 启动。
-                        if (terminalUi.nativeChatSessions) {
-                            vm.create()
-                        } else {
-                            startAgent(provider.agent, provider.id, model.id, project.path, project.name)
-                        }
+                        // 安卓端创建会话固定走原生会话，不跟随电脑端「新会话形态」设置。
+                        vm.create()
                     }
                 })
             }

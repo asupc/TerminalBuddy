@@ -23,8 +23,6 @@ internal data class ServerTerminalUiState(
     val launchingId: String? = null,
     // 简版「开始对话」：按所选 Agent 创建服务端终端，与项目配置启动共用 actionJob 但状态独立。
     val launchingAgent: Boolean = false, val agentLaunchError: String? = null,
-    /** 服务端「新会话形态」设置：true = 原生会话（默认），false = 终端接力。 */
-    val nativeChatSessions: Boolean = true,
     val selected: ServerTerminal? = null,
     val connected: Boolean = false, val status: String = "等待连接",
     val terminalError: String? = null, val ended: Boolean = false, val closing: Boolean = false,
@@ -40,7 +38,6 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
     private var streamGeneration = 0
     private var refreshJob: Job? = null
     private var actionJob: Job? = null
-    private var runtimeJob: Job? = null
     private var retryJob: Job? = null
     private var socket: WebSocket? = null
     private var visible = false
@@ -64,7 +61,6 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
         generation++
         refreshJob?.cancel()
         actionJob?.cancel()
-        runtimeJob?.cancel()
         disconnect()
         visible = false
         renderer = null
@@ -84,22 +80,7 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
     }
 
     fun refresh() {
-        loadRuntimeInfo()
         refreshCatalog(clearError = true)
-    }
-
-    /**
-     * 读取服务端「新会话形态」：简版「开始对话」据此决定走原生会话还是终端接力。
-     * 与账号绑定 / 下拉刷新一起触发，设置改动后重新进入首页即可生效。
-     */
-    private fun loadRuntimeInfo() {
-        val connection = mutable.value.connection ?: return
-        if (runtimeJob?.isActive == true) return
-        val epoch = generation
-        runtimeJob = viewModelScope.launch {
-            val runtime = runCatching { repository.runtimeInfo(connection) }.getOrNull() ?: return@launch
-            if (epoch == generation) mutable.update { it.copy(nativeChatSessions = runtime.nativeChatSessions) }
-        }
     }
 
     private fun refreshCatalog(clearError: Boolean) {

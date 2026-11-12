@@ -23,7 +23,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.delay
 import com.terminalbuddy.android.ServerTerminalViewModel
 import com.terminalbuddy.android.TerminalAgentViewModel
 import com.terminalbuddy.android.AiUiState
@@ -67,9 +66,6 @@ fun AiScreen(
     var sendModeSheet by rememberSaveable { mutableStateOf(false) }
     /** 终端 Agent 会话宿主的选中态：优先于普通终端分支；返回时由宿主按页签清理。 */
     var selectedAgentTerminalId by rememberSaveable { mutableStateOf<String?>(null) }
-    /** 新会话刚创建的终端：Agent 绑定尚未被服务端发现，期间持续刷新列表而不是直接退出宿主。 */
-    var pendingAgentTerminalId by rememberSaveable { mutableStateOf<String?>(null) }
-    var pendingAgentStartedAt by rememberSaveable { mutableLongStateOf(0L) }
     val deletableCount = ui.sessions.count { !it.running }
     val openConnection: (String?, Boolean, Boolean) -> Unit = { id, adding, fromAccounts ->
         loginAccountId = id
@@ -89,59 +85,15 @@ fun AiScreen(
         agentVm.leaveSession()
         agentVm.refresh()
         selectedAgentTerminalId = null
-        pendingAgentTerminalId = null
-    }
-    /**
-     * 简版「开始对话」：在服务端开真实终端后**立即**进入会话页，不等 Agent 启动完成。
-     * 用户在启动态就能输入需求（进待发队列），绑定被发现后自动切到实时镜像并发出队列。
-     */
-    val startAgent: (String, String, String, String, String) -> Unit = { agent, providerId, modelId, projectPath, projectName ->
-        terminalVm.launchAgent(agent, providerId, modelId, projectPath, projectName) { terminal ->
-            pendingAgentTerminalId = terminal.id
-            pendingAgentStartedAt = System.currentTimeMillis()
-            selectedAgentTerminalId = terminal.id
-            agentVm.openStartingSession(
-                terminalId = terminal.id,
-                provider = agent,
-                displayName = projectName.ifBlank { terminal.profileName },
-                directory = projectPath.ifBlank { terminal.directory },
-                terminalType = terminal.terminalType,
-            )
-        }
     }
     // 进程或页面重建后按选中的 terminalId 重新打开会话；列表刷新后目标消失则退出宿主。
-    // 启动态下按 1 秒节奏刷新列表等绑定出现；超时不再退出页面，而是保留会话页并提示
-    // （用户已输入的内容留在队列里，可继续在终端页查看启动过程）。
-    LaunchedEffect(selectedAgentTerminalId, pendingAgentTerminalId, agentUi.starting, agentUi.listLoaded, agentUi.listLoading, agentUi.sessions, agentUi.connection) {
+    LaunchedEffect(selectedAgentTerminalId, agentUi.listLoaded, agentUi.listLoading, agentUi.sessions, agentUi.connection) {
         val id = selectedAgentTerminalId ?: return@LaunchedEffect
-        if (agentUi.selected?.terminalId == id && !agentUi.starting) {
-            pendingAgentTerminalId = null
-            return@LaunchedEffect
-        }
+        if (agentUi.selected?.terminalId == id) return@LaunchedEffect
         val session = agentUi.sessions.find { it.terminalId == id }
         when {
-            session != null -> {
-                pendingAgentTerminalId = null
-                agentVm.openSession(session)
-            }
+            session != null -> agentVm.openSession(session)
             agentUi.listLoading -> Unit
-            pendingAgentTerminalId == id || agentUi.starting -> {
-                if (System.currentTimeMillis() - pendingAgentStartedAt >= 45_000L) {
-                    pendingAgentTerminalId = null
-                    if (agentUi.starting) {
-                        // 启动很慢不是失败：保留会话页与已输入内容，继续每秒刷新，
-                        // 绑定一旦出现就自动接管并发出队列。
-                        agentVm.reportStartError("Agent 启动较慢，可继续输入（就绪后自动发送），或切到终端页查看启动过程。")
-                    } else {
-                        selectedAgentTerminalId = null
-                        terminalVm.reportAgentLaunchTimeout()
-                        terminalVm.state.value.terminals.find { it.id == id }?.let(terminalVm::openView)
-                        return@LaunchedEffect
-                    }
-                }
-                delay(1_000)
-                agentVm.refresh()
-            }
             // 拉取失败不自动重试（避免 listLoading 变化反复重启本 effect 形成忙循环），交给错误卡手动重试。
             agentUi.listLoaded -> selectedAgentTerminalId = null
             agentUi.listError == null -> agentVm.refresh()
@@ -159,7 +111,6 @@ fun AiScreen(
             if (terminalUi.selected != null) terminalVm.leaveTerminal()
             agentVm.leaveSession()
             selectedAgentTerminalId = null
-            pendingAgentTerminalId = null
         }
     }
     // 切换界面模式时回到首页，避免旧页面状态落在一个已经不存在的 Tab 上。
@@ -170,7 +121,6 @@ fun AiScreen(
             if (terminalUi.selected != null) terminalVm.leaveTerminal()
             agentVm.leaveSession()
             selectedAgentTerminalId = null
-            pendingAgentTerminalId = null
         }
         onSimplifiedChange(simple)
     }
@@ -246,10 +196,8 @@ fun AiScreen(
                 agentUi = agentUi, agentVm = agentVm,
                 openAgent = { session ->
                     selectedAgentTerminalId = session.terminalId
-                    pendingAgentTerminalId = null
                     agentVm.openSession(session)
                 },
-                startAgent = startAgent,
                 profile = { page = AiPage.Profile }, accounts = openAccounts, delete = { deleting = it })
         }
     } else {
@@ -278,7 +226,6 @@ fun AiScreen(
                                 agentUi = agentUi, agentVm = agentVm,
                                 openAgent = { session ->
                                     selectedAgentTerminalId = session.terminalId
-                                    pendingAgentTerminalId = null
                                     agentVm.openSession(session)
                                 })
                             AiHomeTab.Profile -> AiProfileScreen(ui,
