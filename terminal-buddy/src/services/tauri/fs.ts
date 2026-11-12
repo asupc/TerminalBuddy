@@ -6,7 +6,8 @@ export interface FileNode {
   path: string;
   is_directory: boolean;
   size: number;
-  lastModified: number;
+  // 后端 FileNode 是 snake_case（见 AGENTS.md），与 is_directory 保持一致。
+  last_modified: number;
 }
 
 export async function listDirectory(path: string, exclusions?: string[]): Promise<FileNode[]> {

@@ -110,7 +110,7 @@ function compareEntries(a: FileNode, b: FileNode, sortBy: SortBy, sortDir: SortD
   if (a.is_directory !== b.is_directory) return a.is_directory ? -1 : 1;
   const direction = sortDir === 'asc' ? 1 : -1;
   if (sortBy === 'modified') {
-    if (a.lastModified !== b.lastModified) return (a.lastModified - b.lastModified) * direction;
+    if (a.last_modified !== b.last_modified) return (a.last_modified - b.last_modified) * direction;
   } else if (sortBy === 'size') {
     const sizeA = a.is_directory ? 0 : a.size;
     const sizeB = b.is_directory ? 0 : b.size;
@@ -413,8 +413,15 @@ export function FileManagerDialog({ open, initialPath, onClose }: FileManagerDia
       event.preventDefault();
       addressRef.current?.focus();
       addressRef.current?.select();
+      return;
     }
-  }, [activate, goUp, refresh, selectAndReveal, selectedEntry, selectedPath, visibleEntries]);
+    // Ctrl+C 复制选中项的全路径；没有选中项时复制当前目录。
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') {
+      event.preventDefault();
+      const target = selectedEntry?.path ?? currentPath;
+      if (target) void copyPathToClipboard(target);
+    }
+  }, [activate, copyPathToClipboard, currentPath, goUp, refresh, selectAndReveal, selectedEntry, selectedPath, visibleEntries]);
 
   const sortIndicator = (column: SortBy) => (sortBy === column ? (sortDir === 'asc' ? '↑' : '↓') : '');
 
@@ -561,7 +568,7 @@ export function FileManagerDialog({ open, initialPath, onClose }: FileManagerDia
                     />
                     <span className="file-manager-name-text" title={node.name}>{node.name}</span>
                   </span>
-                  <span className="file-manager-cell file-manager-column-modified">{formatModified(node.lastModified)}</span>
+                  <span className="file-manager-cell file-manager-column-modified">{formatModified(node.last_modified)}</span>
                   <span className="file-manager-cell file-manager-column-type">{typeLabel(node)}</span>
                   <span className="file-manager-cell file-manager-column-size">
                     {node.is_directory ? '—' : formatSize(node.size)}

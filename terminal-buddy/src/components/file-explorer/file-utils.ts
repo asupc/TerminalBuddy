@@ -37,7 +37,7 @@ export function compareNodes(a: FileNode, b: FileNode, sortBy: 'name' | 'size' |
     return a.name.localeCompare(b.name);
   }
   if (sortBy === 'modified') {
-    if (a.lastModified !== b.lastModified) return (a.lastModified - b.lastModified) * dir;
+    if (a.last_modified !== b.last_modified) return (a.last_modified - b.last_modified) * dir;
     return a.name.localeCompare(b.name);
   }
   return a.name.localeCompare(b.name) * dir;

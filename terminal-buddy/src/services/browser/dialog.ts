@@ -13,6 +13,14 @@ function withinRoot(path: string, root: string): boolean {
   const base = pathKey(root);
   return key === base || key.startsWith(base.endsWith('/') ? base : base + '/');
 }
+/** 上一级目录；到达文件系统根（POSIX `/`、Windows 盘根、UNC 共享根）时返回 null。 */
+function parentOf(path: string): string | null {
+  const key = pathKey(path);
+  if (key === '/' || /^[a-z]:\/$/.test(key) || /^\/\/[^/]+\/[^/]+$/.test(key)) return null;
+  const parent = key.replace(/\/[^/]+$/, '');
+  if (!parent) return '/';
+  return /^[a-z]:$/.test(parent) ? `${parent}/` : parent;
+}
 
 async function choose(options: Options, saving: boolean): Promise<string | string[] | null> {
   const browsingDirectories = Boolean(options.directory && !saving);
@@ -61,9 +69,10 @@ async function choose(options: Options, saving: boolean): Promise<string | strin
       else if (selected.size) close(Array.from(selected));
     });
     const showParent = (path: string) => {
-      if (pathKey(path) === pathKey(rootSelect.value)) return;
-      const parent = path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
-      list.append(button('↑ 上一级', () => { void load(parent && withinRoot(parent, rootSelect.value) ? parent : rootSelect.value); }));
+      // 浏览不限制在入口目录内：可以逐级向上直到文件系统根。
+      const parent = parentOf(path);
+      if (parent === null) return;
+      list.append(button('↑ 上一级', () => { void load(parent); }));
     };
     const load = async (path: string) => {
       const revision = ++generation;
