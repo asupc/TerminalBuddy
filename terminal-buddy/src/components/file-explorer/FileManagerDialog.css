@@ -426,6 +426,53 @@
   text-overflow: ellipsis;
 }
 
+/* 右键菜单通过 portal 挂到 body，层级高于文件管理弹窗。 */
+.file-manager-context-menu {
+  min-width: 168px;
+  font-size: 12px;
+}
+
+.file-manager-context-menu .context-menu-item {
+  min-height: 26px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.file-manager-rename-dialog {
+  width: min(460px, calc(100vw - 48px));
+}
+
+.file-manager-rename-label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.file-manager-rename-label input {
+  height: var(--control-height-md);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.file-manager-rename-label input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.file-manager-rename-target {
+  margin-top: 10px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 720px) {
   .file-manager-dialog {
     --file-manager-grid: minmax(0, 1fr);

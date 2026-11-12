@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   ArrowRight,
@@ -16,9 +17,12 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import { Dialog } from '../shared/Dialog';
-import { listDirectory, openInExplorer, openPath, type FileNode } from '../../services/tauri';
+import { ConfirmDialog, Dialog } from '../shared/Dialog';
+import { deletePath, listDirectory, openInExplorer, openPath, renamePath, type FileNode } from '../../services/tauri';
+import { canDownloadToBrowser, downloadToBrowser } from '../../services/fileDownload';
 import { supportsSystemExplorerOpen } from '../../services/platform';
+import { openTerminalInDir } from '../../utils/openTerminalInDir';
+import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { normalizeConfiguredPath } from './file-utils';
 import { useAppStore } from '../../stores/appStore';
 import './FileManagerDialog.css';
@@ -140,11 +144,15 @@ export function FileManagerDialog({ open, initialPath, onClose }: FileManagerDia
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; node: FileNode | null } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<FileNode | null>(null);
+  const [renaming, setRenaming] = useState<{ node: FileNode; value: string } | null>(null);
 
   const loadTokenRef = useRef(0);
   const wasOpenRef = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
+  const ctxMenuRef = useRef<HTMLDivElement>(null);
   const showToast = useAppStore(s => s.showToast);
 
   const currentPath = nav.stack[nav.index] ?? '';
@@ -234,22 +242,27 @@ export function FileManagerDialog({ open, initialPath, onClose }: FileManagerDia
     if (currentPath) void loadDirectory(currentPath);
   }, [currentPath, loadDirectory]);
 
-  const copyPath = useCallback(async () => {
+  const copyPathToClipboard = useCallback(async (path: string, label = '已复制路径') => {
     try {
-      await navigator.clipboard.writeText(currentPath);
-      showToast('已复制路径', 'success');
+      await navigator.clipboard.writeText(path);
+      showToast(label, 'success');
     } catch {
-      showToast(`路径：${currentPath}`, 'info');
+      showToast(`路径：${path}`, 'info');
     }
-  }, [currentPath, showToast]);
+  }, [showToast]);
 
-  const revealInExplorer = useCallback(async () => {
+  const copyPath = useCallback(() => copyPathToClipboard(currentPath), [copyPathToClipboard, currentPath]);
+
+  const revealPath = useCallback(async (path: string) => {
+    setCtxMenu(null);
     try {
-      await openInExplorer(currentPath);
+      await openInExplorer(path);
     } catch (err) {
       showToast(`无法打开系统文件管理器：${err instanceof Error ? err.message : String(err)}`, 'error');
     }
-  }, [currentPath, showToast]);
+  }, [showToast]);
+
+  const revealInExplorer = useCallback(() => { void revealPath(currentPath); }, [currentPath, revealPath]);
 
   const activate = useCallback(async (node: FileNode) => {
     if (node.is_directory) {
@@ -263,6 +276,82 @@ export function FileManagerDialog({ open, initialPath, onClose }: FileManagerDia
     }
   }, [navigate, showToast]);
 
+  const openNode = useCallback((node: FileNode) => {
+    setCtxMenu(null);
+    void activate(node);
+  }, [activate]);
+
+  const openTerminalAt = useCallback(async (dir: string) => {
+    setCtxMenu(null);
+    try {
+      await openTerminalInDir(dir);
+    } catch (err) {
+      showToast(`无法打开终端：${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  }, [showToast]);
+
+  const startRename = useCallback((node: FileNode) => {
+    setCtxMenu(null);
+    setRenaming({ node, value: node.name });
+  }, []);
+
+  const submitRename = useCallback(async () => {
+    if (!renaming) return;
+    const name = renaming.value.trim();
+    if (!name || name === renaming.node.name) {
+      setRenaming(null);
+      return;
+    }
+    try {
+      await renamePath(renaming.node.path, name);
+      const separator = currentPath.includes('\\') ? '\\' : '/';
+      const base = /[\\/]$/.test(currentPath) ? currentPath : `${currentPath}${separator}`;
+      setRenaming(null);
+      refresh();
+      setSelectedPath(`${base}${name}`);
+    } catch (err) {
+      showToast(`重命名失败：${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  }, [currentPath, refresh, renaming, showToast]);
+
+  const confirmDeleteNode = useCallback(async () => {
+    if (!confirmDelete) return;
+    const target = confirmDelete;
+    setConfirmDelete(null);
+    try {
+      await deletePath(target.path);
+      setSelectedPath(current => current === target.path ? null : current);
+      refresh();
+    } catch (err) {
+      showToast(`删除失败：${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  }, [confirmDelete, refresh, showToast]);
+
+  // 菜单通过 portal 挂到 body：弹窗内部的 transform 会让 fixed 元素相对弹窗定位。
+  useLayoutEffect(() => {
+    if (!ctxMenu) return;
+    const menu = ctxMenuRef.current;
+    if (!menu) return;
+    const rect = menu.getBoundingClientRect();
+    const next = fitContextMenuToViewport(ctxMenu.x, ctxMenu.y, rect.width, rect.height);
+    if (next.x !== ctxMenu.x || next.y !== ctxMenu.y) {
+      setCtxMenu(current => (current ? { ...current, ...next } : current));
+    }
+  }, [ctxMenu]);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    document.addEventListener('click', close);
+    document.addEventListener('wheel', close);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('click', close);
+      document.removeEventListener('wheel', close);
+      window.removeEventListener('resize', close);
+    };
+  }, [ctxMenu]);
+
   const visibleEntries = useMemo(() => {
     const keyword = filterQuery.trim().toLowerCase();
     const filtered = keyword
@@ -274,6 +363,7 @@ export function FileManagerDialog({ open, initialPath, onClose }: FileManagerDia
   const selectedEntry = selectedPath
     ? visibleEntries.find(entry => entry.path === selectedPath) ?? null
     : null;
+  const ctxMenuNode = ctxMenu?.node ?? null;
 
   const toggleSort = useCallback((next: SortBy) => {
     if (next === sortBy) {
@@ -426,6 +516,15 @@ export function FileManagerDialog({ open, initialPath, onClose }: FileManagerDia
           role="listbox"
           aria-label="文件列表"
           onKeyDown={handleListKeyDown}
+          onContextMenu={event => {
+            event.preventDefault();
+            const row = (event.target as HTMLElement).closest<HTMLElement>('[data-file-path]');
+            const path = row?.dataset.filePath;
+            const node = path ? visibleEntries.find(entry => entry.path === path) ?? null : null;
+            if (node) selectAndReveal(node.path);
+            else setSelectedPath(null);
+            setCtxMenu({ x: event.clientX, y: event.clientY, node });
+          }}
         >
           {loading && entries.length === 0 ? (
             <div className="file-manager-state">
@@ -483,6 +582,121 @@ export function FileManagerDialog({ open, initialPath, onClose }: FileManagerDia
           <span className="file-manager-footer-hint">双击打开 · Alt+↑ 上一级 · Ctrl+L 定位路径</span>
         </div>
       </div>
+
+      {ctxMenu && createPortal(
+        <div
+          ref={ctxMenuRef}
+          className="context-menu file-manager-context-menu"
+          style={{ left: ctxMenu.x, top: ctxMenu.y, zIndex: 11000 }}
+          onContextMenu={event => event.preventDefault()}
+        >
+          {ctxMenuNode ? (
+            <>
+              <div className="context-menu-item" onClick={() => openNode(ctxMenuNode)}>打开</div>
+              {ctxMenuNode.is_directory && (
+                <div className="context-menu-item" onClick={() => void openTerminalAt(ctxMenuNode.path)}>
+                  在当前目录打开命令窗口
+                </div>
+              )}
+              {supportsSystemExplorerOpen() && (
+                <div className="context-menu-item" onClick={() => void revealPath(ctxMenuNode.path)}>
+                  在文件资源管理器中显示
+                </div>
+              )}
+              {canDownloadToBrowser() && (
+                <div
+                  className="context-menu-item"
+                  onClick={() => { setCtxMenu(null); downloadToBrowser(ctxMenuNode.path); }}
+                >
+                  {ctxMenuNode.is_directory ? '下载文件夹（ZIP）' : '下载'}
+                </div>
+              )}
+              <div className="context-menu-separator" />
+              <div className="context-menu-item" onClick={() => void copyPathToClipboard(ctxMenuNode.path)}>
+                复制路径
+              </div>
+              <div className="context-menu-item" onClick={() => startRename(ctxMenuNode)}>重命名</div>
+              <div
+                className="context-menu-item danger"
+                onClick={() => { setConfirmDelete(ctxMenuNode); setCtxMenu(null); }}
+              >
+                删除
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="context-menu-item" onClick={() => { setCtxMenu(null); refresh(); }}>刷新</div>
+              <div className="context-menu-separator" />
+              <div className="context-menu-item" onClick={() => void openTerminalAt(currentPath)}>
+                在当前目录打开命令窗口
+              </div>
+              {supportsSystemExplorerOpen() && (
+                <div className="context-menu-item" onClick={() => void revealPath(currentPath)}>
+                  在文件资源管理器中显示
+                </div>
+              )}
+              {canDownloadToBrowser() && (
+                <div
+                  className="context-menu-item"
+                  onClick={() => { setCtxMenu(null); downloadToBrowser(currentPath); }}
+                >
+                  下载文件夹（ZIP）
+                </div>
+              )}
+              <div className="context-menu-item" onClick={() => void copyPathToClipboard(currentPath, '已复制当前路径')}>
+                复制当前路径
+              </div>
+            </>
+          )}
+        </div>,
+        document.body,
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="确认删除"
+          message={`确定删除 "${confirmDelete.path}" 吗？此操作不可撤销。`}
+          onClose={() => setConfirmDelete(null)}
+          onConfirm={() => void confirmDeleteNode()}
+        />
+      )}
+
+      {renaming && (
+        <Dialog
+          title="重命名"
+          onClose={() => setRenaming(null)}
+          className="file-manager-rename-dialog"
+          autoFocus={false}
+          onSubmit={event => {
+            event.preventDefault();
+            void submitRename();
+          }}
+          footer={(
+            <>
+              <button type="button" className="btn-secondary" onClick={() => setRenaming(null)}>取消</button>
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={!renaming.value.trim() || renaming.value.trim() === renaming.node.name}
+              >
+                确定
+              </button>
+            </>
+          )}
+        >
+          <label className="file-manager-rename-label">
+            <span>新名称</span>
+            <input
+              autoFocus
+              value={renaming.value}
+              onChange={event => setRenaming(current => (current ? { ...current, value: event.target.value } : current))}
+              onFocus={event => event.currentTarget.select()}
+              spellCheck={false}
+            />
+          </label>
+          <div className="file-manager-rename-target" title={renaming.node.path}>{renaming.node.path}</div>
+        </Dialog>
+      )}
     </Dialog>
   );
 }
