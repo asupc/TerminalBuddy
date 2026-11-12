@@ -1,5 +1,6 @@
 import { FormEvent, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { CircleSlash2, GitBranch as GitBranchIcon, TriangleAlert } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { CircleSlash2, GitBranch as GitBranchIcon, RefreshCw, TriangleAlert } from 'lucide-react';
 import {
   gitCheckoutBranch,
   gitCommitPaths,
@@ -36,7 +37,8 @@ export interface GitNavBarHandle {
 }
 
 export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
-  ({ currentDirectory, showToolbar = true, onRepositoryChanged }, ref) => {
+  ({ currentDirectory, showToolbar = true, onRepositoryChanged, variant = 'panel' }, ref) => {
+  const isStatusBar = variant === 'statusbar';
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const openGitChangesTab = useAppStore(s => s.openGitChangesTab);
   const initialCachedStatus = getCachedGitRepositoryStatus(currentDirectory, { exact: true });
@@ -69,6 +71,9 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
   const lastStatusRef = useRef(status);
   if (status) lastStatusRef.current = status;
   const rootRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  /** 状态栏模式下分支浮层的锚点（浮层 portal 到 body，向上弹出）。 */
+  const [popoverAnchor, setPopoverAnchor] = useState<{ left: number; bottom: number } | null>(null);
   const pushLogRef = useRef<HTMLPreElement>(null);
   const currentDirectoryRef = useRef(currentDirectory);
   currentDirectoryRef.current = currentDirectory;
@@ -119,7 +124,8 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
     if (!popover) return;
 
     const handlePointerDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
         setPopover(null);
       }
     };
@@ -434,7 +440,18 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
 
   const loadBranches = useCallback(async () => {
     if (!status || getGitOperation(status.repoRoot)) return;
-    setPopover((current) => current === 'branches' ? null : 'branches');
+    const nextOpen = popover !== 'branches';
+    if (nextOpen && isStatusBar) {
+      // 状态栏在窗口底部，浮层固定定位到状态栏上方，避免被 overflow: hidden 裁剪。
+      const rect = rootRef.current?.getBoundingClientRect();
+      setPopoverAnchor(rect
+        ? {
+            left: Math.max(8, Math.min(rect.left, window.innerWidth - 228)),
+            bottom: Math.max(8, window.innerHeight - rect.top + 4),
+          }
+        : null);
+    }
+    setPopover(nextOpen ? 'branches' : null);
     setBranchesLoading(true);
     setBranches([]);
     try {
@@ -444,7 +461,7 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
     } finally {
       setBranchesLoading(false);
     }
-  }, [status]);
+  }, [isStatusBar, popover, status]);
 
   const loadHistory = useCallback(async () => {
     if (!status || getGitOperation(status.repoRoot)) return;
@@ -709,6 +726,8 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
   if (!showToolbar) return <>{operationDialogs}</>;
 
   if (!status) {
+    // 状态栏不展示“不是仓库/加载中”的占位，只保留可能仍在进行中的操作弹窗。
+    if (isStatusBar) return <>{operationDialogs}</>;
     const state = !currentDirectory
         ? { kind: 'empty', label: '请选择目录以检查 Git 仓库', icon: CircleSlash2 }
         : loadError
@@ -737,8 +756,37 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
 
   const hasChanges = status.changedCount > 0;
 
+  // 面板模式浮层贴在工具栏下方；状态栏模式 portal 到 body 并向上弹出。
+  const branchPopover = popover === 'branches' ? (
+    <div
+      ref={popoverRef}
+      className={`git-popover${isStatusBar ? ' git-popover-floating' : ''}`}
+      style={isStatusBar && popoverAnchor
+        ? { position: 'fixed', left: popoverAnchor.left, bottom: popoverAnchor.bottom }
+        : undefined}
+    >
+      <div className="git-popover-header">分支</div>
+      <div className="git-popover-list">
+        {branchesLoading && <div className="git-empty">加载中...</div>}
+        {!branchesLoading && branches.length === 0 && <div className="git-empty">无分支</div>}
+        {!branchesLoading && branches.map((branch) => (
+          <button
+            key={`${branch.isRemote ? 'remote' : 'local'}:${branch.name}`}
+            className={`git-list-row ${branch.isCurrent ? 'current' : ''}`}
+            onClick={() => checkoutBranch(branch)}
+            disabled={busy}
+            title={branch.upstream ? `${branch.name} → ${branch.upstream}` : branch.name}
+          >
+            <span className="git-list-name">{branch.isCurrent ? `✓ ${branch.name}` : branch.name}</span>
+            <span className="git-list-meta">{branch.isRemote ? '远程' : '本地'}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
   return (
-    <div ref={rootRef} className="git-nav-bar">
+    <div ref={rootRef} className={`git-nav-bar${isStatusBar ? ' git-nav-bar-statusbar' : ''}`}>
       <button
         className="git-branch-button"
         onClick={loadBranches}
@@ -765,6 +813,16 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
       )}
       {syncLabel && !action && <span className="git-sync-meta" title={buildStatusTitle(status)}>{syncLabel}</span>}
       <div className="git-actions">
+        {isStatusBar && (
+          <button
+            className="git-icon-btn refresh"
+            onClick={() => void refreshStatus()}
+            disabled={busy}
+            title="刷新 Git 状态"
+          >
+            <RefreshCw className="git-toolbar-icon" aria-hidden="true" />
+          </button>
+        )}
         <button
           className="git-icon-btn pull"
           onClick={startPull}
@@ -799,27 +857,9 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
         </button>
       </div>
 
-      {popover === 'branches' && (
-        <div className="git-popover">
-          <div className="git-popover-header">分支</div>
-          <div className="git-popover-list">
-            {branchesLoading && <div className="git-empty">加载中...</div>}
-            {!branchesLoading && branches.length === 0 && <div className="git-empty">无分支</div>}
-            {!branchesLoading && branches.map((branch) => (
-              <button
-                key={`${branch.isRemote ? 'remote' : 'local'}:${branch.name}`}
-                className={`git-list-row ${branch.isCurrent ? 'current' : ''}`}
-                onClick={() => checkoutBranch(branch)}
-                disabled={busy}
-                title={branch.upstream ? `${branch.name} → ${branch.upstream}` : branch.name}
-              >
-                <span className="git-list-name">{branch.isCurrent ? `✓ ${branch.name}` : branch.name}</span>
-                <span className="git-list-meta">{branch.isRemote ? '远程' : '本地'}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {isStatusBar
+        ? branchPopover && createPortal(branchPopover, document.body)
+        : branchPopover}
 
       {operationDialogs}
     </div>

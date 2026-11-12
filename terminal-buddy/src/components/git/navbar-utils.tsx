@@ -34,6 +34,8 @@ export interface GitNavBarProps {
   currentDirectory: string;
   showToolbar?: boolean;
   onRepositoryChanged?: () => void | Promise<void>;
+  /** statusbar：底部状态栏的紧凑平铺布局，分支浮层从状态栏向上弹出。 */
+  variant?: 'panel' | 'statusbar';
 }
 export function GitToolbarIcon({ name }: { name: GitToolbarIconName }) {
   if (name === 'pull') {
