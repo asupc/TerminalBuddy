@@ -3551,7 +3551,7 @@ mod tests {
             let saved = crate::services::llm_provider_service::save_provider(LlmProviderInput {
                 id: String::new(), name: "切换中转".into(), base_url: "https://a.example/v1".into(),
                 auth_type: "ANTHROPIC_AUTH_TOKEN".into(), api_key: Some("secret".into()), is_default: true,
-                default_effort_level: "high".into(), models_url: String::new(),
+                default_effort_level: "high".into(), default_model: String::new(), models_url: String::new(),
                 enabled_models: vec![
                     LlmModelConfig { id: "m1".into(), enabled: true, context_window: 0, effort_level: String::new(), max_output_tokens: 0 },
                     LlmModelConfig { id: "m2".into(), enabled: true, context_window: 0, effort_level: String::new(), max_output_tokens: 0 },

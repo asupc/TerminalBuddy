@@ -27,6 +27,7 @@ function emptyDraft(sortIndex: number): LlmProviderDraft {
     keySet: false,
     keyTail: '',
     defaultEffortLevel: 'high',
+    defaultModel: '',
     modelsUrl: '',
     models: [],
     sortIndex,
@@ -45,6 +46,7 @@ function draftFrom(view: LlmProviderView): LlmProviderDraft {
     defaultEffortLevel: (EFFORT_LEVELS as string[]).includes(view.defaultEffortLevel)
       ? (view.defaultEffortLevel as EffortLevel)
       : 'high',
+    defaultModel: view.defaultModel ?? '',
     modelsUrl: view.modelsUrl,
     // 行式编辑：行存在即启用，未启用的旧条目不进入编辑视图（保存后清除）。
     models: view.enabledModels.filter(model => model.enabled).map(model => ({ ...model })),
@@ -109,6 +111,11 @@ export const LlmProvidersSegment: FC = () => {
       showToast(`模型「${duplicate.id}」重复，请删除重复项后再保存`, 'error');
       return;
     }
+    const defaultModel = editor.defaultModel.trim();
+    if (defaultModel && !enabledModels.some(model => model.id === defaultModel)) {
+      showToast('默认模型不在已配置的模型列表中，请重新选择或留空', 'error');
+      return;
+    }
     const input: LlmProviderInput = {
       name: editor.name.trim(),
       baseUrl: editor.baseUrl.trim(),
@@ -119,6 +126,7 @@ export const LlmProvidersSegment: FC = () => {
         ? (providers.find(p => p.id === editor.providerId)?.isDefault ?? false)
         : providers.length === 0,
       defaultEffortLevel: editor.defaultEffortLevel,
+      defaultModel,
       modelsUrl: editor.modelsUrl.trim(),
       enabledModels,
       sortIndex: editor.sortIndex,
@@ -129,9 +137,11 @@ export const LlmProvidersSegment: FC = () => {
       // 后端 save 返回单条视图，重新拉全量保持排序一致。
       setProviders(await listLlmProviders());
       setDraft(null);
-      await afterMutation('供应商已保存');
+      await afterMutation(defaultModel ? '供应商已保存，已写入 Claude 默认配置' : '供应商已保存');
     } catch (error) {
+      // 后端可能已保存供应商但写默认配置失败：重新拉取，避免列表停留在旧状态。
       showToast(String(error), 'error');
+      void load();
     }
   };
 
@@ -199,6 +209,7 @@ export const LlmProvidersSegment: FC = () => {
             </div>
             <div className="llm-provider-meta">
               <span>可用模型 {enabledCount(view)}</span>
+              {view.defaultModel && <span title="该供应商与模型已写入 Claude 默认配置">默认模型 {view.defaultModel}</span>}
               <span className="llm-badge effort">{EFFORT_LABELS[(view.defaultEffortLevel as EffortLevel)] ?? view.defaultEffortLevel}</span>
               {view.keySet && <span className="llm-key-tail">密钥 ····{view.keyTail}</span>}
             </div>

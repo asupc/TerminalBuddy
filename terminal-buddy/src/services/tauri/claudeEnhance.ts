@@ -31,6 +31,8 @@ export interface LlmProviderView {
   keyTail: string;
   isDefault: boolean;
   defaultEffortLevel: string;
+  /** 设置后会把 Claude 默认配置（settings.json）改写为该供应商与模型。 */
+  defaultModel: string;
   modelsUrl: string;
   enabledModels: LlmModelConfig[];
   sortIndex: number;
@@ -47,6 +49,8 @@ export interface LlmProviderInput {
   apiKey?: string;
   isDefault: boolean;
   defaultEffortLevel: string;
+  /** 空串 = 不修改 Claude 默认配置。 */
+  defaultModel: string;
   modelsUrl: string;
   enabledModels: LlmModelConfig[];
   sortIndex: number;

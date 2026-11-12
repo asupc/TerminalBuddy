@@ -61,7 +61,7 @@ export const CLAUDE_SETTING_GROUPS: ClaudeSettingGroup[] = [
     {"key":"apiKeyHelper","control":"text","desc":"生成 API 凭证的自定义命令（数组形态走 JSON 视图）","officialDefault":"unset","source":"official"},
     {"key":"env.CLAUDE_CODE_API_KEY_HELPER_TTL_MS","control":"num","desc":"apiKeyHelper 结果缓存毫秒数","officialDefault":"unset","source":"cc-switch"},
     {"key":"apiBaseUrl","control":"text","desc":"顶层形态的 API 地址","officialDefault":"unset","source":"cc-switch"},
-    {"key":"env.ANTHROPIC_BASE_URL","control":"text","desc":"请求地址；供应商启动时由临时 settings 覆盖","officialDefault":"官方默认地址","source":"local"},
+    {"key":"env.ANTHROPIC_BASE_URL","control":"text","desc":"请求地址；供应商启动时由临时 settings 覆盖，设置供应商默认模型后也会写入此处","officialDefault":"官方默认地址","source":"local"},
     {"key":"env.ANTHROPIC_AUTH_TOKEN","control":"password","desc":"默认凭据，以 Bearer 发送；与供应商 Key 分开管理","officialDefault":"未设置","source":"local"},
     {"key":"env.ANTHROPIC_API_KEY","control":"password","desc":"备选凭据，以 x-api-key 发送","officialDefault":"未设置","source":"cc-switch"},
     {"key":"env.CLAUDE_CODE_OAUTH_TOKEN","control":"password","desc":"订阅账号长期 Token","officialDefault":"未设置","source":"cc-switch"},

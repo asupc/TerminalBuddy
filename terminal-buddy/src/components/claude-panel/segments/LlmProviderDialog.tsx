@@ -26,6 +26,8 @@ export interface LlmProviderDraft {
   keySet: boolean;
   keyTail: string;
   defaultEffortLevel: EffortLevel;
+  /** 非空时保存后会把 Claude 默认配置（settings.json）改为该供应商与模型。 */
+  defaultModel: string;
   modelsUrl: string;
   models: ModelRow[];
   sortIndex: number;
@@ -100,14 +102,23 @@ export function LlmProviderDialog({ draft, onClose, onSave }: LlmProviderDialogP
   };
 
   const updateModel = (index: number, patch: Partial<ModelRow>) => {
-    setEditor(current => ({
-      ...current,
-      models: current.models.map((model, i) => (i === index ? { ...model, ...patch } : model)),
-    }));
+    setEditor(current => {
+      const model = current.models[index];
+      const nextModels = current.models.map((item, i) => (i === index ? { ...item, ...patch } : item));
+      // 正在编辑默认模型的 ID 时同步跟随，避免保存时默认模型与列表不一致。
+      const defaultModel = patch.id !== undefined && model && current.defaultModel === model.id.trim()
+        ? patch.id.trim()
+        : current.defaultModel;
+      return { ...current, models: nextModels, defaultModel };
+    });
   };
   const removeModel = (index: number) => {
     setRowKeys(keys => keys.filter((_, i) => i !== index));
-    setEditor(current => ({ ...current, models: current.models.filter((_, i) => i !== index) }));
+    setEditor(current => {
+      const removed = current.models[index];
+      const defaultModel = removed && current.defaultModel === removed.id.trim() ? '' : current.defaultModel;
+      return { ...current, models: current.models.filter((_, i) => i !== index), defaultModel };
+    });
   };
   const addModel = () => {
     setRowKeys(keys => [...keys, newRowKey()]);
@@ -165,6 +176,25 @@ export function LlmProviderDialog({ draft, onClose, onSave }: LlmProviderDialogP
             </select>
           </label>
         </div>
+        <label className="claude-form-row">默认模型（写入 Claude 默认配置）
+          <select value={editor.defaultModel} onChange={e => setEditor({ ...editor, defaultModel: e.target.value })}>
+            <option value="">不修改 Claude 默认配置（保留当前值）</option>
+            {(() => {
+              const ids: string[] = [];
+              for (const model of editor.models) {
+                const id = model.id.trim();
+                if (id && !ids.includes(id)) ids.push(id);
+              }
+              return ids.map(id => <option key={id} value={id}>{id}</option>);
+            })()}
+            {editor.defaultModel && !editor.models.some(model => model.id.trim() === editor.defaultModel) && (
+              <option value={editor.defaultModel}>{editor.defaultModel}（不在模型列表中）</option>
+            )}
+          </select>
+        </label>
+        <p className="llm-provider-hint">
+          选择后保存会把 Claude 默认配置（settings.json）的供应商与模型改为当前配置，普通启动与双击恢复历史会话都会使用它。
+        </p>
         <label className="claude-form-row">API 密钥
           <input
             type="password"

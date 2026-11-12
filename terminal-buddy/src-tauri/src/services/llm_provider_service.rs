@@ -1,8 +1,9 @@
 //! 全平台大模型供应商服务：`llm_providers.json` CRUD、模型列表拉取、
 //! 引用展开（`__TB_CLAUDE_REF__` → 临时 `--settings` 文件）、临时文件清理。
 //!
-//! 与旧 Docker 链路（`claude_provider_service`）互不读写：旧链路写用户级
-//! `settings.json` 做基线，本服务生成的 `--settings` 临时文件按官方优先级覆盖基线。
+//! 引用展开走临时 `--settings` 文件，不依赖用户级 `settings.json`；
+//! 只有供应商显式设置了 `defaultModel` 时，保存后才会把用户级
+//! `~/.claude/settings.json` 改写为该供应商 + 模型，供普通启动与历史会话恢复使用。
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -152,6 +153,14 @@ pub fn save_provider(input: LlmProviderInput) -> Result<LlmProviderView, String>
                 other.is_default = other.id == id;
             }
         }
+        // 默认模型是全局唯一的一份 Claude 默认配置，其他供应商的旧标记要清掉。
+        if !provider.default_model.is_empty() {
+            for other in file.providers.iter_mut() {
+                if other.id != id {
+                    other.default_model.clear();
+                }
+            }
+        }
         file.providers[slot_index] = provider.clone();
     } else {
         provider.id = uuid::Uuid::new_v4().to_string();
@@ -164,11 +173,25 @@ pub fn save_provider(input: LlmProviderInput) -> Result<LlmProviderView, String>
             }
             provider.is_default = true;
         }
+        if !provider.default_model.is_empty() {
+            for other in file.providers.iter_mut() {
+                other.default_model.clear();
+            }
+        }
         file.providers.push(provider.clone());
     }
     sort_providers(&mut file.providers);
     write_providers_file(&file)?;
-    to_view(&provider)
+    let view = to_view(&provider)?;
+    let has_default_model = !provider.default_model.is_empty();
+    // 写用户级 settings 要拿另一把锁，先释放供应商文件锁，避免锁顺序耦合。
+    drop(_guard);
+    if has_default_model {
+        write_default_claude_settings(&provider, &key).map_err(|error| {
+            format!("供应商已保存，但写入 Claude 默认配置失败：{}", error)
+        })?;
+    }
+    Ok(view)
 }
 
 /// 删除供应商。删除默认供应商后允许没有默认（右键菜单不再平铺任何模型）。
@@ -646,6 +669,117 @@ fn legacy_temp_settings_missing(command: &str) -> bool {
     saw_candidate
 }
 
+/// 构造写入用户级 `~/.claude/settings.json` 的补丁：以「供应商 + 默认模型」的
+/// 临时配置为基底，去掉 Hook 段，并把可能与新供应商冲突的旧键显式置为 null
+/// （`claude_settings_service::write_settings` 的深合并用 null 表示删除）。
+fn build_default_settings_patch(
+    provider: &LlmProvider,
+    decrypted_key: &str,
+) -> Result<Value, String> {
+    let model = provider
+        .enabled_models
+        .iter()
+        .find(|model| model.enabled && model.id == provider.default_model)
+        .ok_or_else(|| {
+            format!(
+                "默认模型「{}」不在已启用的模型列表中，请重新选择",
+                provider.default_model
+            )
+        })?;
+    let level = resolve_model_effort(model, &provider.default_effort_level);
+    if !EFFORT_LEVELS.contains(&level.as_str()) {
+        return Err(format!(
+            "供应商「{}」的推理等级配置无效，请重新保存",
+            provider.name
+        ));
+    }
+    let mut settings = build_temp_settings(
+        provider,
+        decrypted_key,
+        &model.id,
+        model.context_window,
+        model.max_output_tokens,
+        &level,
+    );
+    let object = settings
+        .as_object_mut()
+        .ok_or_else(|| "无法构造 Claude 默认配置".to_string())?;
+    // Hook 归 Hook 安装器 / 设置页管理，不能随供应商覆盖。
+    object.remove("hooks");
+    // 旧版密钥助手会绕过 env 里的供应商凭据，必须清掉。
+    for key in ["apiKeyHelper", "apiKey"] {
+        object.insert(key.to_string(), Value::Null);
+    }
+    if level == "max" {
+        // 与临时 settings 一致：max 只经 env 通道生效，文件里的旧档位要清掉。
+        object.insert("effortLevel".to_string(), Value::Null);
+        object.insert("modelSettings".to_string(), Value::Null);
+    }
+    let env = object
+        .get_mut("env")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "无法构造 Claude 默认配置 env".to_string())?;
+    // 另一种认证方式必须删除，避免两套凭据同时存在。
+    let other_auth = if provider.auth_type == "ANTHROPIC_API_KEY" {
+        "ANTHROPIC_AUTH_TOKEN"
+    } else {
+        "ANTHROPIC_API_KEY"
+    };
+    env.insert(other_auth.to_string(), Value::Null);
+    env.insert("ANTHROPIC_SMALL_FAST_MODEL".to_string(), Value::Null);
+    // 旧的档位显示名会继续出现在 /model 菜单里，与新供应商模型不符，一并清掉。
+    for key in [
+        "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+    ] {
+        env.insert(key.to_string(), Value::Null);
+    }
+    // 上下文窗口两键互斥，清理另一侧残留。
+    if model.context_window > 0 {
+        env.insert(
+            "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT".to_string(),
+            Value::Null,
+        );
+    } else {
+        env.insert("CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_string(), Value::Null);
+    }
+    if model.max_output_tokens == 0 {
+        env.insert("CLAUDE_CODE_MAX_OUTPUT_TOKENS".to_string(), Value::Null);
+    }
+    // 默认配置直接走第三方供应商，关掉云平台协议开关。
+    for key in [
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+    ] {
+        env.insert(key.to_string(), json!("0"));
+    }
+    Ok(settings)
+}
+
+/// 把供应商 + 默认模型写入用户级 `~/.claude/settings.json`。
+/// 普通 `claude` 启动（含双击恢复历史会话）会读取这份默认配置，
+/// 因此不经过模型引用也能使用该供应商与模型。
+fn write_default_claude_settings(
+    provider: &LlmProvider,
+    decrypted_key: &str,
+) -> Result<(), String> {
+    let patch = build_default_settings_patch(provider, decrypted_key)?;
+    // 单测绝不能改写开发者本人的 ~/.claude/settings.json；补丁内容由
+    // build_default_settings_patch 的用例覆盖。
+    #[cfg(test)]
+    {
+        let _ = patch;
+        Ok(())
+    }
+    #[cfg(not(test))]
+    {
+        super::claude_settings_service::write_settings(&patch).map(|_| ())
+    }
+}
+
 /// 展开单条命令开头的引用标记并登记 `terminalId → 临时文件` 映射。
 /// 不含引用的命令原样返回；引用失效（供应商被删）或旧路径残留则拒绝启动。
 /// 原生会话复用供应商的模型、推理等级和上下文配置；不修改全局 Claude 设置。
@@ -799,6 +933,7 @@ mod tests {
             api_key: String::new(),
             is_default: true,
             default_effort_level: "high".to_string(),
+            default_model: String::new(),
             models_url: String::new(),
             enabled_models: vec![LlmModelConfig {
                 id: "claude-opus-9".to_string(),
@@ -909,6 +1044,48 @@ mod tests {
     }
 
     #[test]
+    fn default_settings_patch_switches_provider_and_cleans_conflicts() {
+        let mut provider = test_provider();
+        provider.default_model = "claude-opus-9".to_string();
+        let patch = build_default_settings_patch(&provider, "secret").unwrap();
+        // Hooks 归安装器管理，不能随供应商写入用户级配置。
+        assert!(patch.get("hooks").is_none());
+        assert_eq!(patch["model"], "claude-opus-9");
+        assert_eq!(patch["env"]["ANTHROPIC_BASE_URL"], "https://ai.example.com");
+        assert_eq!(patch["env"]["ANTHROPIC_AUTH_TOKEN"], "secret");
+        // 另一种认证方式与废弃模型键显式删除，避免旧供应商残留。
+        assert_eq!(patch["env"]["ANTHROPIC_API_KEY"], Value::Null);
+        assert_eq!(patch["env"]["ANTHROPIC_SMALL_FAST_MODEL"], Value::Null);
+        assert_eq!(patch["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"], Value::Null);
+        assert_eq!(patch["env"]["ANTHROPIC_MODEL"], "claude-opus-9");
+        assert_eq!(patch["env"]["CLAUDE_CODE_USE_BEDROCK"], "0");
+        // 模型档位 xhigh 与真实上下文窗口都写入默认配置。
+        assert_eq!(patch["effortLevel"], "xhigh");
+        assert_eq!(patch["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "200000");
+        assert_eq!(
+            patch["env"]["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"],
+            Value::Null
+        );
+        // 默认模型为空或不在启用列表时拒绝生成补丁。
+        provider.default_model = String::new();
+        assert!(build_default_settings_patch(&provider, "secret").is_err());
+        provider.default_model = "missing".to_string();
+        assert!(build_default_settings_patch(&provider, "secret").is_err());
+    }
+
+    #[test]
+    fn default_settings_patch_max_level_clears_file_effort_fields() {
+        let mut provider = test_provider();
+        provider.default_model = "claude-opus-9".to_string();
+        provider.enabled_models[0].effort_level = "max".to_string();
+        let patch = build_default_settings_patch(&provider, "secret").unwrap();
+        // max 只经 env 通道生效，旧的文件档位字段要删掉。
+        assert_eq!(patch["effortLevel"], Value::Null);
+        assert_eq!(patch["modelSettings"], Value::Null);
+        assert_eq!(patch["env"]["CLAUDE_CODE_EFFORT_LEVEL"], "max");
+    }
+
+    #[test]
     fn parse_claude_ref_extracts_ids_and_suffix() {
         let (provider_id, model_id, end) =
             parse_claude_ref("__TB_CLAUDE_REF__:p1:claude-opus-9 --resume abc").unwrap();
@@ -962,6 +1139,7 @@ mod tests {
                 api_key: Some("secret-a".to_string()),
                 is_default: true,
                 default_effort_level: "high".to_string(),
+                default_model: String::new(),
                 models_url: String::new(),
                 enabled_models: vec![],
                 sort_index: 0,
@@ -993,6 +1171,41 @@ mod tests {
     }
 
     #[test]
+    fn default_model_is_exclusive_across_providers() {
+        with_test_data_dir(|| {
+            let input = |name: &str, model: &str| LlmProviderInput {
+                id: String::new(),
+                name: name.to_string(),
+                base_url: format!("https://{}.example/v1", name),
+                auth_type: "ANTHROPIC_AUTH_TOKEN".to_string(),
+                api_key: Some("secret".to_string()),
+                is_default: false,
+                default_effort_level: "high".to_string(),
+                default_model: model.to_string(),
+                models_url: String::new(),
+                enabled_models: vec![LlmModelConfig {
+                    id: model.to_string(),
+                    enabled: true,
+                    context_window: 0,
+                    effort_level: String::new(),
+                    max_output_tokens: 0,
+                }],
+                sort_index: 0,
+            };
+            let first = save_provider(input("a", "m1")).unwrap();
+            assert_eq!(first.default_model, "m1");
+            let second = save_provider(input("b", "m2")).unwrap();
+            assert_eq!(second.default_model, "m2");
+            let list = list_providers().unwrap();
+            let first_after = list.iter().find(|provider| provider.id == first.id).unwrap();
+            // 默认模型全局唯一：后设置者生效，旧标记随之清除。
+            assert_eq!(first_after.default_model, "");
+            // 脱敏视图同样携带 defaultModel（前端据此回填编辑弹窗）。
+            assert!(serde_json::to_string(&list).unwrap().contains("defaultModel"));
+        });
+    }
+
+    #[test]
     fn delete_last_provider_leaves_empty_list() {
         with_test_data_dir(|| {
             let saved = save_provider(LlmProviderInput {
@@ -1003,6 +1216,7 @@ mod tests {
                 api_key: Some("secret".to_string()),
                 is_default: true,
                 default_effort_level: "high".to_string(),
+                default_model: String::new(),
                 models_url: String::new(),
                 enabled_models: vec![],
                 sort_index: 0,
@@ -1024,6 +1238,7 @@ mod tests {
                 api_key: Some("secret".to_string()),
                 is_default: true,
                 default_effort_level: "high".to_string(),
+                default_model: String::new(),
                 models_url: String::new(),
                 enabled_models: vec![
                     LlmModelConfig {
@@ -1063,6 +1278,7 @@ mod tests {
                 api_key: Some("secret".to_string()),
                 is_default: true,
                 default_effort_level: "high".to_string(),
+                default_model: String::new(),
                 models_url: String::new(),
                 enabled_models: vec![LlmModelConfig {
                     id: "m1".to_string(),

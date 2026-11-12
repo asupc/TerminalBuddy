@@ -67,6 +67,9 @@ pub struct LlmProvider {
     #[serde(default)]
     pub is_default: bool,
     pub default_effort_level: String,
+    /// 设置为 Claude 默认配置时使用的模型；空串表示不修改默认配置。
+    #[serde(default)]
+    pub default_model: String,
     #[serde(default)]
     pub models_url: String,
     #[serde(default)]
@@ -101,6 +104,9 @@ pub struct LlmProviderInput {
     #[serde(default)]
     pub is_default: bool,
     pub default_effort_level: String,
+    /// 默认模型：非空时保存后会把用户级 `~/.claude/settings.json` 改写为该供应商 + 模型。
+    #[serde(default)]
+    pub default_model: String,
     #[serde(default)]
     pub models_url: String,
     #[serde(default)]
@@ -121,6 +127,7 @@ pub struct LlmProviderView {
     pub key_tail: String,
     pub is_default: bool,
     pub default_effort_level: String,
+    pub default_model: String,
     pub models_url: String,
     pub enabled_models: Vec<LlmModelConfig>,
     pub sort_index: i32,
@@ -254,6 +261,25 @@ impl LlmProviderInput {
             }
             enabled_models.push(model);
         }
+        // 默认模型必须落在已启用列表里：它会被写进 Claude 默认配置，
+        // 拼写错误会让普通启动直接使用一个不存在的模型。
+        let default_model = self.default_model.trim().to_string();
+        if !default_model.is_empty() {
+            if default_model.len() > 256
+                || default_model.chars().any(|c| c.is_control() || c.is_whitespace())
+            {
+                return Err("默认模型格式无效".to_string());
+            }
+            if !enabled_models
+                .iter()
+                .any(|model| model.enabled && model.id == default_model)
+            {
+                return Err(format!(
+                    "默认模型「{}」不在已启用的模型列表中，请先添加该模型或重新选择",
+                    default_model
+                ));
+            }
+        }
         Ok((
             LlmProvider {
                 id: self.id.trim().to_string(),
@@ -263,6 +289,7 @@ impl LlmProviderInput {
                 api_key: String::new(),
                 is_default: self.is_default,
                 default_effort_level,
+                default_model,
                 models_url,
                 enabled_models,
                 sort_index: self.sort_index,
@@ -300,6 +327,7 @@ impl LlmProvider {
             key_tail,
             is_default: self.is_default,
             default_effort_level: self.default_effort_level.clone(),
+            default_model: self.default_model.clone(),
             models_url: self.models_url.clone(),
             enabled_models: self.enabled_models.clone(),
             sort_index: self.sort_index,
@@ -322,6 +350,7 @@ mod tests {
             api_key: Some("sk-test-key-1234".to_string()),
             is_default: true,
             default_effort_level: "high".to_string(),
+            default_model: String::new(),
             models_url: String::new(),
             enabled_models: vec![LlmModelConfig {
                 id: "claude-opus-5-5".to_string(),
@@ -411,6 +440,28 @@ mod tests {
         );
         let mut input = valid_input();
         input.enabled_models[0].effort_level = "bogus".to_string();
+        assert!(input.validate(None).is_err());
+    }
+
+    #[test]
+    fn default_model_must_be_enabled_and_is_trimmed() {
+        let mut input = valid_input();
+        input.default_model = " claude-opus-5-5 ".to_string();
+        let (provider, _) = input.validate(None).expect("已启用模型应可作为默认模型");
+        assert_eq!(provider.default_model, "claude-opus-5-5");
+
+        let mut input = valid_input();
+        input.default_model = "missing-model".to_string();
+        let error = input.validate(None).expect_err("不在列表中的默认模型应被拒绝");
+        assert!(error.contains("默认模型"), "{error}");
+
+        let mut input = valid_input();
+        input.enabled_models[0].enabled = false;
+        input.default_model = "claude-opus-5-5".to_string();
+        assert!(input.validate(None).is_err(), "已停用模型不能作为默认模型");
+
+        let mut input = valid_input();
+        input.default_model = "has space".to_string();
         assert!(input.validate(None).is_err());
     }
 
