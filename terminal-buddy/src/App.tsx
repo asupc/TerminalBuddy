@@ -76,6 +76,7 @@ function App() {
   const toggleConfigPanel = useAppStore(s => s.toggleConfigPanel);
   const toggleFileTree = useAppStore(s => s.toggleFileTree);
   const toggleHistoryPanel = useAppStore(s => s.toggleHistoryPanel);
+  const historyPanelFocusToken = useAppStore(s => s.historyPanelFocusToken);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const settingsDialogOpen = useAppStore(s => s.settingsDialogOpen);
   const closeSettingsDialog = useAppStore(s => s.closeSettingsDialog);
@@ -98,6 +99,16 @@ function App() {
     const v = localStorage.getItem('appUpdate.lastCheckedAt');
     return v ? Number(v) : null;
   });
+  // 状态栏 Agent 历史入口请求聚焦会话历史：侧栏风格下面板互斥，需要把它切到前台
+  // （首次还要解除懒挂载）。只认 focusToken 的变化，切换界面风格本身不触发。
+  const lastHistoryFocusTokenRef = useRef(historyPanelFocusToken);
+  useEffect(() => {
+    if (historyPanelFocusToken === lastHistoryFocusTokenRef.current) return;
+    lastHistoryFocusTokenRef.current = historyPanelFocusToken;
+    if (historyPanelFocusToken <= 0 || uiStyle !== 'sidebar') return;
+    setEverOpened(prev => (prev.history ? prev : { ...prev, history: true }));
+    setSidebarPanel('history');
+  }, [historyPanelFocusToken, uiStyle]);
 
   useEffect(() => {
     const onOpenEdit = (e: any) => {

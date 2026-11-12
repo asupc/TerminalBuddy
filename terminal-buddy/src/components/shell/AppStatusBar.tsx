@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Boxes,
@@ -14,14 +14,19 @@ import {
   SquareTerminal,
   type LucideIcon,
 } from 'lucide-react';
-import type { Profile, TerminalType } from '../../types';
+import type { Profile, SessionHistoryProvider, TerminalType } from '../../types';
 import { isTerminalWorking, useAppStore } from '../../stores/appStore';
 import { useSystemResources } from '../../hooks/useSystemResources';
 import { FileManagerDialog } from '../file-explorer/FileManagerDialog';
 import { GitNavBar } from '../git/GitNavBar';
+import { AgentIcon } from '../agent-chat/AgentIcon';
+import { AgentHistoryPopover } from './AgentHistoryPopover';
 import { ResourceTrendPopover } from './ResourceTrendPopover';
 import { getWebApiStatus } from '../../services/tauri';
 import { isBrowserClient } from '../../services/platform';
+import { isClaudeLaunchProfile } from '../../utils/claudeLaunch';
+import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
+import { projectForDirectory } from '../../utils/projectPath';
 import { APP_VERSION } from '../../version';
 import './AppStatusBar.css';
 
@@ -224,9 +229,19 @@ const StatusBarResources = memo(function StatusBarResources() {
   const currentDirectory = useAppStore(s => s.currentDirectory);
   const terminalActivities = useAppStore(s => s.terminalActivities);
   const profiles = useAppStore(s => s.profiles);
+  const projects = useAppStore(s => s.projects);
+  const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
+  const agentSessionBindings = useAppStore(s => s.agentSessionBindings);
+  const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
+  const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
+  const agentTabs = useAppStore(s => s.agentTabs);
+  const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const showToast = useAppStore(s => s.showToast);
   const [fileManagerOpen, setFileManagerOpen] = useState(false);
+  const [agentHistoryOpen, setAgentHistoryOpen] = useState(false);
+  const [agentHistoryAnchor, setAgentHistoryAnchor] = useState<{ left: number; bottom: number } | null>(null);
+  const agentHistoryRef = useRef<HTMLButtonElement>(null);
 
   const session = activeSessionId ? sessions.find(item => item.id === activeSessionId) : undefined;
   const profile = session?.profileId ? profiles.find(item => item.id === session.profileId) : undefined;
@@ -251,6 +266,79 @@ const StatusBarResources = memo(function StatusBarResources() {
   );
   const web = useWebApiBarStatus();
   const working = isTerminal && session ? isTerminalWorking(terminalActivities[session.id]) : false;
+
+  // 状态栏的 Agent 历史入口：识别当前标签页背后的 Agent 与项目。
+  // 原生聊天 / 回放标签有明确的 provider 与项目路径；普通终端则依次看
+  // Agent 绑定、hook 活动、启动命令，最终回退到「用 Claude 连接启动」的配置。
+  const agentTarget = useMemo<{ provider: SessionHistoryProvider; projectDir: string } | null>(() => {
+    const scopeDir = (dir: string | undefined | null) => {
+      if (!dir) return undefined;
+      return projectForDirectory(projects, dir)?.path ?? dir;
+    };
+
+    if (activeSpecialTab === 'agent-chat') {
+      const tab = agentTabs.find(item => item.key === activeAgentTabKey);
+      if (tab?.shape === 'native') {
+        const dir = scopeDir(tab.projectPath);
+        return dir ? { provider: tab.provider, projectDir: dir } : null;
+      }
+      if (tab?.shape === 'relay') {
+        const relaySession = sessions.find(item => item.id === tab.terminalId);
+        const dir = scopeDir(sessionDirectories[tab.terminalId] || relaySession?.startupPath);
+        const provider = tab.provider
+          ?? terminalActivities[tab.terminalId]?.provider
+          ?? agentSessionBindings[tab.terminalId]?.provider;
+        return dir && provider ? { provider, projectDir: dir } : null;
+      }
+      return null;
+    }
+
+    if (activeSpecialTab === 'claude-replay' && claudeReplayTab) {
+      const dir = scopeDir(claudeReplayTab.projectDir);
+      return dir ? { provider: claudeReplayTab.provider ?? 'claude', projectDir: dir } : null;
+    }
+
+    // Git 历史等特殊标签仍以当前终端会话为准。
+    if (!session || session.sessionType === 'editor') return null;
+    // Agent 历史库在本机：SSH / Docker / K8s 的目录不是本地路径，不提供入口。
+    if (!LOCAL_SHELL_TYPES.has(session.terminalType) || !directory) return null;
+    const activity = terminalActivities[session.id];
+    const binding = agentSessionBindings[session.id];
+    const launch = getTaskLaunchInfo(session.extraParams, profile?.startupCommands, session.extraParamMode);
+    const provider = binding?.provider
+      ?? activity?.provider
+      ?? (activity && activity.runtimeKind !== 'shell' ? activity.runtimeKind : undefined)
+      ?? launch?.provider
+      ?? (claudeSessionIds[session.id] ? 'claude' : undefined)
+      ?? (profile && isClaudeLaunchProfile(profile) ? 'claude' : undefined);
+    if (!provider) return null;
+    const dir = scopeDir(directory);
+    return dir ? { provider, projectDir: dir } : null;
+  }, [
+    activeSpecialTab, agentTabs, activeAgentTabKey, sessions, sessionDirectories,
+    terminalActivities, agentSessionBindings, claudeReplayTab, session, directory,
+    profile, projects, claudeSessionIds,
+  ]);
+
+  const agentProvider = agentTarget?.provider;
+  const agentProjectDir = agentTarget?.projectDir;
+  // 切换标签或 Agent 后，旧浮层的项目上下文已失效。
+  useEffect(() => { setAgentHistoryOpen(false); }, [agentProvider, agentProjectDir]);
+
+  const toggleAgentHistory = useCallback(() => {
+    if (agentHistoryOpen) {
+      setAgentHistoryOpen(false);
+      return;
+    }
+    const rect = agentHistoryRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const width = Math.min(400, window.innerWidth - 16);
+    setAgentHistoryAnchor({
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+      bottom: window.innerHeight - rect.top + 6,
+    });
+    setAgentHistoryOpen(true);
+  }, [agentHistoryOpen]);
 
   const copyDirectory = useCallback((path: string) => {
     if (navigator.clipboard?.writeText) {
@@ -302,6 +390,27 @@ const StatusBarResources = memo(function StatusBarResources() {
           <span className="app-statusbar-dot idle" aria-hidden="true" />
           <span>无活动会话</span>
         </span>
+      )}
+
+      {agentTarget && (
+        <>
+          <span className="app-statusbar-divider app-statusbar-optional" aria-hidden="true" />
+          <button
+            ref={agentHistoryRef}
+            type="button"
+            className={`app-statusbar-item app-statusbar-clickable${agentHistoryOpen ? ' active' : ''}`}
+            title={`查看 ${agentTarget.provider === 'codex' ? 'Codex' : 'Claude Code'} 在当前项目的历史会话`}
+            aria-haspopup="dialog"
+            aria-expanded={agentHistoryOpen}
+            onClick={toggleAgentHistory}
+          >
+            <AgentIcon
+              provider={agentTarget.provider}
+              className={`app-statusbar-agent-logo provider-${agentTarget.provider}`}
+            />
+            <span className="app-statusbar-agent-history-label">历史</span>
+          </button>
+        </>
       )}
 
       {isTerminal && directory && (
@@ -373,6 +482,21 @@ const StatusBarResources = memo(function StatusBarResources() {
           initialPath={directory}
           onClose={() => setFileManagerOpen(false)}
         />
+      )}
+
+      {agentHistoryOpen && agentTarget && agentHistoryAnchor && createPortal(
+        <AgentHistoryPopover
+          provider={agentTarget.provider}
+          projectDir={agentTarget.projectDir}
+          anchor={agentHistoryAnchor}
+          anchorRef={agentHistoryRef}
+          onClose={() => setAgentHistoryOpen(false)}
+          onOpenFullHistory={() => {
+            setAgentHistoryOpen(false);
+            useAppStore.getState().openHistoryPanel(agentTarget.provider);
+          }}
+        />,
+        document.body,
       )}
     </div>
   );

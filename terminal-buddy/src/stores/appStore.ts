@@ -363,9 +363,15 @@ export interface AppState {
 	configPanelVisible: boolean;
 	fileTreeVisible: boolean;
 	historyPanelVisible: boolean;
+	/** 最近一次显式指定的历史来源；状态栏 Agent 历史入口用它切到对应 Agent。 */
+	historyPanelProvider: SessionHistoryProvider | null;
+	/** 每次请求聚焦历史面板自增；侧栏风格据此把面板切到前台。 */
+	historyPanelFocusToken: number;
 	toggleConfigPanel: () => void;
 	toggleFileTree: () => void;
 	toggleHistoryPanel: () => void;
+	/** 打开（并聚焦）会话历史面板，可指定要展示的 Agent 来源。 */
+	openHistoryPanel: (provider?: SessionHistoryProvider) => void;
 
 	// Config panel search
 	configSearchQuery: string;

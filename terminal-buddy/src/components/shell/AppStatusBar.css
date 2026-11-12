@@ -34,6 +34,11 @@
 
 .app-statusbar-clickable { cursor: pointer; }
 
+.app-statusbar-item.active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
 .app-statusbar-item:hover {
   background: var(--list-hover-bg);
   color: var(--text-primary);
@@ -45,6 +50,19 @@
   flex: none;
   stroke-width: 1.7;
 }
+
+/* 状态栏 Agent 历史入口：沿用 Agent 标志，尺寸与其它状态栏图标一致。 */
+.app-statusbar-agent-logo {
+  width: 12px;
+  height: 12px;
+  font-size: 12px;
+  flex: none;
+  color: var(--accent);
+}
+
+/* 品牌色：Claude 为橙色，Codex 沿用应用内的绿色标识，不再统一跟随强调色。 */
+.app-statusbar-agent-logo.provider-claude { color: #d97757; }
+.app-statusbar-agent-logo.provider-codex { color: #10a37f; }
 
 .app-statusbar-dot {
   width: 6px;
@@ -244,6 +262,8 @@
   .app-statusbar-optional { display: none; }
   .app-statusbar-path-full { display: none; }
   .app-statusbar-path-short { display: inline; }
+  /* 窄屏只保留 Agent 标志，历史入口仍然可点。 */
+  .app-statusbar-agent-history-label { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

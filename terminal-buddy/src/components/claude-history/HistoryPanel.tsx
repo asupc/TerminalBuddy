@@ -131,8 +131,16 @@ const MenuItem: FC<MenuItemProps> = ({ icon: Icon, label, hint, danger, preset, 
 
 /** Claude Code / Codex 会话面板：列表、检索、回放与恢复共用同一套交互。 */
 export const HistoryPanel: FC<HistoryPanelProps> = props => {
-  const [provider, setProvider] = useState<SessionHistoryProvider>('claude');
+  const requestedProvider = useAppStore(s => s.historyPanelProvider);
+  const focusToken = useAppStore(s => s.historyPanelFocusToken);
+  const [provider, setProvider] = useState<SessionHistoryProvider>(requestedProvider ?? 'claude');
+  // 状态栏 Agent 历史入口等外部请求：切到指定来源；未指定时保持用户手动选择。
+  useEffect(() => {
+    if (requestedProvider) setProvider(requestedProvider);
+  }, [requestedProvider, focusToken]);
   const [codexAvailable, setCodexAvailable] = useState(false);
+  // 环境探测完成前不要因为 providers 暂时只有 Claude 就把外部请求切回的 Codex 打回去。
+  const [environmentChecked, setEnvironmentChecked] = useState(false);
   useEffect(() => {
     let cancelled = false;
     const apply = (environment: { codex?: { status: string } }) => {
@@ -142,8 +150,11 @@ export const HistoryPanel: FC<HistoryPanelProps> = props => {
         || environment.codex?.status === 'updating'
         || environment.codex?.status === 'installing',
       );
+      setEnvironmentChecked(true);
     };
-    void getAgentCliEnvironment().then(apply).catch(() => {});
+    void getAgentCliEnvironment().then(apply).catch(() => {
+      if (!cancelled) setEnvironmentChecked(true);
+    });
     const onChange = (event: Event) => {
       const detail = (event as CustomEvent<{ codex?: { status: string } }>).detail;
       if (detail) apply(detail);
@@ -159,8 +170,8 @@ export const HistoryPanel: FC<HistoryPanelProps> = props => {
     ...(codexAvailable ? ['codex' as const] : []),
   ], [codexAvailable]);
   useEffect(() => {
-    if (!providers.includes(provider)) setProvider('claude');
-  }, [providers, provider]);
+    if (environmentChecked && !providers.includes(provider)) setProvider('claude');
+  }, [providers, provider, environmentChecked]);
   return (
     <HistoryPanelContent
       key={provider}
@@ -168,6 +179,7 @@ export const HistoryPanel: FC<HistoryPanelProps> = props => {
       provider={provider}
       providers={providers}
       onProviderChange={setProvider}
+      focusToken={focusToken}
     />
   );
 };
@@ -176,7 +188,8 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
   provider: SessionHistoryProvider;
   providers: SessionHistoryProvider[];
   onProviderChange: (provider: SessionHistoryProvider) => void;
-}> = ({ isSidebarMode = false, isActive = true, provider, providers, onProviderChange }) => {
+  focusToken: number;
+}> = ({ isSidebarMode = false, isActive = true, provider, providers, onProviderChange, focusToken }) => {
   const history = sessionHistory(provider);
   const showToast = useAppStore(s => s.showToast);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
@@ -229,6 +242,11 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
   useEffect(() => {
     setScopeDismissed(false);
   }, [activeSessionId, activeSpecialTab, claudeReplayTab?.sessionId, claudeReplayTab?.provider]);
+
+  // 外部入口每次请求都重新应用「当前项目」过滤，即使用户之前手动 × 掉过。
+  useEffect(() => {
+    setScopeDismissed(false);
+  }, [focusToken]);
 
   // 模型菜单数据源：挂载时加载，右键打开时用缓存。
   useEffect(() => {

@@ -27,6 +27,26 @@ export const createProfilesSlice = (
 	configPanelVisible: true,
 	fileTreeVisible: true,
 	historyPanelVisible: true,
+	// 从状态栏 Agent 历史入口等位置请求打开会话历史时，指定要展示的来源；
+	// focusToken 每次请求自增，侧栏风格据此把隐藏的历史面板切到前台。
+	historyPanelProvider: null,
+	historyPanelFocusToken: 0,
+	openHistoryPanel: (provider) =>
+		set((state) => {
+			const willOpen = !state.historyPanelVisible;
+			if (willOpen) {
+				const s = getAppSettings();
+				saveAppSettings({ ...s, historyPanelAutoExpand: true });
+			}
+			return {
+				historyPanelVisible: true,
+				historyPanelProvider: provider ?? state.historyPanelProvider,
+				historyPanelFocusToken: state.historyPanelFocusToken + 1,
+				terminalLayoutVersion: willOpen
+					? state.terminalLayoutVersion + 1
+					: state.terminalLayoutVersion,
+			};
+		}),
 	toggleConfigPanel: () =>
 		set((state) => {
 			const next = !state.configPanelVisible;

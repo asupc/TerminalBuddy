@@ -16,6 +16,8 @@ interface ClaudeModelMenuSectionProps {
   itemClassName: string;
   /** 分隔线类名 */
   separatorClassName: string;
+  /** 二级子菜单附加类名（浮层内使用时用于提升 z-index，避免被父浮层压住） */
+  submenuClassName?: string;
   /** 模型区标题：'Claude 模型'（启动）/ '指定模型恢复'（历史） */
   title: string;
   /** 点击模型 */
@@ -36,6 +38,7 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
   source = 'claude',
   itemClassName,
   separatorClassName,
+  submenuClassName,
   title,
   onPickModel,
   onGotoProviders,
@@ -44,7 +47,8 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
   const claudeLoaded = useAppStore(s => s.claudeLaunchTargetsLoaded);
   const codexState = useAppStore(s => s.codexProviderState);
   const targets = useMemo<LlmLaunchTarget[]>(() => {
-    if (source === 'claude') return claudeTargets;
+    // 后端异常 / 演示运行时可能给出非数组，右键菜单不能因此整块崩溃。
+    if (source === 'claude') return Array.isArray(claudeTargets) ? claudeTargets : [];
     return (codexState?.providers ?? []).map(provider => ({
       providerId: provider.id, providerName: provider.name, isDefault: codexState?.activeProviderId === provider.id,
       models: (provider.models ?? [provider.model]).map(id => ({ id, effort: (provider.modelReasoningEfforts[id] ?? 'max') || '默认', contextWindow: provider.contextWindow })),
@@ -164,7 +168,7 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
       {openTarget && subPos && createPortal(
         <div
           ref={subRef}
-          className="claude-model-submenu"
+          className={`claude-model-submenu${submenuClassName ? ` ${submenuClassName}` : ''}`}
           style={{ left: subPos.left, top: subPos.top }}
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
