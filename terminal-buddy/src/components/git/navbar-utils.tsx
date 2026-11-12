@@ -1,3 +1,10 @@
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  GitCommitHorizontal,
+  History as HistoryIcon,
+  type LucideIcon,
+} from 'lucide-react';
 import type { GitRepositoryStatus, GitPullResult, GitPushResult, GitPushPreview } from '../../services/tauri';
 
 export type GitPopover = 'branches' | null;
@@ -37,37 +44,16 @@ export interface GitNavBarProps {
   /** statusbar：底部状态栏的紧凑平铺布局，分支浮层从状态栏向上弹出。 */
   variant?: 'panel' | 'statusbar';
 }
+/** 工具栏图标统一走 Lucide：拉取向下、推送向上、提交用 Git 提交节点。 */
+const GIT_TOOLBAR_ICONS: Record<GitToolbarIconName, LucideIcon> = {
+  pull: ArrowDownToLine,
+  push: ArrowUpFromLine,
+  commit: GitCommitHorizontal,
+  history: HistoryIcon,
+};
 export function GitToolbarIcon({ name }: { name: GitToolbarIconName }) {
-  if (name === 'pull') {
-    return (
-      <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
-        <path d="M14.5 5.5 7.5 12.5" />
-        <path d="M7.5 12.5h5.5" />
-        <path d="M7.5 12.5V7" />
-      </svg>
-    );
-  }
-  if (name === 'commit') {
-    return (
-      <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
-        <path d="m4.5 10.5 3.4 3.4 7.6-7.6" />
-      </svg>
-    );
-  }
-  if (name === 'push') {
-    return (
-      <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
-        <path d="M5.5 14.5 14.5 5.5" />
-        <path d="M9.5 5.5h5v5" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
-      <circle cx="10" cy="10" r="7" />
-      <path d="M10 5.8V10l3.1 2" />
-    </svg>
-  );
+  const Icon = GIT_TOOLBAR_ICONS[name];
+  return <Icon className="git-toolbar-icon" aria-hidden="true" />;
 }
 export function compactOutput(output: string): string {
   const trimmed = output.trim();
