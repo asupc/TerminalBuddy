@@ -31,6 +31,7 @@ import {
   getCommandSuggestions, installAutocompleteRefresh, installStableImeAnchor,
   resolveCdTarget, detectAndTrackCd, SUGGESTION_KIND_LABEL,
   pasteFromClipboard, forceFitOf, setForceFit, syncImeAnchorOf, xtermCoreOf,
+  getKittyKeyboardFlags,
 } from './terminal-helpers';
 import type { WebTerminalResizePayload } from './terminal-helpers';
 import { usePtyResize } from './hooks/usePtyResize';
@@ -460,6 +461,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // 仅跟随应用的浅色终端启用最低对比度增强；黑板/自定义终端配色保持原样
         minimumContrastRatio: initialLightOptimized ? 4.5 : 1,
         allowProposedApi: true,
+        // 除了 Windows（ConPTY 无法把 kitty 协议的 CSI-u 输入翻译成按键事件，查询回复会被
+        // 当作普通字符灌进 TUI 输入框）之外开启 kitty 键盘协议。xterm 回包后 Codex 等 TUI
+        // 会启用增强按键上报，Shift+Enter 等带修饰键才能被正确区分。
+        vtExtensions: { kittyKeyboard: !buildNumber },
         disableStdin: readOnlyRef.current,
         ...(buildNumber ? { windowsPty: { backend: 'conpty' as const, buildNumber } } : {}),
         reflowCursorLine: usesVsCodeTerminal,
@@ -1052,12 +1057,21 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
         }
         if (e.key === 'Enter' && (e.ctrlKey || e.shiftKey)) {
+          // 应用已启用 kitty 键盘协议时，Shift+Enter 必须交给 xterm 自己编码成
+          // CSI 13;2u（kitty 下带修饰键只能走 CSI-u），自行注入字节会被 TUI 当成
+          // 普通 Enter 或未绑定组合。
+          if (e.shiftKey && !e.ctrlKey && getKittyKeyboardFlags(terminal) > 0) return;
           e.preventDefault();
           e.stopPropagation();
-          // 显式换行（不提交）。已知局限（N-9）：Windows ConPTY 会把注入的 LF
-          // 上报为 Ctrl+Enter，kitty 协议 TUI 中可能表现为提交而非换行；
-          // 这是所有非物理按键注入方案的共同限制，暂保持 LF 不变。
-          onOutputRef.current(terminalId, '\n');
+          // 显式换行（不提交）。
+          // Windows ConPTY 会把注入的 LF 上报成 Ctrl+Enter，Codex 不识别该组合，
+          // 表现为 Shift+Enter 完全没反应（N-9）。因此 TUI（alt buffer）里改注入
+          // Alt+Enter（ESC+CR）：ConPTY 会把它翻译成带 LEFT_ALT_PRESSED 的 Enter，
+          // 而 Codex / Claude Code 的默认键位都把 Alt+Enter 绑定为插入换行。
+          // 非 Windows 继续用 LF（Linux 上是 Ctrl+J）；普通 shell 不注入 ESC，
+          // 避免 vim 等程序把 ESC 当成退出插入模式（bash 的 Meta-Return 也未绑定）。
+          const tuiActive = inAltBufferRef.current || hasTuiInputChrome(terminal);
+          onOutputRef.current(terminalId, buildNumber && tuiActive ? '\x1b\r' : '\n');
           return;
         }
         if (e.key === 'c' && e.ctrlKey && !e.shiftKey) {

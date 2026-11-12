@@ -716,6 +716,18 @@ export function xtermCoreOf(term: Terminal): { viewport?: { _innerRefresh?: () =
   return ((term as any)._core as { viewport?: { _innerRefresh?: () => void } } | undefined) ?? null;
 }
 
+/**
+ * 读取 xterm 内部记录的 kitty 键盘协议标志位。
+ * 应用通过 `CSI > flags u` 启用增强按键后非 0（bit0 = 区分转义码，开启后 xterm 才会
+ * 把带修饰的 Enter 编码成 CSI-u，例如 Shift+Enter → `CSI 13;2u`）。
+ */
+export function getKittyKeyboardFlags(term: Terminal): number {
+  const core = (term as any)._core as
+    | { coreService?: { kittyKeyboard?: { flags?: number } } }
+    | undefined;
+  return core?.coreService?.kittyKeyboard?.flags ?? 0;
+}
+
 // --- 剪贴板粘贴（图片/文本三级回退的单一实现） ---
 
 export type ClipboardPasteResult =
