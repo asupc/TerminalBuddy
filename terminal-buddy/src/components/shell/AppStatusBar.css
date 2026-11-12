@@ -1,0 +1,152 @@
+/* 底部状态栏：24px 常驻一条，信息从现有主题令牌取值。 */
+.app-statusbar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  height: 24px;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  user-select: none;
+}
+
+.app-statusbar-item {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: default;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+
+.app-statusbar-clickable { cursor: pointer; }
+
+.app-statusbar-item:hover {
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
+}
+
+.app-statusbar-icon {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  stroke-width: 1.7;
+}
+
+.app-statusbar-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 18%, transparent);
+}
+
+.app-statusbar-dot.running {
+  animation: app-statusbar-pulse 2.4s ease-in-out infinite;
+}
+
+.app-statusbar-dot.idle {
+  background: var(--text-tertiary);
+  box-shadow: none;
+}
+
+@keyframes app-statusbar-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 18%, transparent); }
+  50% { box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--success) 8%, transparent); }
+}
+
+.app-statusbar-divider {
+  width: 1px;
+  margin-block: 6px;
+  flex: none;
+  background: var(--border-subtle);
+}
+
+.app-statusbar-session {
+  max-width: 220px;
+}
+
+.app-statusbar-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-statusbar-badge {
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.app-statusbar-path-full {
+  min-width: 0;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-statusbar-path-short { display: none; }
+
+.app-statusbar-sync {
+  color: var(--success);
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+}
+
+.app-statusbar-changes { color: var(--text-tertiary); }
+
+.app-statusbar-mono {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+}
+
+/* 资源占用偏高的读数用警示色；正常时沿用状态栏文字色。 */
+.app-statusbar-resource.warn { color: var(--warning); }
+.app-statusbar-resource.critical { color: var(--danger); }
+
+/* CPU / 内存条目共用定位上下文，趋势浮层通过 portal 挂到 body。 */
+.app-statusbar-resource-group {
+  display: inline-flex;
+  align-items: stretch;
+  flex: none;
+}
+
+.app-statusbar-muted { color: var(--text-tertiary); }
+
+.app-statusbar-idle { color: var(--text-tertiary); }
+
+.app-statusbar-right {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  margin-left: auto;
+}
+
+@media (max-width: 720px) {
+  .app-statusbar-optional { display: none; }
+  .app-statusbar-path-full { display: none; }
+  .app-statusbar-path-short { display: inline; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-statusbar-dot.running { animation: none; }
+}

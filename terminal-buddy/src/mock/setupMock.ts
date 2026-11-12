@@ -412,6 +412,20 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
       case 'get_git_repository_status':
       case 'get_git_status':
         return MOCK_GIT_STATUS;
+      case 'git_get_changed_files':
+        return [
+          { path: 'src/views/order/OrderList.vue', extension: '.vue', status: '已修改', additions: 12, deletions: 3, staged: true, untracked: false },
+          { path: 'src/api/order.ts', extension: '.ts', status: '已修改', additions: 8, deletions: 1, staged: false, untracked: false },
+          { path: 'docs/payment-flow.md', extension: '.md', status: '未版本控制', additions: 0, deletions: 0, staged: false, untracked: true },
+        ];
+      case 'git_get_worktree_file_diff':
+        return {
+          path: String(args.filePath ?? ''),
+          oldPath: null,
+          oldContent: '  const handlePay = async (row: OrderItem) => {\n    await api.payOrder(row.id);\n    ElMessage.success(\'支付成功\');\n  };',
+          newContent: '  const handlePay = async (row: OrderItem) => {\n    const { qrcodeUrl, orderNo } = await api.createWechatPay(row.id);\n    openPayQrModal({ qrcodeUrl, orderNo });\n    listenPaymentStatus(orderNo);\n  };',
+          binary: false,
+        };
       case 'git_get_history':
       case 'get_git_commit_history':
         return {
@@ -484,6 +498,17 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
         ];
 
       // ===== Web API & Management =====
+      case 'get_system_resources': {
+        const memoryTotal = 16 * 1024 ** 3;
+        const memoryUsed = memoryTotal * (0.32 + Math.random() * 0.3);
+        return {
+          cpuUsage: 8 + Math.random() * 30,
+          cpuCount: 8,
+          memoryUsed,
+          memoryTotal,
+          memoryUsage: (memoryUsed / memoryTotal) * 100,
+        };
+      }
       case 'get_web_api_status':
         return {
           enabled: true,

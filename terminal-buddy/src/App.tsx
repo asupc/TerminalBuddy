@@ -6,6 +6,7 @@ import { useDesktopOpenSessionSync } from './hooks/useDesktopOpenSessionSync';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from "./components/shell/TitleBar";
+import { AppStatusBar } from "./components/shell/AppStatusBar";
 import { ConfigNav } from "./components/profile-config/ConfigNav";
 import { TerminalPanel } from "./components/terminal/TerminalPanel";
 import { FileNav } from "./components/file-explorer/FileNav";
@@ -87,6 +88,7 @@ function App() {
   const [showExtraParamsDialog, setShowExtraParamsDialog] = useState(false);
   const [enableTabNav, setEnableTabNav] = useState(true);
   const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
+  const [showStatusBar, setShowStatusBar] = useState(() => getAppSettings().showStatusBar);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
   // 侧栏风格下面板互斥：历史 / Claude 面板首次点开才挂载（挂载后常驻，保留编辑态）。
   // 两者一挂载就会扫 ~/.claude 与历史索引库，不该压在启动路径上。
@@ -384,7 +386,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const handler = () => setUiStyle(getAppSettings().uiStyle);
+    const handler = () => {
+      const settings = getAppSettings();
+      // 设置页会在 setState 的 updater 里保存设置并同步派发 app-settings-changed；
+      // 这里延迟到微任务，避免在 SettingsPage 渲染期间更新 App 状态。
+      queueMicrotask(() => {
+        setUiStyle(settings.uiStyle);
+        setShowStatusBar(settings.showStatusBar);
+      });
+    };
     window.addEventListener('app-settings-changed', handler);
     return () => window.removeEventListener('app-settings-changed', handler);
   }, []);
@@ -400,6 +410,16 @@ function App() {
     }
     useAppStore.getState().bumpTerminalLayout();
   }, [sidebarPanel, uiStyle]);
+
+  // 状态栏显隐会改变终端可用高度；TUI 下 ResizeObserver 不重排，走与 F11 同款强制 fit。
+  const statusBarLayoutMountedRef = useRef(false);
+  useEffect(() => {
+    if (!statusBarLayoutMountedRef.current) {
+      statusBarLayoutMountedRef.current = true;
+      return;
+    }
+    useAppStore.getState().bumpTerminalLayout();
+  }, [showStatusBar]);
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
@@ -775,6 +795,7 @@ function App() {
         )}
         <TerminalPanel />
       </div>
+      {showStatusBar && windowMode !== 'panels-hidden' && <AppStatusBar />}
       <div className="cartoon-anime1-overlay" aria-hidden="true">
         <span className="cartoon-anime1-left" />
         <span className="cartoon-anime1-center" />

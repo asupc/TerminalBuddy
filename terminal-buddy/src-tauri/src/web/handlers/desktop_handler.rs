@@ -115,6 +115,7 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
         }
     }
     // SSH 路径属于远端主机，不能拿服务器文件范围来比较。
+    let is_git_command = command == "get_git_repository_status" || command.starts_with("git_");
     let path_keys: &[&str] = if command.starts_with("remote_") { &["localPath", "localDir"] } else {
         // destPath：claude/codex_history_export 直接落盘写文件，必须与 path 一样受
         // scope 约束，否则持 JWT 可向任意路径写文件（审查 M-1）。
@@ -122,6 +123,10 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
         &["path", "startupPath", "projectDir", "filePath", "newPath", "destPath", "selectedDir"]
     };
     for key in path_keys {
+        // Git 的 filePath 是仓库内相对路径（如 src/App.tsx），命令层用
+        // ensure_repo_relative_path 拒绝绝对路径与 `..`；这里若按服务器绝对路径
+        // 校验，网页端所有 diff 预览都会被 403「必须使用服务器绝对路径」拒掉。
+        if is_git_command && *key == "filePath" { continue; }
         if let Some(path) = args.get(*key).and_then(Value::as_str).filter(|p| !p.trim().is_empty()) { scoped_file(path)?; }
     }
     if let Some(path) = args.get("options").and_then(|v| v.get("path")).and_then(Value::as_str) { scoped_file(path)?; }

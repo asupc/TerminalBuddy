@@ -1,0 +1,191 @@
+/* 状态栏资源趋势浮层：双系列折线（CPU / 内存），配色经 dataviz 校验。 */
+.resource-trend-popover {
+  --trend-cpu: #3987e5;
+  --trend-mem: #d95926;
+  position: fixed;
+  z-index: 90;
+  width: min(460px, calc(100vw - 20px));
+  padding: 10px 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-menu);
+  color: var(--text-primary);
+  font-size: 11px;
+  user-select: none;
+}
+
+[data-theme="light"] .resource-trend-popover {
+  --trend-cpu: #2a78d6;
+  --trend-mem: #eb6834;
+}
+
+.resource-trend-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.resource-trend-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.resource-trend-range {
+  color: var(--text-tertiary);
+}
+
+.resource-trend-close {
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.resource-trend-close:hover {
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
+}
+
+.resource-trend-close svg {
+  width: 12px;
+  height: 12px;
+}
+
+.resource-trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 6px 0 2px;
+  color: var(--text-secondary);
+}
+
+.resource-trend-legend-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+/* 图例用短线呼应折线本身，身份不依赖文字着色。 */
+.resource-trend-key {
+  width: 14px;
+  height: 2px;
+  flex: none;
+  border-radius: 1px;
+  align-self: center;
+}
+
+.resource-trend-key.cpu { background: var(--trend-cpu); }
+.resource-trend-key.mem { background: var(--trend-mem); }
+
+.resource-trend-legend-item strong {
+  color: var(--text-primary);
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-weight: 600;
+}
+
+.resource-trend-peak {
+  color: var(--text-tertiary);
+}
+
+.resource-trend-chart {
+  position: relative;
+  margin-top: 2px;
+}
+
+.resource-trend-chart svg {
+  display: block;
+  overflow: visible;
+  touch-action: none;
+}
+
+.resource-trend-grid {
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+}
+
+.resource-trend-axis {
+  fill: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.resource-trend-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.resource-trend-line.cpu { stroke: var(--trend-cpu); }
+.resource-trend-line.mem { stroke: var(--trend-mem); }
+
+/* 终点圆点带 2px 表面色描边，与折线交叠时仍清晰。 */
+.resource-trend-dot {
+  stroke: var(--bg-elevated);
+  stroke-width: 2;
+}
+
+.resource-trend-dot.cpu { fill: var(--trend-cpu); }
+.resource-trend-dot.mem { fill: var(--trend-mem); }
+
+.resource-trend-crosshair {
+  stroke: var(--text-tertiary);
+  stroke-width: 1;
+  opacity: 0.45;
+}
+
+.resource-trend-tooltip {
+  position: absolute;
+  top: 2px;
+  min-width: 74px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-menu);
+  color: var(--text-secondary);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.resource-trend-tooltip-time {
+  margin-bottom: 2px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.resource-trend-tooltip-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.resource-trend-tooltip-row strong {
+  color: var(--text-primary);
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 12px;
+}
+
+.resource-trend-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.resource-trend-footnote {
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}

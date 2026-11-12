@@ -59,6 +59,23 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
 
         <div className="settings-row">
           <div className="settings-row-info">
+            <div className="settings-row-title">显示底部状态栏</div>
+            <p className="settings-row-desc">在窗口底部常驻显示当前会话、工作目录、Git 与 Web 服务状态；按 F11 全屏时自动隐藏。</p>
+          </div>
+          <div className="settings-row-ctrl">
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                aria-label="显示底部状态栏"
+                checked={settings.showStatusBar}
+                onChange={event => updateSetting('showStatusBar', event.target.checked)}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-info">
             <div className="settings-row-title">UI 样式</div>
             <p className="settings-row-desc">侧边栏样式参考 VS Code，将项目与命令、文件与 Git、会话标签、Claude Code 会话和设置入口集中到左侧</p>
           </div>

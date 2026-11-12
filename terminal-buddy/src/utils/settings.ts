@@ -49,6 +49,7 @@ export type UiStyle = 'default' | 'sidebar';
 
 export interface AppSettings {
   uiStyle: UiStyle;
+  showStatusBar: boolean;
   restoreTabsOnStartup: boolean;
   configPanelAutoExpand: boolean;
   fileTreeAutoExpand: boolean;
@@ -99,6 +100,7 @@ export interface AppSettings {
 
 const DEFAULT_SETTINGS: AppSettings = {
   uiStyle: 'default',
+  showStatusBar: true,
   restoreTabsOnStartup: true,
   configPanelAutoExpand: true,
   fileTreeAutoExpand: true,
