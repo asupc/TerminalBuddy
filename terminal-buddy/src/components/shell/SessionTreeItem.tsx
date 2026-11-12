@@ -1,9 +1,9 @@
 import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
 import { SessionTaskLabel } from './SessionTaskLabel';
-import { FC } from 'react';
+import { FC, type ReactElement } from 'react';
 import { ChevronRight, Folder, FolderOpen, X } from 'lucide-react';
-import { useAppStore, type GitChangesTab, type NativeAgentTab } from '../../stores/appStore';
+import { useAppStore, type GitChangesTab, type GitHistoryTab, type NativeAgentTab } from '../../stores/appStore';
 import { formatDuration } from '../../utils/formatDuration';
 import { isDockerClient } from '../../services/platform';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName, type IndicatorLight } from '../../utils/claudeIndicator';
@@ -40,6 +40,12 @@ const agentLeafData = (data: unknown): AgentLeafData | undefined => (
 interface GitChangesLeafData { kind: 'git-changes'; tab: GitChangesTab }
 const gitChangesLeafData = (data: unknown): GitChangesLeafData | undefined => (
   (data as GitChangesLeafData | undefined)?.kind === 'git-changes' ? data as GitChangesLeafData : undefined
+);
+
+/** 「Git 历史记录」页的叶子数据：同样跟随所属项目的分组。 */
+interface GitHistoryLeafData { kind: 'git-history'; tab: GitHistoryTab }
+const gitHistoryLeafData = (data: unknown): GitHistoryLeafData | undefined => (
+  (data as GitHistoryLeafData | undefined)?.kind === 'git-history' ? data as GitHistoryLeafData : undefined
 );
 
 /** 会话树递归渲染：分组节点 + 终端/编辑器叶子（含重命名输入 UI 与徽章）。 */
@@ -88,11 +94,13 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
     const allLeafIds = collectLeafIds(groupItem);
     const groupSessions = sessions.filter(s => allLeafIds.includes(s.id));
     const groupAgentKeys = agentTabs.filter(tab => tab.shape === 'native' && allLeafIds.includes(tab.key)).map(tab => tab.key);
-    // 未提交变更页也算分组内的一个标签，但不参与「关闭分组」（它属于项目视图）。
-    const gitChangesCount = allLeafIds.includes('__git_changes__') ? 1 : 0;
+    // Git 特殊页（未提交变更 / 历史记录）也算分组内的标签，但不参与「关闭分组」（它们属于项目视图）。
+    const gitPagesCount =
+      (allLeafIds.includes('__git_changes__') ? 1 : 0) +
+      (allLeafIds.includes('__git_history__') ? 1 : 0);
     return (
       <span className="tree-item-end">
-        <span className="tree-item-count">{groupSessions.length + groupAgentKeys.length + gitChangesCount}</span>
+        <span className="tree-item-count">{groupSessions.length + groupAgentKeys.length + gitPagesCount}</span>
         <button
           className="tree-item-close"
           onClick={(e) => { e.stopPropagation(); onCloseGroup(groupItem.id, groupSessions, groupAgentKeys); }}
@@ -103,6 +111,43 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
       </span>
     );
   };
+
+  /** 项目分组内的 Git 特殊页叶子（未提交变更 / 历史记录）共用同一套行 UI。 */
+  const renderGitSpecialLeaf = (
+    child: TreeItem,
+    options: { active: boolean; label: string; title: string; open: () => void; close: () => void },
+  ): ReactElement => (
+    <div
+      key={child.id}
+      className={`tree-item tab-nav-item${options.active ? ' active' : ''}`}
+      style={{ paddingLeft: `${indent + 12}px` }}
+      title={options.title}
+      onMouseDown={() => { useAppStore.getState().setLastClickRegion('tab'); }}
+      onClick={() => {
+        const store = useAppStore.getState();
+        store.setLastClickRegion('tab');
+        options.open();
+      }}
+      onAuxClick={(e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          options.close();
+        }
+      }}
+    >
+      {child.icon}
+      <span className="tree-name">{options.label}</span>
+      <span className="tree-item-end">
+        <button
+          className="tree-item-close"
+          onClick={(e) => { e.stopPropagation(); options.close(); }}
+          title="关闭"
+        >
+          <X aria-hidden="true" />
+        </button>
+      </span>
+    </div>
+  );
 
   // 灯点击语义：failed 长红点击清除；attention 点击跳终端处理
   const onLedClick = (e: React.MouseEvent, id: string, light: IndicatorLight) => {
@@ -173,42 +218,32 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
             />
           );
         }
-        // Leaf node: 未提交变更页（跟随所属项目的分组）
+        // Leaf node: 未提交变更 / Git 历史记录页（跟随所属项目的分组）
         const gitChangesLeaf = gitChangesLeafData(child.data);
         if (gitChangesLeaf) {
-          const active = activeSpecialTab === 'git-changes';
-          return (
-            <div
-              key={child.id}
-              className={`tree-item tab-nav-item${active ? ' active' : ''}`}
-              style={{ paddingLeft: `${indent + 12}px` }}
-              title={`${gitChangesLeaf.tab.repoRoot} - 未提交变更`}
-              onMouseDown={() => { useAppStore.getState().setLastClickRegion('tab'); }}
-              onClick={() => {
-                const store = useAppStore.getState();
-                store.setLastClickRegion('tab');
-                if (store.gitChangesTab) store.openGitChangesTab(store.gitChangesTab);
-              }}
-              onAuxClick={(e) => {
-                if (e.button === 1) {
-                  e.preventDefault();
-                  useAppStore.getState().closeGitChangesTab();
-                }
-              }}
-            >
-              {child.icon}
-              <span className="tree-name">未提交变更</span>
-              <span className="tree-item-end">
-                <button
-                  className="tree-item-close"
-                  onClick={(e) => { e.stopPropagation(); useAppStore.getState().closeGitChangesTab(); }}
-                  title="关闭"
-                >
-                  <X aria-hidden="true" />
-                </button>
-              </span>
-            </div>
-          );
+          return renderGitSpecialLeaf(child, {
+            active: activeSpecialTab === 'git-changes',
+            label: '未提交变更',
+            title: `${gitChangesLeaf.tab.repoRoot} - 未提交变更`,
+            open: () => {
+              const store = useAppStore.getState();
+              if (store.gitChangesTab) store.openGitChangesTab(store.gitChangesTab);
+            },
+            close: () => useAppStore.getState().closeGitChangesTab(),
+          });
+        }
+        const gitHistoryLeaf = gitHistoryLeafData(child.data);
+        if (gitHistoryLeaf) {
+          return renderGitSpecialLeaf(child, {
+            active: activeSpecialTab === 'git-history',
+            label: 'Git 历史记录',
+            title: `${gitHistoryLeaf.tab.repoRoot} - Git 历史记录`,
+            open: () => {
+              const store = useAppStore.getState();
+              if (store.gitHistoryTab) store.openGitHistoryTab(store.gitHistoryTab);
+            },
+            close: () => useAppStore.getState().closeGitHistoryTab(),
+          });
         }
         // Leaf node: 原生 AI 会话标签（与终端同组，点击打开聊天页）
         const agentLeaf = agentLeafData(child.data);

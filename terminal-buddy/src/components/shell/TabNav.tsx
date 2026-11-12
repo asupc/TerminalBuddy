@@ -2,7 +2,7 @@ import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { FileText, X } from 'lucide-react';
-import { isTerminalWorking, useAppStore, sessionReplayTabKey, type GitChangesTab, type NativeAgentTab } from '../../stores/appStore';
+import { isTerminalWorking, useAppStore, sessionReplayTabKey, type GitChangesTab, type GitHistoryTab, type NativeAgentTab } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWidth, getBackendAppSettings, writeFileContent, readFileContent } from '../../services/tauri';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -42,7 +42,8 @@ interface TabSidebarProps {
 type SessionLeaf =
   | { kind: 'terminal'; session: TerminalSession }
   | { kind: 'agent'; tab: NativeAgentTab }
-  | { kind: 'git-changes'; tab: GitChangesTab };
+  | { kind: 'git-changes'; tab: GitChangesTab }
+  | { kind: 'git-history'; tab: GitHistoryTab };
 
 export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor, onAddProfile }) => {
   const sessions = useAppStore(s => s.sessions);
@@ -51,8 +52,6 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   const tabGroups = useAppStore(s => s.groups);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
-  const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
-  const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
   const gitChangesTab = useAppStore(s => s.gitChangesTab);
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
   const claudeReplayTabs = useAppStore(s => s.claudeReplayTabs);
@@ -197,14 +196,15 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     const terminalSessions = sessions.filter(s => s.sessionType !== 'editor');
     const nativeTabs = agentTabs.filter(tab => tab.shape === 'native');
     const leaves: SessionLeaf[] = [
-      // 未提交变更页属于某个项目，跟着项目分组一起展示，而不是固定在分组外。
+      // 未提交变更 / Git 历史记录都属于某个项目，跟着项目分组一起展示，而不是固定在分组外。
       ...(gitChangesTab ? [{ kind: 'git-changes' as const, tab: gitChangesTab }] : []),
+      ...(gitHistoryTab ? [{ kind: 'git-history' as const, tab: gitHistoryTab }] : []),
       ...terminalSessions.map(session => ({ kind: 'terminal' as const, session })),
       ...nativeTabs.map(tab => ({ kind: 'agent' as const, tab })),
     ];
 
     const tree = buildGroupTree(leaves, leaf => {
-      if (leaf.kind === 'git-changes') {
+      if (leaf.kind === 'git-changes' || leaf.kind === 'git-history') {
         return projectForDirectory(projects, leaf.tab.repoRoot)?.name || '默认';
       }
       if (leaf.kind === 'agent') {
@@ -242,6 +242,14 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                 label: '未提交变更',
                 icon: <span className="tab-nav-dot" style={{ background: '#55b988' }} />,
                 data: { kind: 'git-changes' as const, tab: leaf.tab },
+              };
+            }
+            if (leaf.kind === 'git-history') {
+              return {
+                id: '__git_history__',
+                label: 'Git 历史记录',
+                icon: <span className="tab-nav-dot" style={{ background: '#e6a23c' }} />,
+                data: { kind: 'git-history' as const, tab: leaf.tab },
               };
             }
             if (leaf.kind === 'agent') {
@@ -347,7 +355,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     }
 
     return items;
-  }, [sessions, agentTabs, projects, profiles, tabGroups, terminalActivities, settingsVersion, taskSummaries, gitChangesTab]);
+  }, [sessions, agentTabs, projects, profiles, tabGroups, terminalActivities, settingsVersion, taskSummaries, gitChangesTab, gitHistoryTab]);
 
   // Mirror the project/profile grouping in the configuration navigation.
   const submenuTree = useMemo(() => {
@@ -641,37 +649,6 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
       <div className="panel-titlebar">
         <span className="panel-title">会话标签</span>
         <span className="panel-title-count">{sessions.length + nativeAgentTabCount}</span>
-      </div>
-      <div className="tab-nav-header">
-        {gitHistoryTab && (
-          <div
-            className={`tab-nav-settings-btn ${activeSpecialTab === 'git-history' ? 'active' : ''}`}
-            onClick={() => openGitHistoryTab(gitHistoryTab)}
-            onAuxClick={(event) => {
-              if (event.button === 1) {
-                event.preventDefault();
-                closeGitHistoryTab();
-              }
-            }}
-            onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
-            title={`${gitHistoryTab.repoRoot} - Git 历史记录`}
-          >
-            <span className="tab-nav-dot" style={{ background: '#e6a23c' }} />
-            <span className="tab-nav-name">Git 历史记录</span>
-            <button
-              className="tree-item-close"
-              onClick={(event) => {
-                event.stopPropagation();
-                closeGitHistoryTab();
-              }}
-              title="关闭"
-              aria-label="关闭 Git 历史记录"
-            >
-              <X aria-hidden="true" />
-            </button>
-          </div>
-        )}
-
       </div>
       <div
         className={`tab-nav-content${dropActive ? ' drop-target' : ''}`}
