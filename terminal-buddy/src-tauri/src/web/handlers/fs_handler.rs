@@ -1,10 +1,9 @@
-//! Web 端项目文件树（只读浏览）：仅暴露已登记项目目录内的内容。
+//! Web 端项目文件树（只读浏览）：可浏览服务器任意目录，不要求目录已登记为项目。
 //! 目录读取复用 PC 端 `list_directory`；排除模式 Web 端暂不可配置，用固定常见集。
 
 use crate::services::directory_browser_service::{self, ServerDirectory};
 use crate::web::auth::ClaimsFromRequest;
 use crate::web::error::ApiError;
-use crate::web::handlers::ensure_project_scope;
 use crate::web::server::AppState;
 use axum::{extract::{Query, State}, Json};
 use serde::Deserialize;
@@ -26,13 +25,13 @@ fn web_exclusions() -> Vec<String> {
     .collect()
 }
 
-/// 列出项目目录内容（目录在前、按名称排序，与 PC 端一致）。
+/// 列出目录内容（目录在前、按名称排序，与 PC 端一致）。
+/// 只读浏览不限制目录是否已登记；文件内容读取与写入仍由各自接口校验项目范围。
 pub async fn list(
     State(_state): State<AppState>,
     _claims: ClaimsFromRequest,
     Query(q): Query<FsListQuery>,
 ) -> Result<Json<Vec<crate::commands::fs::FileNode>>, ApiError> {
-    ensure_project_scope(&q.path)?;
     let path = q.path;
     let exclusions = web_exclusions();
     let nodes = tokio::task::spawn_blocking(move || {
@@ -54,7 +53,7 @@ fn browse_roots() -> Result<Vec<ServerDirectory>, ApiError> {
     Ok(directory_browser_service::browse_roots(projects, super::is_docker_runtime()))
 }
 
-/// 项目选择器入口：配置目录、工作区、Docker 挂载目录及已登记项目。
+/// 项目选择器入口：文件系统根、配置目录、工作区、Docker 挂载目录及已登记项目。
 pub async fn roots(_claims: ClaimsFromRequest) -> Result<Json<Vec<ServerDirectory>>, ApiError> {
     let roots = tokio::task::spawn_blocking(browse_roots)
         .await
@@ -62,15 +61,14 @@ pub async fn roots(_claims: ClaimsFromRequest) -> Result<Json<Vec<ServerDirector
     Ok(Json(roots))
 }
 
-/// 添加项目时允许浏览挂载目录，但不授予对应目录的文件读写或 Git 权限。
+/// 添加项目时允许浏览服务器任意目录，不要求目录已登记。
 pub async fn directories(
     _claims: ClaimsFromRequest,
     Query(q): Query<FsListQuery>,
 ) -> Result<Json<Vec<ServerDirectory>>, ApiError> {
     let directories = tokio::task::spawn_blocking(move || {
-        let roots = browse_roots()?;
-        let path = directory_browser_service::resolve_directory(&q.path, &roots).map_err(ApiError::Forbidden)?;
-        directory_browser_service::list_directories(&path, &roots).map_err(ApiError::BadRequest)
+        let path = directory_browser_service::resolve_directory(&q.path).map_err(ApiError::Forbidden)?;
+        directory_browser_service::list_directories(&path).map_err(ApiError::BadRequest)
     })
     .await
     .map_err(|error| ApiError::Internal(format!("读取目录任务执行失败：{}", error)))??;

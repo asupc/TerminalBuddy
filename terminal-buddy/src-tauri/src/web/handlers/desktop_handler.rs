@@ -114,9 +114,16 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
                 .map_err(access_map_error)?;
         }
     }
+    // 文件管理器的浏览、预览、下载、读写、删除、重命名都不要求目录已登记为项目。
+    // 项目范围只约束依赖项目登记的功能（Git 操作、AI 会话等）。
+    let file_manager_command = matches!(
+        command,
+        "list_directory" | "get_file_size" | "get_file_meta" | "read_file_content"
+            | "write_file_content" | "delete_path" | "rename_path" | "open_path" | "open_in_explorer"
+    );
     // SSH 路径属于远端主机，不能拿服务器文件范围来比较。
     let is_git_command = command == "get_git_repository_status" || command.starts_with("git_");
-    let path_keys: &[&str] = if command.starts_with("remote_") { &["localPath", "localDir"] } else {
+    let path_keys: &[&str] = if command.starts_with("remote_") { &["localPath", "localDir"] } else if file_manager_command { &[] } else {
         // destPath：claude/codex_history_export 直接落盘写文件，必须与 path 一样受
         // scope 约束，否则持 JWT 可向任意路径写文件（审查 M-1）。
         // selectedDir：uninstall_claude_hooks 会在该目录写 settings.json（M-1 同类）。
@@ -357,7 +364,6 @@ pub async fn upload(State(_state): State<AppState>, _claims: ClaimsFromRequest, 
 pub async fn file(State(state): State<AppState>, Query(query): Query<HashMap<String,String>>) -> Result<Response, ApiError> {
     verify_token(query.get("token").ok_or_else(|| ApiError::Unauthorized("请先登录".to_string()))?, &state.jwt_secret).map_err(|_| ApiError::Unauthorized("登录已过期".to_string()))?;
     let path = query.get("path").ok_or_else(|| ApiError::BadRequest("缺少路径".to_string()))?;
-    scoped_file(path)?;
     let bytes = tokio::fs::read(path).await.map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let mime = match PathBuf::from(path).extension().and_then(|v| v.to_str()).unwrap_or("").to_lowercase().as_str() {
         "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "gif" => "image/gif", "webp" => "image/webp", _ => "application/octet-stream",
@@ -369,12 +375,12 @@ pub async fn file(State(state): State<AppState>, Query(query): Query<HashMap<Str
 ///
 /// 路由注册在请求超时层之外，大文件 / 大目录下载不会因为 REQUEST_TIMEOUT 被中断。
 /// 鉴权与 `/api/desktop/file` 一致：浏览器直接导航无法带 Authorization 头，
-/// 因此沿用查询串里的 JWT。目录 ZIP 使用与响应同生命周期的临时文件，连接结束即清理。
+/// 因此沿用查询串里的 JWT。与文件管理器一致，下载路径不要求目录已登记。
+/// 目录 ZIP 使用与响应同生命周期的临时文件，连接结束即清理。
 pub async fn download(State(state): State<AppState>, Query(query): Query<HashMap<String,String>>) -> Result<Response, ApiError> {
     verify_token(query.get("token").ok_or_else(|| ApiError::Unauthorized("请先登录".to_string()))?, &state.jwt_secret)
         .map_err(|_| ApiError::Unauthorized("登录已过期".to_string()))?;
     let path = query.get("path").ok_or_else(|| ApiError::BadRequest("缺少路径".to_string()))?;
-    scoped_file(path)?;
     let source = PathBuf::from(path);
     let metadata = tokio::fs::metadata(&source).await
         .map_err(|e| ApiError::BadRequest(format!("无法读取文件：{}", e)))?;

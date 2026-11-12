@@ -25,8 +25,9 @@ pub fn is_docker_runtime() -> bool {
             || std::path::Path::new("/.dockerenv").is_file())
 }
 
-/// Web 端文件树 / Git 的访问白名单：只允许已登记项目目录（含子目录）。
-/// 终端本身就有 shell 能力，但文件浏览接口仍收窄到项目范围，避免全盘暴露。
+/// Web 端文件内容 / Git 的访问白名单：只允许已登记项目目录（含子目录）。
+/// 只读目录浏览（list_directory / 文件管理器）不受此限制；其余文件操作仍收窄到
+/// 项目范围，避免任意读取内容或写入文件。
 /// 返回实际路径的规范化 key（Windows 忽略大小写，Linux 保留大小写），供仓库互斥使用。
 pub(crate) fn ensure_project_scope(path: &str) -> Result<String, ApiError> {
     let key = canonical_scope_key(path)?;

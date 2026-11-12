@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::fs;
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileMeta {
     last_modified: u64,
     size: u64,

@@ -1,4 +1,4 @@
-//! 项目目录选择器的入口与只读目录浏览；不扩大项目文件 / Git 的访问范围。
+//! 目录选择器的入口与只读目录浏览；浏览范围不受项目登记限制。
 use serde::Serialize;
 use std::{collections::HashSet, fs, path::{Path, PathBuf}};
 
@@ -89,6 +89,14 @@ fn mounted_directories() -> Vec<PathBuf> {
 pub fn browse_roots(projects: Vec<ServerDirectory>, docker_runtime: bool) -> Vec<ServerDirectory> {
     let mut roots = Vec::new();
     let mut seen = HashSet::new();
+    // 文件系统根始终作为兜底入口：没有登记项目或挂载目录时也能从根浏览。
+    #[cfg(windows)]
+    let system_root = std::env::var_os("SystemDrive")
+        .map(|drive| PathBuf::from(format!("{}\\", drive.to_string_lossy())))
+        .unwrap_or_else(|| PathBuf::from("C:\\"));
+    #[cfg(not(windows))]
+    let system_root = PathBuf::from("/");
+    add_root(&mut roots, &mut seen, "文件系统根".into(), &system_root);
     if let Some(configured) = std::env::var_os("TERMINAL_BUDDY_BROWSE_ROOTS") {
         for path in std::env::split_paths(&configured) {
             add_root(&mut roots, &mut seen, "配置目录".into(), &path);
@@ -108,33 +116,23 @@ pub fn browse_roots(projects: Vec<ServerDirectory>, docker_runtime: bool) -> Vec
     roots
 }
 
-fn within_roots(path: &Path, roots: &[ServerDirectory]) -> bool {
-    let key = path_key(path);
-    let separator = std::path::MAIN_SEPARATOR;
-    roots.iter().any(|root| {
-        let base = path_key(Path::new(&root.path));
-        key == base || key.starts_with(&format!("{}{}", base.trim_end_matches(separator), separator))
-    })
-}
-
-/// 对请求目录及其符号链接目标检查范围，不允许通过 .. 或链接跳出浏览入口。
-pub fn resolve_directory(path: &str, roots: &[ServerDirectory]) -> Result<PathBuf, String> {
+/// 校验并规范化目录路径；不限制目录是否已登记为项目。
+pub fn resolve_directory(path: &str) -> Result<PathBuf, String> {
     let path = Path::new(path);
     if !path.is_absolute() { return Err("必须使用服务器绝对路径".into()); }
     let real = path.canonicalize().map_err(|e| format!("目录不可访问：{}", e))?;
-    if !within_roots(&real, roots) { return Err("该目录不在可浏览目录范围内".into()); }
     if !real.is_dir() { return Err("请选择目录".into()); }
     Ok(real)
 }
 
-/// 选择器仅列出目录；文件内容仍通过原有的项目权限检查读取。
-pub fn list_directories(path: &Path, roots: &[ServerDirectory]) -> Result<Vec<ServerDirectory>, String> {
+/// 选择器仅列出目录；不做项目登记或浏览入口范围过滤。
+pub fn list_directories(path: &Path) -> Result<Vec<ServerDirectory>, String> {
     let entries = fs::read_dir(path).map_err(|e| format!("读取目录失败：{}", e))?;
     let mut directories = Vec::new();
     for entry in entries.flatten() {
         let child = entry.path();
         let Ok(real) = child.canonicalize() else { continue; };
-        if !real.is_dir() || !within_roots(&real, roots) { continue; }
+        if !real.is_dir() { continue; }
         directories.push(ServerDirectory {
             name: entry.file_name().to_string_lossy().into_owned(),
             path: display_path(&child),
