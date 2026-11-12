@@ -33,7 +33,7 @@ export async function getBackendAppSettings(): Promise<{
   claudeHookConfigDir: string | null;
   agentCommands: AgentCommands;
   agentDownloadSource?: AgentDownloadSource;
-  /** 新会话形态：true = 原生会话，false = 终端接力。 */
+  /** 新会话形态：true = 原生会话，false = 终端接力（默认）。 */
   nativeChatSessions?: boolean;
 }> {
   return invoke('get_app_settings');
@@ -43,7 +43,7 @@ export async function saveAgentCommands(claude: string, codex: string): Promise<
   return invoke('save_agent_commands', { claude, codex });
 }
 
-/** 新会话形态：true = 原生会话，false = 终端接力。只影响之后新建的会话。 */
+/** 新会话形态：true = 原生会话，false = 终端接力（默认）。只影响之后新建的会话。 */
 export const saveNativeChatSessions = (enabled: boolean) =>
   invoke<void>('save_native_chat_sessions', { enabled });
 

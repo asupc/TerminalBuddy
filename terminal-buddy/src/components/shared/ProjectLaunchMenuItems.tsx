@@ -76,7 +76,7 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
           title={source === 'claude' ? 'Claude 模型' : 'Codex 模型'}
           onPickModel={(providerId, modelId) => {
             onLaunched();
-            // 新会话形态由设置决定：原生会话（默认）直接开聊天标签，终端接力沿用终端启动。
+            // 新会话形态由设置决定：原生会话直接开聊天标签，终端接力（默认）沿用终端启动。
             // 创建失败必须提示（如供应商被删、服务端未就绪），否则点击后毫无反馈。
             void openNewAgentSession(project, source, providerId, modelId).catch(error => {
               useAppStore.getState().showToast(`创建 AI 会话失败：${String(error)}`, 'error');

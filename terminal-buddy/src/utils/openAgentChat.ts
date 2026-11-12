@@ -41,8 +41,8 @@ function openAgentTabForSession(session: AiSession, focusInput = false): void {
 
 /**
  * 新建 Agent 会话的统一入口：按「新会话形态」设置分流。
- * - 原生会话（默认）：创建独立 CLI 会话并以聊天标签打开。
- * - 终端接力：沿用现有终端启动路径，形态与安卓一致，不改协议与交互。
+ * - 原生会话：创建独立 CLI 会话并以聊天标签打开。
+ * - 终端接力（默认）：沿用现有终端启动路径，形态与安卓一致，不改协议与交互。
  */
 export async function openNewAgentSession(
   project: Project,

@@ -121,7 +121,7 @@ pub struct AppSettings {
     pub server_monitor_interval: u32,
     #[serde(default)]
     pub web_api_share_sessions: bool,
-    /// 新会话形态：true = 原生会话（默认），false = 终端接力。
+    /// 新会话形态：true = 原生会话，false = 终端接力（默认）。
     /// 只影响之后新建的会话；已打开的会话保持创建时的形态。
     #[serde(default = "default_native_chat_sessions")]
     pub native_chat_sessions: bool,
@@ -182,7 +182,7 @@ impl Default for AppSettings {
             ssh_download_dir: None,
             server_monitor_interval: 3,
             web_api_share_sessions: false,
-            native_chat_sessions: true,
+            native_chat_sessions: false,
             launch_at_login: false,
             claude_hook_config_dir: None,
             default_terminal_enabled: false,
@@ -198,7 +198,7 @@ fn default_web_api_enabled() -> bool {
 }
 
 fn default_native_chat_sessions() -> bool {
-    true
+    false
 }
 
 fn default_web_api_port() -> u16 {
