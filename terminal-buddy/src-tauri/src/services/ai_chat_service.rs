@@ -219,16 +219,24 @@ fn seed_context_window(data: &mut AiSession) {
         &data.provider, data.provider_id.as_deref(), data.model.as_deref());
     usage::configured_window(data, window);
 }
+/// 会话成功创建或被其他客户端重新打开时广播。
+///
+/// 广播必须覆盖“复用已有会话”分支：安卓从同一历史会话恢复时，服务端按线程
+/// 复用已有记录；若只在首次落盘时广播，电脑端已开着其它会话时就会漏掉标签。
+fn emit_created(data: &AiSession) {
+    if let Some(app) = APP.get() {
+        let _ = app.emit("ai-session-created", json!({"type": "created", "session": data.metadata()}));
+    }
+}
+
 fn save_new_session(mut data: AiSession) -> Result<AiSession> {
     seed_context_window(&mut data);
     let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{}.json", data.id)) });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
-    // 新建/恢复会话即时广播：桌面端据此补开聊天标签（不抢焦点），
+    // 新建会话即时广播：桌面端据此补开聊天标签（不抢焦点），
     // 与终端会话的 `terminal-created` 对齐。手机 App 建会话时桌面端也能看到。
-    if let Some(app) = APP.get() {
-        let _ = app.emit("ai-session-created", json!({"type": "created", "session": data.metadata()}));
-    }
+    emit_created(&data);
     Ok(data)
 }
 
@@ -309,6 +317,10 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
                 }
             }
         }
+        // 同一历史线程已经在服务端有会话时不再新建文件，但仍要通知电脑端：
+        // 手机可能刚从历史列表打开它，电脑端需要补开对应标签。
+        emit_created(&data);
+        emit_update(&cell);
         return Ok(data.clone());
     }
     let id = Uuid::new_v4().to_string();
@@ -329,6 +341,7 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
     let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
+    emit_created(&data);
     Ok(data)
 }
 
@@ -426,6 +439,10 @@ pub fn resume_codex_history(owner: &str, session_id: &str, project_path: String,
         let Ok(existing) = get(&item.id, owner) else { continue; };
         if existing.provider == "codex" && existing.thread_id.as_deref() == Some(session_id)
             && existing.project_path == data.project_path && existing.provider_id == data.provider_id && existing.model == data.model {
+            // 复用同一条 Codex 线程时同样广播，保证手机从历史面板再次打开后，
+            // 电脑端能补开标签并立即看到该会话。
+            emit_created(&existing);
+            if let Ok(cell) = load(&existing.id, owner) { emit_update(&cell); }
             return Ok(existing);
         }
     }
