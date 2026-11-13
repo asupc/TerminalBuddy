@@ -256,14 +256,16 @@ const StatusBarResources = memo(function StatusBarResources() {
   const agentStats = useActiveAgentStats(activeNativeAgentTab?.sessionId ?? null);
   const agentModel = agentStats?.model ?? activeNativeAgentTab?.model ?? null;
   const agentEffort = useAgentEffort(agentStats?.providerId, agentModel);
-  // 终端里启动的 Agent 没有推送通道：按终端轮询 transcript 快照。绑定与 hook
-  // 活动任一存在就尝试读取，后端读不到时返回 null，不影响普通终端。
-  const terminalAgentActive = Boolean(session && isTerminal && (
-    agentSessionBindings[session.id]
-    || claudeSessionIds[session.id]
-    || (terminalActivities[session.id] && terminalActivities[session.id].runtimeKind !== 'shell')
-  ));
-  const terminalUsage = useTerminalAgentUsage(terminalAgentActive && session ? session.id : null);
+  // 终端里启动的 Agent 没有推送通道：按终端轮询 transcript 快照。绑定、claude
+  // 会话 ID 或 hook 活动任一存在就说明这是 Agent 终端，而不仅是普通 shell。
+  const terminalAgentProvider = session && isTerminal ? (
+    agentSessionBindings[session.id]?.provider
+    ?? (terminalActivities[session.id] && terminalActivities[session.id].runtimeKind !== 'shell'
+      ? terminalActivities[session.id].runtimeKind
+      : undefined)
+    ?? (claudeSessionIds[session.id] ? 'claude' : undefined)
+  ) : undefined;
+  const terminalUsage = useTerminalAgentUsage(terminalAgentProvider && session ? session.id : null);
 
   // 原生会话与终端 Agent 都收敛成同一种视图，交给 StatusBarAgent 统一展示。
   const agentStatusView: AgentStatusView | null = activeNativeAgentTab ? {
@@ -295,6 +297,18 @@ const StatusBarResources = memo(function StatusBarResources() {
     lastTurn: null,
     source: 'terminal',
     updatedAt: terminalUsage.updatedAt,
+  } : terminalAgentProvider ? {
+    provider: terminalAgentProvider,
+    providerLabel: terminalAgentProvider === 'codex' ? 'Codex' : 'Claude Code',
+    providerName: null,
+    model: null,
+    effort: null,
+    status: null,
+    context: null,
+    sessionTotal: null,
+    lastTurn: null,
+    source: 'terminal',
+    updatedAt: null,
   } : null;
 
   // 状态栏的 Agent 历史入口：识别当前标签页背后的 Agent 与项目。

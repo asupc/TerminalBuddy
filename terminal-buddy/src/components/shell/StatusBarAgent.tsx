@@ -45,7 +45,9 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
     else openPopover();
   }, [open, openPopover]);
 
-  if (!view.model && !effortLabel && !contextText && !tokenText) return null;
+  // 只要确定这是 Agent 会话就保留条目：刚启动、transcript 尚未产生用量时
+  // 先显示 Agent 名称，避免状态栏在会话最初几秒里整条消失。
+  if (!view.model && !effortLabel && !contextText && !tokenText && !view.providerLabel) return null;
 
   const title = [
     `${view.providerLabel}${view.model ? ` · ${view.model}` : ''}`,
@@ -73,8 +75,10 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
           provider={view.provider}
           className={`app-statusbar-agent-logo provider-${view.provider}`}
         />
-        {view.model && (
+        {view.model ? (
           <span className="app-statusbar-label app-statusbar-agent-model">{view.model}</span>
+        ) : (
+          <span className="app-statusbar-label">{view.providerLabel}</span>
         )}
         {effortLabel && (
           <span className="app-statusbar-agent-effort">思考 {effortLabel}</span>

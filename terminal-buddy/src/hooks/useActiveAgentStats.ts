@@ -67,18 +67,41 @@ export function useActiveAgentStats(sessionId: string | null): ActiveAgentStats 
     setStats(null);
     if (!sessionId) return;
     let cancelled = false;
+    // 快照请求与事件订阅之间的空档里如果收到更新，快照可能是旧值，不能再覆盖它。
+    let sawUpdate = false;
+    let unlisten: (() => void) | null = null;
     const apply = (session: AiSession) => {
       if (cancelled || session.id !== sessionId) return;
       const next = pickStats(session);
       setStats(previous => (previous && sameStats(previous, next) ? previous : next));
     };
-    aiSessionGet(sessionId).then(apply).catch(() => {});
-    const unlisten = listenTauri<AiSessionUpdateFrame>(AI_SESSION_UPDATE_EVENT, frame => {
-      if (frame?.session) apply(frame.session);
-    });
+    void (async () => {
+      // 必须先完成订阅再取快照：反过来会让两步之间的更新彻底丢失，
+      // 状态栏在会话没有新消息时会一直空着。
+      try {
+        unlisten = await listenTauri<AiSessionUpdateFrame>(AI_SESSION_UPDATE_EVENT, frame => {
+          if (frame?.session) {
+            sawUpdate = true;
+            apply(frame.session);
+          }
+        });
+      } catch {
+        // 订阅失败时仍尝试用快照兜底。
+      }
+      if (cancelled) {
+        unlisten?.();
+        return;
+      }
+      try {
+        const snapshot = await aiSessionGet(sessionId);
+        if (!sawUpdate) apply(snapshot);
+      } catch {
+        // 后端暂不可用时等下一次事件。
+      }
+    })();
     return () => {
       cancelled = true;
-      void unlisten.then(off => off());
+      unlisten?.();
     };
   }, [sessionId]);
 
@@ -114,6 +137,21 @@ export function useAgentEffort(
 
 /** 终端里启动的 Agent 没有推送通道，只能按终端轮询 transcript 快照。 */
 const TERMINAL_USAGE_POLL_MS = 5_000;
+/** 刚启动 / 刚切换标签时先快速补几次，避免状态栏空等一整个轮询周期。 */
+const TERMINAL_USAGE_RETRY_MS = 1_200;
+/** 只有连续这么多次读不到快照才认为 Agent 已退出，单次读空不清空已有信息。 */
+const TERMINAL_USAGE_MISS_LIMIT = 3;
+/** 按终端缓存最近一次快照：切走再切回时立即恢复显示，不必等第一次请求。 */
+const terminalUsageCache = new Map<string, TerminalAgentUsage>();
+
+function rememberTerminalUsage(terminalId: string, usage: TerminalAgentUsage): void {
+  // 终端数量有限，简单按插入顺序裁剪，避免长期运行无界增长。
+  if (!terminalUsageCache.has(terminalId) && terminalUsageCache.size >= 32) {
+    const oldest = terminalUsageCache.keys().next().value;
+    if (oldest !== undefined) terminalUsageCache.delete(oldest);
+  }
+  terminalUsageCache.set(terminalId, usage);
+}
 
 function sameTerminalUsage(a: TerminalAgentUsage, b: TerminalAgentUsage): boolean {
   return a.provider === b.provider
@@ -132,25 +170,50 @@ function sameTerminalUsage(a: TerminalAgentUsage, b: TerminalAgentUsage): boolea
  * 时返回 null，状态栏不会为普通终端渲染额外的占位。
  */
 export function useTerminalAgentUsage(terminalId: string | null): TerminalAgentUsage | null {
-  const [usage, setUsage] = useState<TerminalAgentUsage | null>(null);
+  const [usage, setUsage] = useState<TerminalAgentUsage | null>(
+    () => (terminalId ? terminalUsageCache.get(terminalId) ?? null : null),
+  );
 
   useEffect(() => {
-    setUsage(null);
+    setUsage(terminalId ? terminalUsageCache.get(terminalId) ?? null : null);
     if (!terminalId) return;
     let cancelled = false;
+    let timer: number | undefined;
+    let misses = 0;
+    const schedule = (delay: number) => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(load, delay);
+    };
     const load = () => {
       getTerminalAgentUsage(terminalId)
         .then(next => {
           if (cancelled) return;
-          setUsage(previous => (previous && next && sameTerminalUsage(previous, next) ? previous : next));
+          if (next) {
+            misses = 0;
+            rememberTerminalUsage(terminalId, next);
+            setUsage(previous => (previous && sameTerminalUsage(previous, next) ? previous : next));
+            schedule(TERMINAL_USAGE_POLL_MS);
+            return;
+          }
+          // transcript 可能刚好在切换会话 / Agent 重启，单次读空先保留旧快照，
+          // 连续多次读空才清空，避免状态栏随机闪断。
+          misses += 1;
+          if (misses >= TERMINAL_USAGE_MISS_LIMIT) {
+            terminalUsageCache.delete(terminalId);
+            setUsage(null);
+          }
+          schedule(misses < TERMINAL_USAGE_MISS_LIMIT ? TERMINAL_USAGE_RETRY_MS : TERMINAL_USAGE_POLL_MS);
         })
-        .catch(() => {});
+        .catch(() => {
+          if (cancelled) return;
+          // 请求失败不清空已展示的信息，按正常节奏重试。
+          schedule(TERMINAL_USAGE_POLL_MS);
+        });
     };
     load();
-    const timer = window.setInterval(load, TERMINAL_USAGE_POLL_MS);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [terminalId]);
 
