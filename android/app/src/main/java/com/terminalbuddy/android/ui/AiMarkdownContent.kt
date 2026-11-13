@@ -13,6 +13,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
@@ -25,11 +26,15 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.elements.MarkdownTable
+import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
+import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
@@ -97,14 +102,34 @@ internal fun AiMarkdownContent(message: AiAnimatedMessage, style: TextStyle, mod
                         true
                     } else false
                 }
-                val components = markdownComponents(image = { model ->
-                    Text(
-                        buildAnnotatedString {
-                            appendAiMarkdownImageLink(model.content, model.node, parsed.referenceLinkHandler, linkStyles)
-                        },
-                        color = TbColors.Text, style = style,
-                    )
-                })
+                val components = markdownComponents(
+                    image = { model ->
+                        Text(
+                            buildAnnotatedString {
+                                appendAiMarkdownImageLink(model.content, model.node, parsed.referenceLinkHandler, linkStyles)
+                            },
+                            color = TbColors.Text, style = style,
+                        )
+                    },
+                    table = { model ->
+                        // 默认表格只显示一行并加省略号；表头和正文都允许换行，让行高随内容增长。
+                        MarkdownTable(
+                            content = model.content, node = model.node, style = model.typography.table,
+                            headerBlock = { content, header, tableWidth, tableStyle ->
+                                MarkdownTableHeader(
+                                    content = content, header = header, tableWidth = tableWidth, style = tableStyle,
+                                    verticalAlignment = Alignment.Top, maxLines = Int.MAX_VALUE, overflow = TextOverflow.Clip,
+                                )
+                            },
+                            rowBlock = { content, row, tableWidth, tableStyle ->
+                                MarkdownTableRow(
+                                    content = content, header = row, tableWidth = tableWidth, style = tableStyle,
+                                    verticalAlignment = Alignment.Top, maxLines = Int.MAX_VALUE, overflow = TextOverflow.Clip,
+                                )
+                            },
+                        )
+                    },
+                )
                 Markdown(
                     state = parsed, modifier = Modifier.fillMaxWidth(), typography = typography,
                     colors = markdownColor(
