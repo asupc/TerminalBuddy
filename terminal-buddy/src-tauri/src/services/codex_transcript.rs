@@ -83,25 +83,55 @@ fn tool_summary(value: &Value) -> String {
     excerpt(text.trim(), 160)
 }
 
+/// 折叠空白后截断，作为标题/摘要的统一出口。
+fn compact(text: &str) -> Option<String> {
+    let value = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if value.is_empty() {
+        return None;
+    }
+    Some(excerpt(&value, 80))
+}
+
+/// Codex 把项目说明、运行环境与 /goal 内部提示写成 user 消息，不能拿它们充当用户的问题。
 fn title_candidate(text: &str) -> Option<String> {
     let trimmed = text.trim();
-    // Codex 把项目说明与运行环境写成 user 消息，不能拿它们充当用户的问题。
-    if trimmed.is_empty()
-        || [
-            "# AGENTS.md instructions",
-            "<environment_context>",
-            "<INSTRUCTIONS>",
-            "<permissions instructions>",
-        ]
-        .iter()
-        .any(|prefix| trimmed.starts_with(prefix))
+    if [
+        "# AGENTS.md instructions",
+        "# Environment",
+        "<environment_context>",
+        "<codex_internal_context",
+        "<INSTRUCTIONS>",
+        "<permissions instructions>",
+    ]
+    .iter()
+    .any(|prefix| trimmed.starts_with(prefix))
     {
         return None;
     }
-    Some(excerpt(
-        &trimmed.split_whitespace().collect::<Vec<_>>().join(" "),
-        80,
-    ))
+    compact(trimmed)
+}
+
+/// /goal 功能注入的内部上下文不是用户输入，但目标本身值得作为标题兜底：
+/// `source="user_goal"` 里是 `User set the goal: "…"`，`source="goal"` 里是 `<objective>…</objective>`。
+fn goal_candidate(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if !trimmed.starts_with("<codex_internal_context") {
+        return None;
+    }
+    let goal = trimmed
+        .split_once("User set the goal:")
+        .and_then(|(_, rest)| {
+            let rest = rest.trim_start();
+            let rest = rest.strip_prefix('"')?;
+            let end = rest.find('"').unwrap_or(rest.len());
+            Some(&rest[..end])
+        })
+        .or_else(|| {
+            let rest = trimmed.split_once("<objective>")?.1;
+            let end = rest.find("</objective>").unwrap_or(rest.len());
+            Some(&rest[..end])
+        })?;
+    compact(goal)
 }
 
 pub(super) fn parse(content: &str) -> CodexTranscript {
@@ -291,17 +321,26 @@ pub(super) fn parse(content: &str) -> CodexTranscript {
         }
     }
     canonical.sort_by_key(|(index, _)| *index);
+    // 真实用户提问优先；只有整段会话都是 /goal 注入时才退回用目标当标题。
+    let mut goal_title = None;
     result.messages = canonical
         .into_iter()
         .enumerate()
         .map(|(seq, (_, mut message))| {
             if result.title.is_none() && message.role == "user" {
-                result.title = title_candidate(&message.text);
+                if let Some(title) = title_candidate(&message.text) {
+                    result.title = Some(title);
+                } else if goal_title.is_none() {
+                    goal_title = goal_candidate(&message.text);
+                }
             }
             message.seq = seq as i64;
             message
         })
         .collect();
+    if result.title.is_none() {
+        result.title = goal_title;
+    }
     result
 }
 
@@ -338,6 +377,34 @@ mod tests {
         assert_eq!(result.messages.len(), 3);
         assert_eq!(result.messages[2].seq, 2);
         assert_eq!(result.started_at, Some(1792281600000));
+    }
+
+    #[test]
+    fn derives_title_from_goal_internal_context() {
+        let goal_message = |source: &str, body: &str| {
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":format!("<codex_internal_context source=\"{source}\">\n{body}\n</codex_internal_context>")}]}})
+        };
+        let result = parse(&jsonl(vec![
+            goal_message(
+                "user_goal",
+                "User set the goal: \"全仓库代码BUG检查和修复。\"\nUser set goal status: \"active\".",
+            ),
+            goal_message(
+                "goal",
+                "Continue working toward the active thread goal.\n\n<objective>\n全仓库代码BUG检查和修复。\n</objective>",
+            ),
+            json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"开始检查"}]}}),
+        ]));
+        assert_eq!(result.title.as_deref(), Some("全仓库代码BUG检查和修复。"));
+    }
+
+    #[test]
+    fn prefers_real_user_prompt_over_goal_context() {
+        let result = parse(&jsonl(vec![
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<codex_internal_context source=\"user_goal\">\nUser set the goal: \"修复登录失败\"\n</codex_internal_context>"}]}}),
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"帮我加上重试"}]}}),
+        ]));
+        assert_eq!(result.title.as_deref(), Some("帮我加上重试"));
     }
 
     #[test]

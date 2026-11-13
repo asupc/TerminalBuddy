@@ -916,8 +916,10 @@ mod tests {
         assert_eq!(models.len(), 1);
         assert_eq!(models[0]["slug"].as_str(), Some("test-model"));
         assert_eq!(models[0]["shell_type"].as_str(), Some("shell_command"));
-        assert_eq!(models[0]["context_window"].as_u64(), Some(258400));
-        assert_eq!(models[0]["max_context_window"].as_u64(), Some(258400));
+        assert_eq!(models[0]["context_window"].as_u64(), Some(272_000));
+        assert_eq!(models[0]["max_context_window"].as_u64(), Some(272_000));
+        // Codex 会在此基础上再预留 5%：272000 × 95% = 258400。
+        assert_eq!(models[0]["effective_context_window_percent"].as_u64(), Some(95));
         assert!(models[0]["base_instructions"].as_str().unwrap().contains("You are Codex"));
         let efforts: Vec<&str> = models[0]["supported_reasoning_levels"]
             .as_array()
@@ -971,12 +973,16 @@ mod tests {
         );
         assert_eq!(models[0]["comp_hash"].as_str(), Some("keep"));
         assert_eq!(models[0]["priority"].as_i64(), Some(7));
+        // 本供应商配置的模型会同步显式窗口，避免目录旧上限截断 config.toml。
+        assert_eq!(models[1]["context_window"].as_u64(), Some(300000));
+        assert_eq!(models[1]["max_context_window"].as_u64(), Some(300000));
         assert_eq!(
             models[1]["supported_reasoning_levels"].as_array().unwrap()[0]["description"].as_str(),
             Some("保留")
         );
         // 新模型用模板追加在末尾，窗口取供应商配置。
         assert_eq!(models[2]["context_window"].as_u64(), Some(300000));
+        assert_eq!(models[2]["max_context_window"].as_u64(), Some(300000));
         assert!(models[2]["description"].as_str().unwrap().contains("Terminal Buddy"));
     }
 

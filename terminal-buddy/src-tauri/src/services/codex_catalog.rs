@@ -13,7 +13,9 @@ use crate::models::codex_provider::CodexProvider;
 /// config.toml 未配置 model_catalog_json 时使用的目录文件名（放在 Codex 配置目录）。
 pub const CATALOG_FILENAME: &str = "terminal-buddy-codex-models.json";
 /// provider.context_window 为 0（跟随默认）时，新生成条目写入的上下文窗口。
-pub const DEFAULT_MODEL_CONTEXT_WINDOW: u64 = 258400;
+/// Codex 会再按 `effective_context_window_percent` 预留 5%，因此这里写入的是
+/// 原始窗口而不是 95% 后的可用窗口；272000 对应 Codex 内置回退模型的 258400 可用窗口。
+pub const DEFAULT_MODEL_CONTEXT_WINDOW: u64 = 272_000;
 /// 全部推理等级与缺失档位的默认描述（与前端 CODEX_EFFORT_OPTIONS 文案对齐）。
 pub const CODEX_CATALOG_REASONING_LEVELS: &[(&str, &str)] = &[
     ("none", "关闭推理，直接回答"),
@@ -76,7 +78,8 @@ fn load_catalog(path: &Path) -> Result<Value, String> {
 }
 
 /// 合并语义：绝不删除已有条目或字段；所有条目补齐 8 档推理等级
-/// （已有档位的描述保留）；provider.model_ids() 中目录没有的模型追加模板条目。
+/// （已有档位的描述保留）；provider 配置了上下文窗口时同步其模型的窗口上限，
+/// 避免旧的 258400 上限继续把 600K 等显式配置截断；目录没有的模型追加模板条目。
 fn merge_models(catalog: &mut Value, provider: &CodexProvider) -> Result<bool, String> {
     let invalid = || {
         "Codex 模型目录结构无效（顶层必须是含 models 数组的 JSON 对象），请修复后重试；原文件未更改".to_string()
@@ -95,19 +98,37 @@ fn merge_models(catalog: &mut Value, provider: &CodexProvider) -> Result<bool, S
         .ok_or_else(invalid)?;
     let mut changed = false;
     let mut slugs = Vec::new();
+    let provider_models = provider.model_ids();
     for entry in models.iter_mut() {
         let fields = entry.as_object_mut().ok_or_else(invalid)?;
-        if let Some(slug) = fields.get("slug").and_then(Value::as_str) {
-            slugs.push(slug.to_string());
+        if let Some(slug) = fields.get("slug").and_then(Value::as_str).map(str::to_string) {
+            if provider.context_window > 0 && provider_models.iter().any(|id| id == &slug) {
+                changed |= sync_context_window(fields, u64::from(provider.context_window));
+            }
+            slugs.push(slug);
         }
         changed |= ensure_full_reasoning_levels(fields)?;
     }
-    for id in provider.model_ids() {
+    for id in provider_models {
         if slugs.iter().any(|slug| slug == &id) { continue; }
         models.push(template_entry(&id, provider.context_window));
         changed = true;
     }
     Ok(changed)
+}
+
+/// 显式配置的窗口必须同时覆盖 `context_window` 与 `max_context_window`。
+/// Codex 会用 `min(model_context_window, max_context_window)` 计算最终窗口，
+/// 只改 config.toml 而不改目录上限时，界面和实际用量都会继续停在旧上限。
+fn sync_context_window(fields: &mut Map<String, Value>, window: u64) -> bool {
+    let mut changed = false;
+    for key in ["context_window", "max_context_window"] {
+        if fields.get(key).and_then(Value::as_u64) != Some(window) {
+            fields.insert(key.to_string(), json!(window));
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// 补齐单条目录条目：缺失档位追加默认描述（已有档位顺序与描述原样保留），
@@ -197,5 +218,14 @@ mod tests {
                 effort
             );
         }
+    }
+
+    #[test]
+    fn template_keeps_raw_window_before_effective_percent() {
+        let entry = template_entry("test-model", 600_000);
+        assert_eq!(entry["context_window"].as_u64(), Some(600_000));
+        assert_eq!(entry["max_context_window"].as_u64(), Some(600_000));
+        // Codex 目录里的 effective 百分比会再折算可用窗口；600K × 95% = 570K。
+        assert_eq!(entry["effective_context_window_percent"].as_u64(), Some(95));
     }
 }
