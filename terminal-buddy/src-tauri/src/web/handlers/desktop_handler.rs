@@ -576,7 +576,7 @@ mod download_tests {
         let file = std::fs::File::open(&target).unwrap();
         let mut archive = zip::ZipArchive::new(file).unwrap();
         let names: Vec<String> = (0..archive.len())
-            .map(|index| archive.by_index(index).unwrap().name().to_string())
+            .map(|index| archive.by_index(index).unwrap().name().unwrap().to_string())
             .collect();
         assert!(names.contains(&"项目/a.txt".to_string()));
         assert!(names.contains(&"项目/sub/b.txt".to_string()));

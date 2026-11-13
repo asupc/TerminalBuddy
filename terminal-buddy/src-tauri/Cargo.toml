@@ -68,23 +68,23 @@ include_dir = "0.7"
 rust-embed = { version = "8", features = ["compression", "interpolate-folder-path"] }
 hex = "0.4"
 rand = "0.8"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.42", default-features = false, features = ["bundled", "cache"] }
 base64 = "0.22"
 urlencoding = "2"
 ssh2 = "0.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
 lark-channel = { version = "0.4", features = ["websocket"] }
 shell-words = "1.1"
-zip = "2"
+zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 
 # WebView2 原生设置（关闭浏览器加速键），版本与 tauri 依赖树中的 webview2-com-sys 对齐
 [target.'cfg(windows)'.dependencies]
-webview2-com = { version = "0.38", optional = true }
+webview2-com = { version = "0.39", optional = true }
 tauri-winrt-notification = { version = "0.7.3", optional = true }
 windows-registry = { version = "0.6", optional = true }
 clipboard-win = { version = "5.4.1", features = ["std"], optional = true }
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_Graphics_Gdi", "Win32_System_Diagnostics_ToolHelp", "Win32_Storage_FileSystem"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_Graphics_Gdi", "Win32_System_Diagnostics_ToolHelp", "Win32_Storage_FileSystem"] }
 
 [patch.crates-io]
 portable-pty = { path = "portable-pty-patched" }
