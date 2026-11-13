@@ -180,6 +180,10 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
         "save_agent_download_source" => result(crate::commands::agent_cli::save_agent_download_source(argument(&args, "source")?).await),
         "get_claude_sessions_for_terminals" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::claude_session::get_claude_sessions_for_terminals(argument(&args, "terminalIds")?, app.state::<crate::commands::TerminalService>()))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "get_agent_sessions_for_terminals" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::claude_session::get_agent_sessions_for_terminals(argument(&args, "terminalIds")?, app.state::<crate::commands::TerminalService>()))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
+        "terminal_agent_usage" => {
+            let terminal_id: String = argument(&args, "terminalId")?;
+            run(move || crate::services::agent_usage_service::usage(&terminal_id)).await
+        }
         "claim_web_session_restore" => data(crate::commands::session_restore::claim_web_session_restore()),
         "release_web_session_restore" => data(crate::commands::session_restore::release_web_session_restore()),
         "read_client_data" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::client_data::read_client_data(argument(&args, "key")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
@@ -248,6 +252,8 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
         "save_server_monitor_interval" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::settings::save_server_monitor_interval(argument(&args, "interval")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "save_web_api_share_sessions" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::settings::save_web_api_share_sessions(argument(&args, "enabled")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "save_native_chat_sessions" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::settings::save_native_chat_sessions(argument(&args, "enabled")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
+        "save_agent_auto_archive" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::settings::save_agent_auto_archive(argument(&args, "enabled")?, argument(&args, "days")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
+        "run_agent_auto_archive" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::settings::run_agent_auto_archive())).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "get_web_api_status" => crate::runtime::async_runtime::spawn_blocking(move || data(crate::commands::settings::get_web_api_status())).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "change_web_admin_password" => result(crate::commands::settings::change_web_admin_password(argument(&args, "oldPassword")?, argument(&args, "newPassword")?).await),
         "save_web_page_title" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::settings::save_web_page_title(argument(&args, "title")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,

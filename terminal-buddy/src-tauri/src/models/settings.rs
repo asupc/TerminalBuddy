@@ -139,6 +139,11 @@ pub struct AppSettings {
     pub agent_commands: AgentCommands,
     #[serde(default)]
     pub agent_download_source: AgentDownloadSource,
+    /// Agent 历史会话自动归档：开启后把超过 N 天未使用的 Claude / Codex 会话标记为已归档。
+    #[serde(default)]
+    pub agent_auto_archive_enabled: bool,
+    #[serde(default = "default_agent_auto_archive_days")]
+    pub agent_auto_archive_days: u32,
 }
 
 /// Agent（Claude Code / Codex）的基础启动命令，供项目模型启动与历史恢复继承参数。
@@ -189,8 +194,14 @@ impl Default for AppSettings {
             default_terminal_backup: None,
             agent_commands: AgentCommands::default(),
             agent_download_source: AgentDownloadSource::default(),
+            agent_auto_archive_enabled: false,
+            agent_auto_archive_days: default_agent_auto_archive_days(),
         }
     }
+}
+
+fn default_agent_auto_archive_days() -> u32 {
+    30
 }
 
 fn default_web_api_enabled() -> bool {

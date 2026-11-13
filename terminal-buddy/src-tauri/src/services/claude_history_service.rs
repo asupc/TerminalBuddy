@@ -669,7 +669,9 @@ pub fn init_claude_schema(conn: &Connection) -> Result<(), String> {
             custom_title TEXT,
             starred INTEGER NOT NULL DEFAULT 0,
             archived INTEGER NOT NULL DEFAULT 0,
-            notes TEXT
+            notes TEXT,
+            -- 自动归档时的会话 updated_at：用户手动取消归档后，同一版本不再被自动归档。
+            auto_archive_mark INTEGER
          );
          CREATE TABLE IF NOT EXISTS claude_messages (
             session_id TEXT NOT NULL,
@@ -1028,6 +1030,9 @@ pub fn scan_and_index(app: &AppHandle) -> Result<ClaudeHistoryScanResult, String
     };
     if result.pending > 0 {
         spawn_backfill(app.clone(), conn, projects_dir);
+    } else {
+        // 索引已是最新：顺手执行一次自动归档，让刚打开的列表直接反映归档状态。
+        crate::services::session_auto_archive_service::run_and_emit(app);
     }
     Ok(result)
 }
@@ -1074,6 +1079,10 @@ fn spawn_backfill(app: AppHandle, conn: Connection, projects_dir: PathBuf) {
             let finished = result.pending == 0;
             // 整批都读不动（被占用/无权限）时不再自旋，留到下次打开面板重试
             let stalled = result.pending >= last_pending;
+            // 索引补齐到尽头后再自动归档：先归档再广播，面板重取列表时已是归档后的状态。
+            if finished || stalled {
+                crate::services::session_auto_archive_service::run_and_emit(&app);
+            }
             let _ = app.emit(INDEXED_EVENT, &result);
             if finished || stalled {
                 break;
@@ -1372,8 +1381,16 @@ pub fn set_flags(session_id: &str, starred: Option<bool>, archived: Option<bool>
         .map_err(|error| format!("更新收藏状态失败: {}", error))?;
     }
     if let Some(archived) = archived {
+        // 手动取消归档时同步记下当前版本：自动归档不会在下一轮把同一版本再次归档，
+        // 只有会话再次更新、重新超过阈值后才会再次获得自动归档资格。
         conn.execute(
-            "UPDATE claude_session_meta SET archived = ?2 WHERE session_id = ?1",
+            "UPDATE claude_session_meta
+             SET archived = ?2,
+                 auto_archive_mark = CASE WHEN ?2 = 0 THEN COALESCE(
+                     (SELECT updated_at FROM claude_sessions WHERE session_id = ?1),
+                     auto_archive_mark)
+                 ELSE auto_archive_mark END
+             WHERE session_id = ?1",
             params![session_id, if archived { 1 } else { 0 }],
         )
         .map_err(|error| format!("更新归档状态失败: {}", error))?;

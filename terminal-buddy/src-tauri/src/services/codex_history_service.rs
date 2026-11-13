@@ -39,7 +39,8 @@ pub fn init_codex_schema(conn: &Connection) -> Result<(), String> {
          );
          CREATE TABLE IF NOT EXISTS codex_session_meta (
             session_id TEXT PRIMARY KEY, custom_title TEXT,
-            starred INTEGER NOT NULL DEFAULT 0, archived INTEGER
+            starred INTEGER NOT NULL DEFAULT 0, archived INTEGER,
+            auto_archive_mark INTEGER
          );
          CREATE TABLE IF NOT EXISTS codex_messages (
             session_id TEXT NOT NULL, seq INTEGER NOT NULL, content TEXT NOT NULL, timestamp INTEGER,
@@ -337,6 +338,9 @@ pub fn scan_and_index(app: &AppHandle) -> Result<SessionHistoryScanResult, Strin
     };
     if result.pending > 0 {
         spawn_backfill(app.clone(), conn, root);
+    } else {
+        // 索引已是最新：顺手执行一次自动归档，让刚打开的列表直接反映归档状态。
+        crate::services::session_auto_archive_service::run_and_emit(app);
     }
     Ok(result)
 }
@@ -364,6 +368,10 @@ fn spawn_backfill(app: AppHandle, conn: Connection, root: PathBuf) {
                 Ok(result) => {
                     let finished = result.pending == 0 || result.pending >= previous;
                     previous = result.pending;
+                    // 索引补齐到尽头后再自动归档：先归档再广播，面板重取列表时已是归档后的状态。
+                    if finished {
+                        crate::services::session_auto_archive_service::run_and_emit(&app);
+                    }
                     let _ = app.emit("codex-history-indexed", &result);
                     if finished {
                         break;
@@ -579,7 +587,20 @@ pub fn set_flags(
         "INSERT INTO codex_session_meta (session_id, starred, archived) VALUES (?1, COALESCE(?2, 0), ?3)
          ON CONFLICT(session_id) DO UPDATE SET starred=COALESCE(?2, codex_session_meta.starred),
          archived=COALESCE(?3, codex_session_meta.archived)", params![session_id, starred, archived],
-    ).map(|_| ()).map_err(|error| format!("更新 Codex 会话标记失败: {error}"))
+    ).map(|_| ()).map_err(|error| format!("更新 Codex 会话标记失败: {error}"))?;
+    // 手动取消归档时同步记下当前版本，避免下一轮自动归档立刻把同一版本又归档回去。
+    if archived == Some(false) {
+        conn.execute(
+            "UPDATE codex_session_meta
+             SET auto_archive_mark = COALESCE(
+                 (SELECT updated_at FROM codex_sessions WHERE session_id = ?1),
+                 auto_archive_mark)
+             WHERE session_id = ?1",
+            [session_id],
+        )
+        .map_err(|error| format!("更新 Codex 自动归档标记失败: {error}"))?;
+    }
+    Ok(())
 }
 
 fn delete_rows(conn: &Connection, session_id: &str, metadata: bool) -> Result<(), String> {

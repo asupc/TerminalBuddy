@@ -335,6 +335,30 @@ pub fn save_native_chat_sessions(enabled: bool) -> Result<(), String> {
     SettingsService::mutate_settings(|s| s.native_chat_sessions = enabled)
 }
 
+/// 保存 Agent 会话自动归档设置；开启时立即按新阈值执行一次，方便用户马上看到结果。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn save_agent_auto_archive(
+    enabled: bool,
+    days: u32,
+) -> Result<crate::services::session_auto_archive_service::AutoArchiveResult, String> {
+    let days = days.clamp(
+        crate::services::session_auto_archive_service::MIN_DAYS,
+        crate::services::session_auto_archive_service::MAX_DAYS,
+    );
+    SettingsService::mutate_settings(|s| {
+        s.agent_auto_archive_enabled = enabled;
+        s.agent_auto_archive_days = days;
+    })?;
+    crate::services::session_auto_archive_service::archive_stale(enabled, days)
+}
+
+/// 按当前设置立即执行一次自动归档（启动定时任务之外的手动入口）。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn run_agent_auto_archive(
+) -> Result<crate::services::session_auto_archive_service::AutoArchiveResult, String> {
+    crate::services::session_auto_archive_service::run_from_settings()
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_launch_at_login(enabled: bool) -> Result<(), String> {
     set_autostart_registry(enabled)?;

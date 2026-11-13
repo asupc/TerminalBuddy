@@ -236,6 +236,16 @@ pub fn current_binding(terminal_id: &str) -> Option<(String, String)> {
         .clone()
 }
 
+/// 终端最近一次记录的 cwd；用于定位项目级 `.claude/settings*.json`。
+pub fn current_cwd(terminal_id: &str) -> Option<String> {
+    terminals()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(terminal_id)?
+        .cwd
+        .clone()
+}
+
 /// 定位当前绑定的转录文件：`tracked.transcript` 仍存在时优先，否则按 provider
 /// 根目录递归查找。tracked 锁内只复制必要数据，目录 I/O 在锁外完成。
 pub struct TranscriptLocation {

@@ -405,6 +405,8 @@ pub fn run() {
             bootstrap_bot_connections(app.handle())?;
             bootstrap_claude_hook(app.handle());
             crate::services::codex_activity_service::start(app.handle().clone());
+            // Agent 历史会话自动归档：启动后延时执行，之后每 6 小时按设置检查一次。
+            crate::services::session_auto_archive_service::start(app.handle().clone());
             // 模型终端残留的临时 --settings 文件：上次异常退出可能没清掉，
             // 启动时按落盘小表精确删除 + 24h 兜底（后台线程，不阻塞窗口）。
             let _cleanup_task = crate::runtime::async_runtime::spawn_blocking(|| {
@@ -458,6 +460,7 @@ pub fn run() {
             start_mstsc,
             get_claude_sessions_for_terminals,
             get_agent_sessions_for_terminals,
+            terminal_agent_usage,
             claim_web_session_restore,
             release_web_session_restore,
             get_terminal_task_summaries,
@@ -585,6 +588,8 @@ pub fn run() {
             save_web_api_settings,
             save_web_api_share_sessions,
             save_native_chat_sessions,
+            save_agent_auto_archive,
+            run_agent_auto_archive,
             get_web_api_status,
             change_web_admin_password,
             save_web_page_title,

@@ -1,6 +1,7 @@
 pub mod ai_chat;
 pub mod ai_usage;
 pub mod agent_cli;
+pub mod agent_usage;
 pub mod bot;
 pub mod claude_assets;
 pub mod claude_config;
@@ -40,6 +41,7 @@ pub mod workspace;
 pub use ai_chat::*;
 pub use ai_usage::*;
 pub use agent_cli::*;
+pub use agent_usage::*;
 pub use bot::*;
 pub use claude_assets::*;
 pub use claude_config::*;

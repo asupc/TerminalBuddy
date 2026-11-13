@@ -620,6 +620,36 @@ fn write_temp_map(map: &BTreeMap<String, TempMapEntry>) -> Result<(), String> {
     atomic_write(&path, &bytes).map_err(|error| format!("写入临时模型配置映射失败：{}", error))
 }
 
+/// 某终端启动时的临时模型配置快照：只取状态栏需要的模型、上下文窗口与思考强度，
+/// 不把含密钥的完整 settings 暴露给调用方。
+#[derive(Clone, Debug, Default)]
+pub struct TerminalLaunchConfig {
+    pub model: Option<String>,
+    pub context_window: Option<u64>,
+    pub effort: Option<String>,
+}
+
+pub fn terminal_launch_config(terminal_id: &str) -> Option<TerminalLaunchConfig> {
+    let path = read_temp_map().ok()?.get(terminal_id)?.path.clone();
+    let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    let env = value.get("env");
+    let text = |key: &str| {
+        env.and_then(|env| env.get(key)).and_then(|raw| {
+            raw.as_str()
+                .map(str::to_string)
+                .or_else(|| raw.as_u64().map(|number| number.to_string()))
+        })
+    };
+    Some(TerminalLaunchConfig {
+        model: value.get("model").and_then(Value::as_str).map(str::to_string),
+        context_window: text("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .and_then(|window| window.trim().parse::<u64>().ok())
+            .filter(|window| *window > 0),
+        effort: text("CLAUDE_CODE_EFFORT_LEVEL")
+            .or_else(|| value.get("effortLevel").and_then(Value::as_str).map(str::to_string)),
+    })
+}
+
 fn register_temp_file(terminal_id: &str, path: &PathBuf) -> Result<(), String> {
     let mut map = read_temp_map()?;
     // 同一终端第二条 __TB_CLAUDE_REF__ 启动命令会覆盖映射；旧临时 settings

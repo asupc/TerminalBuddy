@@ -1,4 +1,5 @@
 pub mod agent_cli_service;
+pub mod agent_usage_service;
 pub mod app_notification_service;
 pub mod atomic_file;
 pub mod bot_binding_service;
@@ -40,6 +41,7 @@ pub mod path_service;
 pub mod platform_service;
 pub(crate) mod process_tree;
 pub mod profile_service;
+pub mod session_auto_archive_service;
 pub mod settings_service;
 pub mod ssh_session_service;
 pub mod ssh_transfer;

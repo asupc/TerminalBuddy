@@ -227,6 +227,20 @@ impl DatabaseService {
             Self::complete_migration(&transaction, "codex-history-v1")?;
             transaction.commit().map_err(|error| format!("提交 Codex 历史迁移失败: {error}"))?;
         }
+        // 自动归档需要记录「上次自动归档时的会话版本」：老库用 ALTER 补列，
+        // 新库在建表语句里已包含该列，这里只做幂等检查。
+        if !Self::has_migration(connection, "claude-history-v3")? {
+            let transaction = connection.transaction().map_err(|error| format!("开始 Claude 自动归档列迁移失败: {error}"))?;
+            crate::services::session_auto_archive_service::ensure_auto_archive_column(&transaction, "claude_session_meta")?;
+            Self::complete_migration(&transaction, "claude-history-v3")?;
+            transaction.commit().map_err(|error| format!("提交 Claude 自动归档列迁移失败: {error}"))?;
+        }
+        if !Self::has_migration(connection, "codex-history-v2")? {
+            let transaction = connection.transaction().map_err(|error| format!("开始 Codex 自动归档列迁移失败: {error}"))?;
+            crate::services::session_auto_archive_service::ensure_auto_archive_column(&transaction, "codex_session_meta")?;
+            Self::complete_migration(&transaction, "codex-history-v2")?;
+            transaction.commit().map_err(|error| format!("提交 Codex 自动归档列迁移失败: {error}"))?;
+        }
 
         Ok(())
     }
