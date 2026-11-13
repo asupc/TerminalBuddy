@@ -3,6 +3,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { listenTauri } from './events';
 import { isBrowserClient } from '../platform';
 import type { ExtraParamMode } from '../../types';
+import type { AiTokenUsage } from './aiChat';
 
 // Terminal Commands
 export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number, displayName?: string, startupPath?: string, extraParamTag?: string, extraParamTagColor?: string | null, extraStartupMode?: ExtraParamMode, injectClaudeHooks?: boolean): Promise<string> {
@@ -25,6 +26,21 @@ export async function getAgentSessionsForTerminals(
   terminalIds: string[],
 ): Promise<Record<string, import('../../types').AgentSessionRecord>> {
   return invoke('get_agent_sessions_for_terminals', { terminalIds });
+}
+
+/** 终端内 Agent 的实时用量快照（来自 CLI transcript）；终端没有绑定 Agent 时返回 null。 */
+export interface TerminalAgentUsage {
+  provider: 'claude' | 'codex' | string;
+  model: string | null;
+  effort: string | null;
+  contextUsedTokens: number | null;
+  contextWindowTokens: number | null;
+  total: AiTokenUsage;
+  updatedAt: number;
+}
+
+export async function getTerminalAgentUsage(terminalId: string): Promise<TerminalAgentUsage | null> {
+  return invoke('terminal_agent_usage', { terminalId });
 }
 
 export async function showClaudeCodeNotification(

@@ -1,0 +1,242 @@
+/* 状态栏 Agent 条目：模型 / 思考强度 / 上下文 / Token 合并为一个可点击组件。 */
+.app-statusbar-agent {
+  max-width: min(620px, 62vw);
+}
+
+/* 条目内部的上下文与 Token 明细，彼此之间留出可读间距。 */
+.app-statusbar-agent-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+/* 上下文比例的颜色提示：超过 60% 转黄，超过 80% 转红。 */
+.app-statusbar-agent-metric.warn { color: var(--warning); }
+.app-statusbar-agent-metric.critical { color: var(--danger); }
+
+/* Agent 详情浮层：从状态栏向上弹出，通过 portal 挂到 body，避免被 overflow 裁剪。 */
+.agent-stats-popover {
+  position: fixed;
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 16px));
+  max-height: min(72vh, calc(100vh - 80px));
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.3);
+  font-size: 12px;
+  line-height: 1.45;
+  user-select: none;
+  animation: agent-stats-in 140ms ease-out;
+}
+
+@keyframes agent-stats-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-stats-popover { animation: none; }
+}
+
+.agent-stats-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.agent-stats-logo {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+/* 品牌色与状态栏里的 Agent 标志保持一致。 */
+.agent-stats-logo.provider-claude { color: #d97757; }
+.agent-stats-logo.provider-codex { color: #10a37f; }
+
+.agent-stats-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-stats-status {
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.agent-stats-status.running {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+}
+
+.agent-stats-status.warn {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+}
+
+.agent-stats-status.danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.agent-stats-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.agent-stats-close:hover {
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
+}
+
+.agent-stats-close svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-stats-body {
+  min-height: 0;
+  padding: 8px 10px;
+  overflow-y: auto;
+}
+
+/* 模型 / 思考强度 / 供应商 / 数据来源两列铺开，值在标签下方。 */
+.agent-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+
+.agent-stats-grid .agent-stats-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.agent-stats-grid .agent-stats-row-value {
+  max-width: 100%;
+  text-align: left;
+}
+
+.agent-stats-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.agent-stats-section-title {
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.agent-stats-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 1px 0;
+}
+
+.agent-stats-row-label {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.agent-stats-row-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  text-align: right;
+}
+
+.agent-stats-row-hint {
+  margin-left: 6px;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: 10px;
+}
+
+.agent-stats-context-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.agent-stats-context-value {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.agent-stats-context-value.warn { color: var(--warning); }
+.agent-stats-context-value.critical { color: var(--danger); }
+
+.agent-stats-context-capacity {
+  color: var(--text-secondary);
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 11px;
+}
+
+.agent-stats-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+
+.agent-stats-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
+.agent-stats-bar-fill.warn { background: var(--warning); }
+.agent-stats-bar-fill.critical { background: var(--danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-stats-bar-fill { transition: none; }
+}
+
+.agent-stats-empty {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.agent-stats-footer {
+  flex: none;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 10px;
+}

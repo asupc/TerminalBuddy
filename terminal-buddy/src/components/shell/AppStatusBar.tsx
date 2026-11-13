@@ -1,21 +1,15 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Boxes,
   Clock3,
-  Container,
   Cpu,
-  FileText,
   Folder,
   Globe2,
   MemoryStick,
-  Monitor,
-  Server,
-  SquareTerminal,
-  type LucideIcon,
 } from 'lucide-react';
 import type { Profile, SessionHistoryProvider, TerminalType } from '../../types';
-import { isTerminalWorking, useAppStore } from '../../stores/appStore';
+import { useAppStore } from '../../stores/appStore';
+import { useActiveAgentStats, useAgentEffort, useTerminalAgentUsage } from '../../hooks/useActiveAgentStats';
 import { useAgentAvailability } from '../../hooks/useAgentAvailability';
 import { useSystemResources } from '../../hooks/useSystemResources';
 import { FileManagerDialog } from '../file-explorer/FileManagerDialog';
@@ -23,6 +17,8 @@ import { GitNavBar } from '../git/GitNavBar';
 import { AgentIcon } from '../agent-chat/AgentIcon';
 import { AgentHistoryPopover } from './AgentHistoryPopover';
 import { ResourceTrendPopover } from './ResourceTrendPopover';
+import { StatusBarAgent } from './StatusBarAgent';
+import type { AgentStatusView } from './agentStatusView';
 import { getWebApiStatus } from '../../services/tauri';
 import { isBrowserClient } from '../../services/platform';
 import { isClaudeLaunchProfile } from '../../utils/claudeLaunch';
@@ -30,34 +26,6 @@ import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
 import { projectForDirectory } from '../../utils/projectPath';
 import { APP_VERSION } from '../../version';
 import './AppStatusBar.css';
-
-const TYPE_ICONS: Record<TerminalType, LucideIcon> = {
-  powershell: SquareTerminal,
-  pwsh: SquareTerminal,
-  cmd: SquareTerminal,
-  bash: SquareTerminal,
-  sh: SquareTerminal,
-  zsh: SquareTerminal,
-  ssh: Server,
-  docker: Container,
-  k8s: Boxes,
-  mstsc: Monitor,
-  editor: FileText,
-};
-
-const TYPE_LABELS: Record<TerminalType, string> = {
-  powershell: 'PowerShell',
-  pwsh: 'PowerShell 7',
-  cmd: 'CMD',
-  bash: 'Bash',
-  sh: 'Sh',
-  zsh: 'Zsh',
-  ssh: 'SSH',
-  docker: 'Docker',
-  k8s: 'K8s',
-  mstsc: '远程桌面',
-  editor: '编辑器',
-};
 
 const browserClient = isBrowserClient();
 
@@ -253,7 +221,16 @@ const StatusBarResources = memo(function StatusBarResources() {
   // 触发浮层的按钮，供浮层判断「点的是入口本身」而不是外部点击。
   const agentHistoryRef = useRef<HTMLElement | null>(null);
 
-  const session = activeSessionId ? sessions.find(item => item.id === activeSessionId) : undefined;
+  // 选中的聊天标签：原生会话展示 Agent 状态，接力标签沿用背后的终端会话。
+  const activeAgentTab = activeSpecialTab === 'agent-chat'
+    ? agentTabs.find(item => item.key === activeAgentTabKey)
+    : undefined;
+  const activeNativeAgentTab = activeAgentTab?.shape === 'native' ? activeAgentTab : undefined;
+  // 原生聊天页没有底层终端；终端身份只在终端 / Git 等以终端为上下文的页面展示。
+  const statusSessionId = activeNativeAgentTab
+    ? null
+    : activeAgentTab?.shape === 'relay' ? activeAgentTab.terminalId : activeSessionId;
+  const session = statusSessionId ? sessions.find(item => item.id === statusSessionId) : undefined;
   const profile = session?.profileId ? profiles.find(item => item.id === session.profileId) : undefined;
   const isEditor = session?.sessionType === 'editor';
   const isTerminal = Boolean(session) && !isEditor;
@@ -275,7 +252,50 @@ const StatusBarResources = memo(function StatusBarResources() {
     session && directory && isTerminal && LOCAL_SHELL_TYPES.has(session.terminalType),
   );
   const web = useWebApiBarStatus();
-  const working = isTerminal && session ? isTerminalWorking(terminalActivities[session.id]) : false;
+  // 选中原生会话时展示模型 / 思考强度 / 上下文 / Token / 缓存命中率。
+  const agentStats = useActiveAgentStats(activeNativeAgentTab?.sessionId ?? null);
+  const agentModel = agentStats?.model ?? activeNativeAgentTab?.model ?? null;
+  const agentEffort = useAgentEffort(agentStats?.providerId, agentModel);
+  // 终端里启动的 Agent 没有推送通道：按终端轮询 transcript 快照。绑定与 hook
+  // 活动任一存在就尝试读取，后端读不到时返回 null，不影响普通终端。
+  const terminalAgentActive = Boolean(session && isTerminal && (
+    agentSessionBindings[session.id]
+    || claudeSessionIds[session.id]
+    || (terminalActivities[session.id] && terminalActivities[session.id].runtimeKind !== 'shell')
+  ));
+  const terminalUsage = useTerminalAgentUsage(terminalAgentActive && session ? session.id : null);
+
+  // 原生会话与终端 Agent 都收敛成同一种视图，交给 StatusBarAgent 统一展示。
+  const agentStatusView: AgentStatusView | null = activeNativeAgentTab ? {
+    provider: activeNativeAgentTab.provider,
+    providerLabel: agentHistoryLabel(activeNativeAgentTab.provider),
+    providerName: agentStats?.providerName ?? null,
+    model: agentModel,
+    effort: agentEffort,
+    status: agentStats?.status ?? null,
+    context: agentStats?.usage?.context ?? null,
+    sessionTotal: agentStats?.usage?.sessionTotal ?? null,
+    lastTurn: agentStats?.usage?.lastTurn ?? null,
+    source: 'native',
+    updatedAt: null,
+  } : terminalUsage ? {
+    provider: terminalUsage.provider,
+    providerLabel: terminalUsage.provider === 'codex' ? 'Codex' : 'Claude Code',
+    providerName: null,
+    model: terminalUsage.model,
+    effort: terminalUsage.effort,
+    status: null,
+    context: terminalUsage.contextUsedTokens != null || terminalUsage.contextWindowTokens != null ? {
+      usedTokens: terminalUsage.contextUsedTokens,
+      windowTokens: terminalUsage.contextWindowTokens,
+      basis: '',
+      updating: false,
+    } : null,
+    sessionTotal: terminalUsage.total,
+    lastTurn: null,
+    source: 'terminal',
+    updatedAt: terminalUsage.updatedAt,
+  } : null;
 
   // 状态栏的 Agent 历史入口：识别当前标签页背后的 Agent 与项目。
   // 原生聊天 / 回放标签有明确的 provider 与项目路径；普通终端则依次看
@@ -383,47 +403,37 @@ const StatusBarResources = memo(function StatusBarResources() {
     }
   }, [showToast]);
 
-  const type = session?.terminalType;
-  const TypeIcon = type ? TYPE_ICONS[type] : SquareTerminal;
-  const typeLabel = type ? TYPE_LABELS[type] : '';
   const detail = connectionDetail(profile);
 
   return (
     <div className="app-statusbar" role="group" aria-label="应用状态栏">
-      {session && type ? (
-        <>
-          <span
-            className="app-statusbar-item"
-            title={detail ? `${typeLabel} · ${detail}` : typeLabel}
-          >
-            <TypeIcon className="app-statusbar-icon" aria-hidden="true" />
-            <span>{typeLabel}</span>
-          </span>
-
-          {isTerminal && (
-            <span
-              className="app-statusbar-item"
-              title={working ? 'Claude / Codex 正在执行任务' : '当前会话空闲'}
-            >
-              <span className={`app-statusbar-dot${working ? ' running' : ' idle'}`} aria-hidden="true" />
-              <span>{working ? '运行中' : '空闲'}</span>
-            </span>
-          )}
-
-          <span
-            className="app-statusbar-item app-statusbar-session app-statusbar-optional"
-            title={detail ? `${session.profileName} · ${detail}` : session.profileName}
-          >
-            <span className="app-statusbar-label">{session.profileName}</span>
-            {session.owner === 'web' && <span className="app-statusbar-badge">Web</span>}
-          </span>
-        </>
+      {session ? (
+        <span
+          className="app-statusbar-item app-statusbar-session app-statusbar-optional"
+          title={detail ? `${session.profileName} · ${detail}` : session.profileName}
+        >
+          <span className="app-statusbar-label">{session.profileName}</span>
+          {session.owner === 'web' && <span className="app-statusbar-badge">Web</span>}
+        </span>
+      ) : activeNativeAgentTab ? (
+        <span
+          className="app-statusbar-item app-statusbar-session"
+          title={`${agentHistoryLabel(activeNativeAgentTab.provider)} · ${activeNativeAgentTab.projectPath}`}
+        >
+          <AgentIcon
+            provider={activeNativeAgentTab.provider}
+            className={`app-statusbar-agent-logo provider-${activeNativeAgentTab.provider}`}
+          />
+          <span className="app-statusbar-label">{activeNativeAgentTab.title}</span>
+        </span>
       ) : (
         <span className="app-statusbar-item app-statusbar-idle" title="当前没有活动的终端会话">
           <span className="app-statusbar-dot idle" aria-hidden="true" />
           <span>无活动会话</span>
         </span>
       )}
+
+      {agentStatusView && <StatusBarAgent view={agentStatusView} />}
 
       {agentTargets.length > 0 && (
         <>

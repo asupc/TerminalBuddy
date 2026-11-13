@@ -98,6 +98,21 @@
   max-width: 220px;
 }
 
+/* 选中 Agent 时展示的模型名与思考强度：模型过长时省略，强度保持完整。 */
+.app-statusbar-agent-model {
+  max-width: 240px;
+}
+
+.app-statusbar-agent-effort {
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
 .app-statusbar-label {
   min-width: 0;
   overflow: hidden;
@@ -256,6 +271,8 @@
   .app-statusbar .git-operation-status {
     display: none;
   }
+  /* 窄屏优先保留模型名；思考强度、上下文与 Token 仍可通过悬浮查看。 */
+  .app-statusbar-agent-effort { display: none; }
 }
 
 @media (max-width: 720px) {
