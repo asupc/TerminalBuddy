@@ -198,7 +198,7 @@ AI 正文继续通过原有消息字段传输原始 Markdown，不改变 REST �
 
 ## 服务端终端任务通知（App）
 
-原微信 / 飞书机器人通知之外的 App 通道，覆盖非原生会话（PC / Web 终端）里 Claude / Pi 的完成事件与待决策事件。服务端在 `claude-hook-terminal-event` 的 `completed` / `failed` 与 `claude-hook-decision` 产生时写入内存事件流；`send_bot_notification` 收到桌面端完成通知时也按同一事件 ID 发布，供 App 去重。
+App 通道覆盖非原生会话（PC / Web 终端）里 Claude / Pi 的完成事件与待决策事件。服务端在 `claude-hook-terminal-event` 的 `completed` / `failed` 与 `claude-hook-decision` 产生时写入内存事件流。
 
 | 路径 | 请求 / 响应 |
 | --- | --- |
