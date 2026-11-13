@@ -80,6 +80,9 @@ export interface AppSettings {
   /** Agent 历史会话自动归档：开启后把超过 N 天未使用的会话标记为已归档。 */
   agentAutoArchiveEnabled: boolean;
   agentAutoArchiveDays: number;
+  /** 原生会话进程空闲自动回收，时长范围 1–24 小时。 */
+  agentIdleRecycleEnabled: boolean;
+  agentIdleRecycleHours: number;
   launchAtLogin: boolean;
   terminalFollowAppTheme: boolean;
   autoResumeClaudeSession: boolean;
@@ -129,6 +132,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   nativeChatSessions: false,
   agentAutoArchiveEnabled: false,
   agentAutoArchiveDays: 30,
+  agentIdleRecycleEnabled: true,
+  agentIdleRecycleHours: 5,
   launchAtLogin: false,
   terminalFollowAppTheme: true,
   autoResumeClaudeSession: true,

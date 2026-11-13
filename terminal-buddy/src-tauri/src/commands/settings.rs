@@ -352,6 +352,18 @@ pub fn save_agent_auto_archive(
     crate::services::session_auto_archive_service::archive_stale(enabled, days)
 }
 
+/// 保存空闲会话进程回收设置；工作线程读取设置缓存，已打开的会话也即时生效。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn save_agent_idle_recycle(enabled: bool, hours: u32) -> Result<(), String> {
+    if !(1..=24).contains(&hours) {
+        return Err("空闲会话回收时间必须为 1–24 小时".into());
+    }
+    SettingsService::mutate_settings(|settings| {
+        settings.agent_idle_recycle_enabled = enabled;
+        settings.agent_idle_recycle_hours = hours;
+    })
+}
+
 /// 按当前设置立即执行一次自动归档（启动定时任务之外的手动入口）。
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn run_agent_auto_archive(

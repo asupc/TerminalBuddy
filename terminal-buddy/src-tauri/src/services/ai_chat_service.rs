@@ -5,7 +5,7 @@ use crate::models::ai_chat::*;
 use crate::runtime::Emitter;
 use super::{ai_chat_approval::{self as approval, ClaudeApproval}, ai_chat_usage as usage};
 use super::ai_chat_claude_hooks::{NativeClaudeHooks, NativeHookEvent};
-use super::{atomic_file::atomic_write_private, process_tree::ProcessTree, terminal_task_service::SessionSummaryTracker, PathService};
+use super::{atomic_file::atomic_write_private, process_tree::ProcessTree, terminal_task_service::SessionSummaryTracker, PathService, SettingsService};
 use base64::Engine;
 use serde::Deserialize as _;
 use serde_json::{json, Value};
@@ -2142,13 +2142,16 @@ fn normalize_status(status: Option<&str>) -> Option<String> {
 /// （模型接口挂起、CLI 无限重试等），主动结束回合并保留聊天记录。等待用户决策不算停滞。
 /// Claude / Codex 两家循环共用。
 const AGENT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
-/// 完全空闲的 CLI 保留 5 小时复用窗口，避免每个历史会话永久占用一个进程。
-/// 下一条消息通过持久化的 thread_id 恢复；执行中、后台任务与待审批均不参与回收。
-const AGENT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60 * 60);
 
 /// 仅在输出接收超时后尝试回收，确保已经就绪的完成事件与后台输出先被处理。
 fn retire_idle_process(cell: &Cell, worker_control: &WorkerControl, idle_since: &mut Option<Instant>, ready: bool) -> Result<bool> {
     if !ready { *idle_since = None; return Ok(false); }
+    // 开关与时长每次从设置缓存读取，修改后直接作用于已打开的会话。
+    // 关闭时清掉计时，重新开启后按新配置重新计算空闲窗口。
+    let Some(timeout) = SettingsService::agent_idle_recycle_timeout() else {
+        *idle_since = None;
+        return Ok(false);
+    };
     // 与发送/出队/删除共用锁：新消息若已被接纳，则不能再退出而把消息留在旧通道里。
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     // 切换模型或删除可能已交接控制权；旧 worker 不能清掉新 worker 的控制通道。
@@ -2158,7 +2161,7 @@ fn retire_idle_process(cell: &Cell, worker_control: &WorkerControl, idle_since: 
         *idle_since = None;
         return Ok(false);
     }
-    if idle_since.get_or_insert_with(Instant::now).elapsed() < AGENT_IDLE_TIMEOUT { return Ok(false); }
+    if idle_since.get_or_insert_with(Instant::now).elapsed() < timeout { return Ok(false); }
     // 先保存最终正文、用量和恢复标识，再摘掉控制通道。Retired 跳过普通 finish，
     // 避免旧 worker 收尾覆盖随即启动的新回合；run_turn 返回时由 Process::drop 回收整棵进程树。
     persist_data(cell, &data)?;
@@ -2785,7 +2788,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
         if completed { settle_at = Some(Instant::now() + Duration::from_millis(300)); }
         codex_status(cell, &state, &background, request_id.as_deref(), resume_request.is_some() || turn_request.is_some() || settle_at.is_some());
         if completed { refresh_title(cell, true); persist(cell)?; }
-        // turn/completed 仅结束主回合；后台任务继续接收输出，完全空闲 5 小时后回收进程。
+        // turn/completed 仅结束主回合；后台任务继续接收输出，完全空闲后按设置回收进程。
     }
 }
 

@@ -2,6 +2,7 @@ use crate::models::AppSettings;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
+use std::time::Duration;
 
 static CACHED_SETTINGS: RwLock<Option<AppSettings>> = RwLock::new(None);
 /// 串行化所有设置写入：`mutate_settings` 的「读缓存 → 修改 → 写回」必须整体
@@ -47,6 +48,21 @@ impl SettingsService {
             }
         }
         Self::get_settings().web_api_share_sessions
+    }
+
+    /// 空闲进程的回收检查走缓存读取，避免每个会话循环反复克隆整份设置。
+    pub fn agent_idle_recycle_timeout() -> Option<Duration> {
+        let timeout = |settings: &AppSettings| {
+            settings.agent_idle_recycle_enabled.then(|| {
+                Duration::from_secs(u64::from(settings.agent_idle_recycle_hours.clamp(1, 24)) * 3600)
+            })
+        };
+        if let Ok(cache) = CACHED_SETTINGS.read() {
+            if let Some(ref settings) = *cache {
+                return timeout(settings);
+            }
+        }
+        timeout(&Self::get_settings())
     }
 
     fn read_settings_from_disk() -> AppSettings {

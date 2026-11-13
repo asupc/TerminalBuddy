@@ -44,6 +44,9 @@ export async function getBackendAppSettings(): Promise<{
   /** Agent 历史会话自动归档：开启后把超过 N 天未使用的会话标记为已归档。 */
   agentAutoArchiveEnabled?: boolean;
   agentAutoArchiveDays?: number;
+  /** 原生会话空闲进程回收：默认开启，默认 5 小时。 */
+  agentIdleRecycleEnabled?: boolean;
+  agentIdleRecycleHours?: number;
 }> {
   return invoke('get_app_settings');
 }
@@ -59,6 +62,10 @@ export const saveNativeChatSessions = (enabled: boolean) =>
 /** 保存自动归档设置；开启时会立即按新阈值执行一次，返回实际归档数量。 */
 export const saveAgentAutoArchive = (enabled: boolean, days: number) =>
   invoke<AgentAutoArchiveResult>('save_agent_auto_archive', { enabled, days });
+
+/** 保存空闲会话进程回收设置，时长范围 1–24 小时。 */
+export const saveAgentIdleRecycle = (enabled: boolean, hours: number) =>
+  invoke<void>('save_agent_idle_recycle', { enabled, hours });
 
 /** 按当前设置立即执行一次自动归档。 */
 export const runAgentAutoArchive = () =>

@@ -1,6 +1,6 @@
 import { FC, useEffect, useState } from 'react';
 import { isBrowserClient } from '../../services/platform';
-import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, saveNativeChatSessions, saveAgentAutoArchive, getDefaultTerminalStatus, setDefaultTerminalEnabled, getWebApiStatus, type VsCodeTerminalSupport, type DefaultTerminalStatus } from '../../services/tauri';
+import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, saveNativeChatSessions, saveAgentAutoArchive, saveAgentIdleRecycle, getDefaultTerminalStatus, setDefaultTerminalEnabled, getWebApiStatus, type VsCodeTerminalSupport, type DefaultTerminalStatus } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { showAlert } from '../../services/dialog';
 import { type AppSettings } from '../../utils/settings';
@@ -42,6 +42,34 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
     saveAgentAutoArchive(settings.agentAutoArchiveEnabled, days)
       .then(result => reportArchive(result, false))
       .catch(error => showToast(`保存自动归档设置失败：${String(error)}`, 'error'));
+  };
+  const [idleRecycleHours, setIdleRecycleHours] = useState(String(settings.agentIdleRecycleHours));
+  const [savingIdleRecycle, setSavingIdleRecycle] = useState(false);
+  useEffect(() => {
+    setIdleRecycleHours(String(settings.agentIdleRecycleHours));
+  }, [settings.agentIdleRecycleHours]);
+  const saveIdleRecycle = async (enabled: boolean, hours: number) => {
+    setSavingIdleRecycle(true);
+    try {
+      await saveAgentIdleRecycle(enabled, hours);
+      updateSetting('agentIdleRecycleEnabled', enabled);
+      updateSetting('agentIdleRecycleHours', hours);
+    } catch (error) {
+      setIdleRecycleHours(String(settings.agentIdleRecycleHours));
+      showToast(`保存空闲进程回收设置失败：${String(error)}`, 'error');
+    } finally {
+      setSavingIdleRecycle(false);
+    }
+  };
+  const commitIdleRecycleHours = (raw: string) => {
+    const parsed = Number(raw);
+    const hours = raw.trim() !== '' && Number.isFinite(parsed)
+      ? Math.min(24, Math.max(1, Math.round(parsed)))
+      : settings.agentIdleRecycleHours;
+    setIdleRecycleHours(String(hours));
+    if (hours !== settings.agentIdleRecycleHours) {
+      void saveIdleRecycle(settings.agentIdleRecycleEnabled, hours);
+    }
   };
   // 默认终端状态自管（不进 localStorage 镜像）：注册表是唯一权威来源。
   const [defaultTerminal, setDefaultTerminal] = useState<DefaultTerminalStatus | null>(null);
@@ -211,6 +239,45 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   onChange={e => toggleAutoArchive(e.target.checked)}
                 />
                 <span className="settings-sr-only">会话自动归档</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">空闲会话进程自动回收</div>
+            <p className="settings-row-desc">
+              自动释放完全空闲的 Claude / Codex 原生会话进程，执行中、后台任务或待审批的会话不受影响。
+              会话标签和聊天记录保留，再次发送消息时自动恢复。
+            </p>
+          </div>
+          <div className="settings-row-ctrl">
+            <div className="settings-number-row" style={{ gap: 10 }}>
+              <input
+                type="number"
+                min={1}
+                max={24}
+                step={1}
+                value={idleRecycleHours}
+                disabled={savingIdleRecycle}
+                onChange={e => setIdleRecycleHours(e.target.value)}
+                onBlur={e => commitIdleRecycleHours(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                }}
+                style={{ width: 64, height: 28, padding: '0 6px' }}
+                aria-label="空闲会话进程回收小时数"
+              />
+              <span className="settings-number-unit">小时空闲</span>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.agentIdleRecycleEnabled}
+                  disabled={savingIdleRecycle}
+                  onChange={e => { void saveIdleRecycle(e.target.checked, settings.agentIdleRecycleHours); }}
+                />
+                <span className="settings-sr-only">空闲会话进程自动回收</span>
               </label>
             </div>
           </div>

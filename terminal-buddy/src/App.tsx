@@ -264,6 +264,8 @@ function App() {
           launchWindowMode: backend.launchWindowMode,
           enableTabNavigation: backend.enableTabNavigation,
           singleInstance: backend.singleInstance,
+          agentIdleRecycleEnabled: backend.agentIdleRecycleEnabled ?? settings.agentIdleRecycleEnabled,
+          agentIdleRecycleHours: backend.agentIdleRecycleHours ?? settings.agentIdleRecycleHours,
         };
         // Agent 基础启动命令（后端为数据源；浏览器模式在 WebEntry 里经 /api/runtime 提前写入）
         const commands = backend.agentCommands ?? { claude: '', codex: '' };

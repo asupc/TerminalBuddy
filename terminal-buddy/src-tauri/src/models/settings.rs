@@ -144,6 +144,11 @@ pub struct AppSettings {
     pub agent_auto_archive_enabled: bool,
     #[serde(default = "default_agent_auto_archive_days")]
     pub agent_auto_archive_days: u32,
+    /// 完全空闲的原生 Claude / Codex 会话按小时回收进程，保留会话记录供下次恢复。
+    #[serde(default = "default_agent_idle_recycle_enabled")]
+    pub agent_idle_recycle_enabled: bool,
+    #[serde(default = "default_agent_idle_recycle_hours")]
+    pub agent_idle_recycle_hours: u32,
 }
 
 /// Agent（Claude Code / Codex）的基础启动命令，供项目模型启动与历史恢复继承参数。
@@ -196,8 +201,18 @@ impl Default for AppSettings {
             agent_download_source: AgentDownloadSource::default(),
             agent_auto_archive_enabled: false,
             agent_auto_archive_days: default_agent_auto_archive_days(),
+            agent_idle_recycle_enabled: default_agent_idle_recycle_enabled(),
+            agent_idle_recycle_hours: default_agent_idle_recycle_hours(),
         }
     }
+}
+
+fn default_agent_idle_recycle_enabled() -> bool {
+    true
+}
+
+fn default_agent_idle_recycle_hours() -> u32 {
+    5
 }
 
 fn default_agent_auto_archive_days() -> u32 {

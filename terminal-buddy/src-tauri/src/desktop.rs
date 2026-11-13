@@ -567,6 +567,7 @@ pub fn run() {
             save_web_api_share_sessions,
             save_native_chat_sessions,
             save_agent_auto_archive,
+            save_agent_idle_recycle,
             run_agent_auto_archive,
             get_web_api_status,
             change_web_admin_password,
