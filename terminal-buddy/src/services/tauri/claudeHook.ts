@@ -47,17 +47,6 @@ export interface ClaudeHookTerminalEvent {
   summary?: string;
 }
 
-export interface ClaudeHookSettingsStatus {
-  configDir: string;
-  settingsPath: string;
-  status: 'notInstalled' | 'partialInstalled' | 'installed' | 'invalid';
-  installedEvents: string[];
-  missingEvents: string[];
-  serverRunning: boolean;
-  serverPort: number;
-  error?: string;
-}
-
 export async function answerClaudeHookDecision(decisionId: string, answers: Record<string, string>): Promise<void> {
   return invoke('answer_claude_hook_decision', { decisionId, answers });
 }
@@ -68,10 +57,6 @@ export async function continueClaudeHookInTerminal(decisionId: string): Promise<
 
 export async function getPendingClaudeHookDecisions(): Promise<ClaudeHookDecisionEvent[]> {
   return invoke('get_pending_claude_hook_decisions');
-}
-
-export async function sendClaudeHookDecisionNotification(decisionId: string): Promise<void> {
-  return invoke('send_claude_hook_decision_notification', { decisionId });
 }
 
 export async function onClaudeHookDecision(callback: (payload: ClaudeHookDecisionEvent) => void): Promise<UnlistenFn> {
@@ -88,17 +73,4 @@ export async function onClaudeHookDecisionResolved(callback: (payload: ClaudeHoo
 
 export async function onClaudeHookTerminalEvent(callback: (payload: ClaudeHookTerminalEvent) => void): Promise<UnlistenFn> {
   return listenTauri<ClaudeHookTerminalEvent>('claude-hook-terminal-event', callback);
-}
-
-export async function getClaudeHookSettingsStatus(selectedDir?: string): Promise<ClaudeHookSettingsStatus> {
-  return invoke('get_claude_hook_settings_status', { selectedDir: selectedDir || null });
-}
-
-export async function saveClaudeHookConfigDir(selectedDir?: string): Promise<void> {
-  return invoke('save_claude_hook_config_dir', { selectedDir: selectedDir || null });
-}
-
-/** 清理旧版写进用户级 settings.json 的 TerminalBuddy Hook 残留（新版随模型终端临时注入）。 */
-export async function uninstallClaudeHooks(selectedDir?: string): Promise<ClaudeHookSettingsStatus> {
-  return invoke('uninstall_claude_hooks', { selectedDir: selectedDir || null });
 }

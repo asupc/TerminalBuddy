@@ -78,9 +78,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(listener) => { tokio::spawn(web::claude_hook_server::run(app.clone(), listener)); }
         Err(error) => eprintln!("Claude Hook 服务未启动：{}", error),
     }
-    if let Err(error) = terminal_buddy_lib::services::sync_bot_long_connections(app.clone()) {
-        eprintln!("机器人连接启动失败：{}", error);
-    }
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutdown_app = app.clone();
     tokio::spawn(async move {

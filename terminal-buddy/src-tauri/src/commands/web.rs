@@ -1,4 +1,3 @@
-use crate::services::BotSettingsService;
 use crate::services::SettingsService;
 use crate::web::auth::load_or_create_jwt_secret;
 use std::sync::Mutex;
@@ -11,8 +10,7 @@ pub(crate) static JWT_SECRET: Mutex<Option<String>> = Mutex::new(None);
 
 fn should_run_http_server() -> bool {
     let settings = SettingsService::get_settings();
-    (settings.web_api_enabled && !settings.web_api_password_hash.is_empty())
-        || BotSettingsService::requires_callback_server()
+    settings.web_api_enabled && !settings.web_api_password_hash.is_empty()
 }
 
 fn start_http_server(app: AppHandle) -> Result<(), String> {
@@ -32,7 +30,7 @@ fn start_http_server(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub fn sync_http_server_for_bot(app: AppHandle) -> Result<(), String> {
+pub fn sync_http_server(app: AppHandle) -> Result<(), String> {
     let running = SHUTDOWN_TX.lock().unwrap().is_some();
     let should_run = should_run_http_server();
     if should_run && !running {

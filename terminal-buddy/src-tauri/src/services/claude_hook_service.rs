@@ -8,9 +8,7 @@ pub const CLAUDE_HOOK_PORT: u16 = 19601;
 pub const CLAUDE_HOOK_URL: &str = "http://127.0.0.1:19601/api/claude/hooks";
 pub const CLAUDE_HOOK_CLIENT_ARG: &str = "__terminal_buddy_claude_hook";
 
-/// 业务 decision TTL 由机器人设置（`decisionTtlMinutes`，1..=1440 分钟）控制，
-/// 是 pending 表里决策的存活期；单次 HTTP hook 请求的最长挂起时间是另一个概念，
-/// 不能让 24 小时 TTL 直接把 HTTP 连接也挂 24 小时。
+/// 单次 HTTP hook 请求的最长挂起时间。决策只在当前请求等待期间有效。
 pub const HTTP_WAIT_CAP: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 /// 全局同时 pending 的 decision 上限。超过后新请求立刻 429，不建 receiver、
 /// 不发通知卡片、不占 HTTP 连接。
@@ -57,20 +55,6 @@ struct PendingDecision {
     occurred_at: i64,
     answers: HashMap<String, String>,
     response: Option<oneshot::Sender<ClaudeHookResolution>>,
-    notification_state: DecisionNotificationState,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DecisionNotificationState {
-    Pending,
-    Sending(u64),
-    Sent,
-}
-
-pub struct ClaudeHookNotificationLease {
-    pub terminal_id: String,
-    pub questions: Vec<ClaudeHookQuestion>,
-    pub generation: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -137,11 +121,6 @@ pub(crate) fn hook_server_port() -> &'static AtomicU16 {
     PORT.get_or_init(|| AtomicU16::new(0))
 }
 
-fn next_notification_generation() -> u64 {
-    static GENERATION: AtomicU64 = AtomicU64::new(0);
-    GENERATION.fetch_add(1, Ordering::SeqCst).wrapping_add(1)
-}
-
 /// 运行统计：当前 pending 数、等待后超时数、超限拒绝数。
 /// 只含计数，不含 prompt 或问题内容（日志同样不得写入完整 prompt）。
 pub struct ClaudeHookStats {
@@ -178,12 +157,6 @@ impl DecisionRejectReason {
     }
 }
 
-fn cancel_decision_cards(decision_id: &str, question_count: usize) {
-    for index in 0..question_count {
-        let _ = crate::services::BotBindingService::cancel(&card_decision_id(decision_id, index));
-    }
-}
-
 pub struct ClaudeHookService;
 
 impl ClaudeHookService {
@@ -215,26 +188,18 @@ impl ClaudeHookService {
             .retain(|(registered_terminal_id, _), _| registered_terminal_id != terminal_id);
         // 决策移除时向 receiver 发送 ContinueInTerminal：HTTP hook 请求因此立刻
         // 返回，而不是挂到 TTL 超时。终端已关闭，「继续在终端里」是安全答案。
-        let removed = {
-            let mut current = lock_pending();
-            let removed = current
-                .iter()
-                .filter(|(_, decision)| decision.terminal_id == terminal_id)
-                .map(|(decision_id, decision)| {
-                    (decision_id.clone(), decision.questions.len())
-                })
-                .collect::<Vec<_>>();
-            for (decision_id, _) in &removed {
-                if let Some(mut decision) = current.remove(decision_id) {
-                    if let Some(response) = decision.response.take() {
-                        let _ = response.send(ClaudeHookResolution::ContinueInTerminal);
-                    }
+        let mut current = lock_pending();
+        let removed = current
+            .iter()
+            .filter(|(_, decision)| decision.terminal_id == terminal_id)
+            .map(|(decision_id, _)| decision_id.clone())
+            .collect::<Vec<_>>();
+        for decision_id in removed {
+            if let Some(mut decision) = current.remove(&decision_id) {
+                if let Some(response) = decision.response.take() {
+                    let _ = response.send(ClaudeHookResolution::ContinueInTerminal);
                 }
             }
-            removed
-        };
-        for (decision_id, question_count) in removed {
-            cancel_decision_cards(&decision_id, question_count);
         }
     }
 
@@ -306,7 +271,6 @@ impl ClaudeHookService {
                 occurred_at,
                 answers: HashMap::new(),
                 response: Some(tx),
-                notification_state: DecisionNotificationState::Pending,
             },
         );
         Ok(rx)
@@ -346,60 +310,12 @@ impl ClaudeHookService {
         decisions
     }
 
-    pub fn begin_notification(decision_id: &str) -> Option<ClaudeHookNotificationLease> {
-        let mut current = lock_pending();
-        let decision = current.get_mut(decision_id)?;
-        if decision.notification_state != DecisionNotificationState::Pending {
-            return None;
-        }
-        let generation = next_notification_generation();
-        decision.notification_state = DecisionNotificationState::Sending(generation);
-        Some(ClaudeHookNotificationLease {
-            terminal_id: decision.terminal_id.clone(),
-            questions: decision.questions.clone(),
-            generation,
-        })
-    }
-
-    pub fn notification_is_current(decision_id: &str, generation: u64) -> bool {
+    pub fn expire_decision(decision_id: &str) {
         pending()
             .lock()
             .unwrap_or_else(|value| value.into_inner())
-            .get(decision_id)
-            .is_some_and(|decision| {
-                decision.notification_state == DecisionNotificationState::Sending(generation)
-            })
-    }
-
-    pub fn finish_notification(decision_id: &str, generation: u64, sent: bool) -> bool {
-        let mut current = lock_pending();
-        let Some(decision) = current.get_mut(decision_id) else {
-            return false;
-        };
-        if decision.notification_state != DecisionNotificationState::Sending(generation) {
-            return false;
-        }
-        decision.notification_state = if sent {
-            DecisionNotificationState::Sent
-        } else {
-            DecisionNotificationState::Pending
-        };
-        true
-    }
-
-    pub fn cancel_notification_cards(decision_id: &str, question_count: usize) {
-        cancel_decision_cards(decision_id, question_count);
-    }
-
-    pub fn expire_decision(decision_id: &str) {
-        let question_count = pending()
-            .lock()
-            .unwrap_or_else(|value| value.into_inner())
-            .remove(decision_id)
-            .map(|decision| decision.questions.len())
-            .unwrap_or_default();
+            .remove(decision_id);
         Self::note_expired();
-        cancel_decision_cards(decision_id, question_count);
     }
 
     pub fn answer_all(decision_id: &str, answers: HashMap<String, String>) -> Result<(), String> {
@@ -412,15 +328,12 @@ impl ClaudeHookService {
                 return Err(format!("问题“{}”尚未回答", question.question));
             }
         }
-        let question_count = decision.questions.len();
         let response = decision
             .response
             .take()
             .ok_or_else(|| "该 Claude 决策已处理".to_string())?;
         let _ = response.send(ClaudeHookResolution::Answers(answers));
         current.remove(decision_id);
-        drop(current);
-        cancel_decision_cards(decision_id, question_count);
         Ok(())
     }
 
@@ -443,20 +356,12 @@ impl ClaudeHookService {
             .questions
             .iter()
             .all(|item| decision.answers.contains_key(&item.question));
-        let question_count = if complete {
+        if complete {
             let answers = decision.answers.clone();
             if let Some(response) = decision.response.take() {
                 let _ = response.send(ClaudeHookResolution::Answers(answers));
             }
-            let question_count = decision.questions.len();
             current.remove(decision_id);
-            Some(question_count)
-        } else {
-            None
-        };
-        drop(current);
-        if let Some(question_count) = question_count {
-            cancel_decision_cards(decision_id, question_count);
         }
         Ok(())
     }
@@ -503,14 +408,11 @@ impl ClaudeHookService {
         let mut decision = current
             .remove(decision_id)
             .ok_or_else(|| "该 Claude 决策已失效".to_string())?;
-        let question_count = decision.questions.len();
         let response = decision
             .response
             .take()
             .ok_or_else(|| "该 Claude 决策已处理".to_string())?;
         let _ = response.send(resolution);
-        drop(current);
-        cancel_decision_cards(decision_id, question_count);
         Ok(())
     }
 
@@ -547,39 +449,6 @@ mod tests {
     fn card_decision_id_round_trip() {
         let value = card_decision_id("session:tool", 2);
         assert_eq!(parse_card_decision_id(&value), Some(("session:tool", 2)));
-    }
-
-    #[test]
-    fn notification_generation_allows_only_one_current_sender() {
-        let decision_id = format!("notification-test-{}", uuid::Uuid::new_v4());
-        let _receiver = ClaudeHookService::insert_decision(
-            decision_id.clone(),
-            "terminal-test".to_string(),
-            Vec::new(),
-            123,
-            100,
-        );
-        let first = ClaudeHookService::begin_notification(&decision_id).unwrap();
-        assert!(ClaudeHookService::notification_is_current(
-            &decision_id,
-            first.generation
-        ));
-        assert!(ClaudeHookService::begin_notification(&decision_id).is_none());
-        assert!(ClaudeHookService::finish_notification(
-            &decision_id,
-            first.generation,
-            false
-        ));
-
-        let second = ClaudeHookService::begin_notification(&decision_id).unwrap();
-        assert_ne!(second.generation, first.generation);
-        assert!(ClaudeHookService::finish_notification(
-            &decision_id,
-            second.generation,
-            true
-        ));
-        assert!(ClaudeHookService::begin_notification(&decision_id).is_none());
-        ClaudeHookService::expire_decision(&decision_id);
     }
 
     #[test]

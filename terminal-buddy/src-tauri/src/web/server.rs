@@ -24,7 +24,7 @@ use crate::web::rate_limit::LoginThrottle;
 use crate::web::ws;
 
 /// 请求 body 上限（2MB，与 axum 默认一致，此处显式声明作为安全合同）。
-/// 登录 JSON、参数预设和命令历史同步都远小于这个值。
+/// 登录 JSON 和命令历史同步都远小于这个值。
 const MAX_REQUEST_BODY_BYTES: usize = 2 * 1024 * 1024;
 /// 单个 HTTP 请求（从收完 body 到响应头就绪）的最长处理时间。
 /// WebSocket 升级请求的 handler 立即返回，升级后的长连接不再经过 HTTP 层，
@@ -125,15 +125,6 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/ws/notifications", get(handlers::app_notification_handler::socket))
         .route("/api/health", get(|| async { "正常" }))
-        // 机器人平台回调使用各自签名的 Token，不走 Web API JWT
-        .route(
-            "/api/bot/feishu/events",
-            post(handlers::bot_handler::feishu_events),
-        )
-        .route(
-            "/api/bot/inbound/{channel_id}",
-            post(handlers::bot_handler::bridge_inbound),
-        )
         // 连接（profile）只读列表 —— 手机端不管理 profile，照搬电脑端已配置的导航
         .route("/api/profiles", get(handlers::profile_handler::list))
         // 项目只读列表 —— Web 端「启动项目」用（目录 + 自定义启动命令）
@@ -151,11 +142,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/git/commit", post(handlers::git_handler::commit))
         .route("/api/git/pull", post(handlers::git_handler::pull))
         .route("/api/git/push", post(handlers::git_handler::push))
-        // 启动参数预设（与 PC 端共享 ClientData/extra_param_presets.json）
-        .route(
-            "/api/extra-param-presets",
-            get(handlers::preset_handler::list).put(handlers::preset_handler::replace),
-        )
         // 命令历史（与 PC 端共享 ClientData/command_history.json）
         .route(
             "/api/command-history",

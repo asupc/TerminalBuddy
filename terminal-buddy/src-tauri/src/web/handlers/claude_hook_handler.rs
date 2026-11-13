@@ -2,19 +2,18 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 use crate::runtime::{Emitter, Manager};
 
-use crate::commands::{send_bot_notification, TerminalService};
+use crate::commands::TerminalService;
 use crate::services::ai_chat_claude_hooks::{self as native_hooks, NativeHookEvent};
-use crate::models::{BotDecisionOption, BotNotificationRequest};
 use crate::services::{
-    card_decision_id, AppNotificationService, BotSettingsService, ClaudeHookDecisionEvent,
-    ClaudeHookQuestion, ClaudeHookResolution, ClaudeHookService, ClaudeHookTerminalEvent,
+    AppNotificationService, ClaudeHookDecisionEvent, ClaudeHookQuestion,
+    ClaudeHookResolution, ClaudeHookService, ClaudeHookTerminalEvent,
 };
 
 #[derive(Debug, Deserialize)]
@@ -303,10 +302,8 @@ pub(crate) async fn claude_hook(
     let decision_id = if native { uuid::Uuid::new_v4().to_string() } else { format!(
         "{}:{}:{}", request.session_id, tool_use_id, uuid::Uuid::new_v4()
     ) };
-    let bot_settings = BotSettingsService::get_runtime().unwrap_or_default();
-    let ttl_minutes = bot_settings.decision_ttl_minutes.clamp(1, 1440);
     let occurred_at = next_hook_timestamp();
-    let expires_at = occurred_at + Duration::minutes(ttl_minutes as i64).num_milliseconds();
+    let expires_at = occurred_at + ClaudeHookService::http_wait_cap().as_millis() as i64;
     // 上限检查失败：不建通道、不发通知卡片，hook 请求立刻带原因失败，
     // 不占用 HTTP 连接和 pending 资源。
     let receiver = match ClaudeHookService::insert_decision(
@@ -344,12 +341,9 @@ pub(crate) async fn claude_hook(
         AppNotificationService::publish_decision(&event, terminal_name(&app, terminal_id));
     }
 
-    // 业务 TTL（decisionTtlMinutes）决定决策在 pending 表的存活期；
-    // 单次 HTTP 连接的挂起时间另设上限，24 小时 TTL 不会把连接挂 24 小时。
-    // 原生会话过期后撤销卡片并返回 deny，避免再退回 stdio 产生第二次用户提问。
-    let http_wait = std::time::Duration::from_secs((ttl_minutes as u64) * 60)
-        .min(ClaudeHookService::http_wait_cap());
-    let outcome = tokio::time::timeout(http_wait, receiver).await;
+    // 决策只跟随当前 Hook 请求等待，不使用用户可配置的延迟。
+    // 原生会话过期后返回 deny，避免再退回 stdio 产生第二次用户提问。
+    let outcome = tokio::time::timeout(ClaudeHookService::http_wait_cap(), receiver).await;
     let resolution = match &outcome {
         Ok(Ok(ClaudeHookResolution::Answers(_))) => Some("answered"),
         Ok(Ok(ClaudeHookResolution::ContinueInTerminal)) => Some("continueInTerminal"),
@@ -441,74 +435,6 @@ pub(crate) fn continue_decision_for_web(app: &crate::runtime::AppHandle, decisio
 pub fn get_pending_claude_hook_decisions() -> Vec<ClaudeHookDecisionEvent> {
     ClaudeHookService::list_pending_decisions().into_iter()
         .filter(|decision| !native_hooks::is_native_target(&decision.terminal_id)).collect()
-}
-
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn send_claude_hook_decision_notification(
-    app: crate::runtime::AppHandle,
-    decision_id: String,
-) -> Result<(), String> {
-    let Some(lease) = ClaudeHookService::begin_notification(&decision_id) else {
-        return Ok(());
-    };
-    let terminal_id = lease.terminal_id;
-    let questions = lease.questions;
-    let generation = lease.generation;
-    let name = terminal_name(&app, &terminal_id);
-    let agent_name = "Claude Code";
-    for (question_index, question) in questions.iter().enumerate() {
-        if !ClaudeHookService::notification_is_current(&decision_id, generation) {
-            ClaudeHookService::cancel_notification_cards(&decision_id, questions.len());
-            return Ok(());
-        }
-        let options = question
-            .options
-            .iter()
-            .enumerate()
-            .map(|(index, option)| BotDecisionOption {
-                label: option.label.clone(),
-                description: option.description.clone(),
-                move_count: index as i16,
-                recommended: index == 0 && !question.multi_select,
-                selected: false,
-            })
-            .collect::<Vec<_>>();
-        let notification = BotNotificationRequest {
-            event_id: uuid::Uuid::new_v4().to_string(),
-            decision_id: Some(card_decision_id(&decision_id, question_index)),
-            terminal_id: terminal_id.clone(),
-            terminal_name: name.clone(),
-            kind: "question".to_string(),
-            title: format!("{agent_name} 等待回答"),
-            summary: question.question.clone(),
-            decision_title: Some(question.header.clone()),
-            decision_question: Some(question.question.clone()),
-            decision_options: Some(options),
-            decision_multi_select: question.multi_select,
-            decision_submit_move_count: None,
-            custom_option_down_count: None,
-        };
-        let reports = match send_bot_notification(notification).await {
-            Ok(reports) => reports,
-            Err(error) => {
-                ClaudeHookService::finish_notification(&decision_id, generation, false);
-                return Err(error);
-            }
-        };
-        if !ClaudeHookService::notification_is_current(&decision_id, generation) {
-            ClaudeHookService::cancel_notification_cards(&decision_id, questions.len());
-            return Ok(());
-        }
-        for report in reports.into_iter().filter(|report| !report.success) {
-            eprintln!(
-                "[ClaudeHook] 通道“{}”发送失败: {}",
-                report.channel_name,
-                report.error.unwrap_or_default()
-            );
-        }
-    }
-    ClaudeHookService::finish_notification(&decision_id, generation, true);
-    Ok(())
 }
 
 #[cfg(test)]

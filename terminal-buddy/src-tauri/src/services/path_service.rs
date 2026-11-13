@@ -195,12 +195,6 @@ impl PathService {
         Ok(dir)
     }
 
-    pub fn get_bots_dir() -> Result<PathBuf, String> {
-        let dir = Self::require_data_dir()?.join("Bots");
-        fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {}", e))?;
-        Ok(dir)
-    }
-
     pub fn get_debug_log_path() -> Result<PathBuf, String> {
         let dir = Self::require_data_dir()?;
         fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {}", e))?;

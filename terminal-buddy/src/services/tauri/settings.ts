@@ -37,7 +37,6 @@ export async function getBackendAppSettings(): Promise<{
   enableTabNavigation: boolean;
   showTaskSummary: boolean;
   singleInstance: boolean;
-  claudeHookConfigDir: string | null;
   agentCommands: AgentCommands;
   agentDownloadSource?: AgentDownloadSource;
   /** 新会话形态：true = 原生会话，false = 终端接力（默认）。 */

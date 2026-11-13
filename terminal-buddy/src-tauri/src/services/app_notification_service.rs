@@ -1,5 +1,5 @@
-//! 服务端任务通知事件：把原本只推送到微信 / 飞书的终端完成事件与决策，
-//! 同时提供给 App 订阅。事件保存在内存中，App 重连时补发仍在等待的决策。
+//! 服务端任务通知事件：向 App 提供终端完成事件与待处理决策。
+//! 事件保存在内存中，App 重连时补发仍在等待的决策。
 use crate::services::claude_hook_service::{
     ClaudeHookDecisionEvent, ClaudeHookQuestion, ClaudeHookTerminalEvent,
 };
@@ -152,29 +152,6 @@ impl AppNotificationService {
         });
     }
 
-    /// 桌面端把终端结束事件转成机器人通知时也会调用；eventId 与终端事件相同，
-    /// App 按事件 ID 去重，因此与源端发布重复时不会提醒两次。
-    pub fn publish_bot_completion(
-        event_id: &str, terminal_id: &str, terminal_name: &str, title: &str, summary: &str,
-    ) {
-        if event_id.trim().is_empty() {
-            return;
-        }
-        publish(AppNotificationEvent {
-            id: format!("terminal:{event_id}"),
-            kind: "completed".to_string(),
-            terminal_id: terminal_id.to_string(),
-            terminal_name: terminal_name.to_string(),
-            provider: None,
-            title: title.to_string(),
-            summary: summary.to_string(),
-            decision_id: None,
-            questions: Vec::new(),
-            expires_at: None,
-            occurred_at: chrono::Utc::now().timestamp_millis(),
-        });
-    }
-
     pub fn publish_resolved(terminal_id: &str, terminal_name: String, decision_id: &str) {        publish(AppNotificationEvent {
             id: format!("resolved:{decision_id}"),
             kind: "resolved".to_string(),
@@ -296,25 +273,6 @@ mod tests {
         assert_eq!(event.kind, "completed");
         assert_eq!(event.title, "任务完成：修复通知");
         assert_eq!(event.id, expected);
-    }
-
-    #[test]
-    fn bot_completion_uses_the_same_event_id_for_deduplication() {
-        let event_id = uuid::Uuid::new_v4().to_string();
-        let expected = format!("terminal:{event_id}");
-        let mut receiver = AppNotificationService::subscribe();
-        AppNotificationService::publish_bot_completion(
-            &event_id, "terminal-test", "构建终端", "任务完成", "已完成",
-        );
-        let event = loop {
-            match receiver.try_recv() {
-                Ok(event) if event.id == expected => break event,
-                Ok(_) => continue,
-                Err(error) => panic!("未收到机器人完成事件：{error}"),
-            }
-        };
-        assert_eq!(event.id, expected);
-        assert_eq!(event.terminal_name, "构建终端");
     }
 }
 

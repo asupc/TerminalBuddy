@@ -288,25 +288,18 @@ fn bootstrap_tray(app: &tauri::App) -> bool {
     }
 }
 
-/// Web API 或机器人回调任一需要时启动统一 HTTP 服务。
+/// 启用 Web API 时启动统一 HTTP 服务。
 fn bootstrap_http_server(app: &tauri::AppHandle) -> std::io::Result<()> {
     let settings = SettingsService::get_settings();
-    if settings.web_api_enabled || crate::services::BotSettingsService::requires_callback_server()
+    if settings.web_api_enabled
     {
         boot_log(format!(
             "starting HTTP server on port {}",
             settings.web_api_port
         ));
-        crate::commands::web::sync_http_server_for_bot(app.clone()).map_err(std::io::Error::other)?;
+        crate::commands::web::sync_http_server(app.clone()).map_err(std::io::Error::other)?;
         boot_log("HTTP server task spawned");
     }
-    Ok(())
-}
-
-/// 同步机器人长连接任务（WebSocket 推送等）。
-fn bootstrap_bot_connections(app: &tauri::AppHandle) -> std::io::Result<()> {
-    crate::services::sync_bot_long_connections(app.clone()).map_err(std::io::Error::other)?;
-    boot_log("Bot long-connection tasks synchronized");
     Ok(())
 }
 
@@ -402,7 +395,6 @@ pub fn run() {
             if let Err(error) = bootstrap_http_server(app.handle()) {
                 boot_log(format!("HTTP server bootstrap failed, continuing without Web API: {error}"));
             }
-            bootstrap_bot_connections(app.handle())?;
             bootstrap_claude_hook(app.handle());
             crate::services::codex_activity_service::start(app.handle().clone());
             // Agent 历史会话自动归档：启动后延时执行，之后每 6 小时按设置检查一次。
@@ -497,23 +489,9 @@ pub fn run() {
             get_claude_mcp_config_path, probe_claude_mcp,
             show_claude_code_notification,
             check_app_update,
-            get_bot_settings,
-            get_bot_long_connection_status,
-            get_bot_callback_base_url,
-            save_bot_settings,
-            send_bot_notification,
-            test_bot_channel,
-            verify_bot_channel,
-            test_bot_decision_channel,
-            bot_scan_begin,
-            bot_scan_poll,
             answer_claude_hook_decision,
             continue_claude_hook_in_terminal,
             get_pending_claude_hook_decisions,
-            send_claude_hook_decision_notification,
-            get_claude_hook_settings_status,
-            save_claude_hook_config_dir,
-            uninstall_claude_hooks,
             get_terminal_loading_mode,
             update_terminal_display_name,
             report_session_directory,

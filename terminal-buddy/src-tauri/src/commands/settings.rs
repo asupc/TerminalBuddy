@@ -413,7 +413,7 @@ pub fn export_all_data(file_path: String) -> Result<(), String> {
     });
 
     // Collect subdirectory data
-    for subdir in &["Profiles", "Workspaces", "ClientData", "Bots"] {
+    for subdir in &["Profiles", "Workspaces", "ClientData"] {
         let dir = data_dir.join(subdir);
         match read_json_files(&dir) {
             Ok(map) => {
@@ -504,7 +504,6 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
         "Themes",
         "Workspaces",
         "ClientData",
-        "Bots",
         "command_history",
         "command_templates",
         "settings",
@@ -547,7 +546,7 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
     }
 
     // Restore subdirectory data
-    for subdir in &["Profiles", "Workspaces", "ClientData", "Bots"] {
+    for subdir in &["Profiles", "Workspaces", "ClientData"] {
         if let Some(obj) = data.get(subdir).and_then(|v| v.as_object()) {
             let mut map = HashMap::new();
             for (key, value) in obj {

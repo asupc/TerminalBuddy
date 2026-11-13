@@ -1,4 +1,3 @@
-pub mod bot;
 pub mod codex_provider;
 pub mod llm_provider;
 pub mod profile;
@@ -12,7 +11,6 @@ pub mod terminal_takeover;
 pub mod update;
 pub mod web_api;
 pub mod workspace;
-pub use bot::*;
 pub use llm_provider::*;
 pub use profile::*;
 pub use profile_validation::*;

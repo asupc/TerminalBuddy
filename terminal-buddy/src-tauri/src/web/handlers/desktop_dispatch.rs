@@ -104,17 +104,6 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
                 _ => Err("未知 Agent，请选择 Claude 或 Codex".into()),
             }).await
         }
-        "get_bot_settings" => crate::runtime::async_runtime::spawn_blocking(move || data(crate::commands::bot::get_bot_settings())).await.map_err(|e| ApiError::Internal(e.to_string()))?,
-        "get_bot_long_connection_status" => crate::runtime::async_runtime::spawn_blocking(move || data(crate::commands::bot::get_bot_long_connection_status())).await.map_err(|e| ApiError::Internal(e.to_string()))?,
-        "get_bot_callback_base_url" => crate::runtime::async_runtime::spawn_blocking(move || data(crate::commands::bot::get_bot_callback_base_url())).await.map_err(|e| ApiError::Internal(e.to_string()))?,
-        "save_bot_settings" => result(crate::commands::bot::save_bot_settings(app.clone(), argument(&args, "settings")?).await),
-        "send_bot_notification" => result(crate::commands::bot::send_bot_notification(argument(&args, "request")?).await),
-        "test_bot_channel" => result(crate::commands::bot::test_bot_channel(argument(&args, "channelId")?).await),
-        "verify_bot_channel" => result(crate::commands::bot::verify_bot_channel(argument(&args, "channel")?).await),
-        "test_bot_decision_channel" => result(crate::commands::bot::test_bot_decision_channel(argument(&args, "channelId")?).await),
-        "cancel_bot_decision" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::bot::cancel_bot_decision(argument(&args, "decisionId")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
-        "bot_scan_begin" => result(crate::commands::bot::bot_scan_begin(argument(&args, "platform")?).await),
-        "bot_scan_poll" => result(crate::commands::bot::bot_scan_poll(argument(&args, "begin")?).await),
         "list_claude_assets" => result(crate::commands::claude_assets::list_claude_assets(argument(&args, "projectDir")?).await),
         "deploy_claude_asset" => result(crate::commands::claude_assets::deploy_claude_asset(argument(&args, "kind")?, argument(&args, "name")?, argument(&args, "scope")?, argument(&args, "projectDir")?).await),
         "undeploy_claude_asset" => result(crate::commands::claude_assets::undeploy_claude_asset(argument(&args, "kind")?, argument(&args, "name")?, argument(&args, "scope")?, argument(&args, "projectDir")?).await),
@@ -207,9 +196,6 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
         "git_get_worktree_file_diff" => result(crate::commands::git::git_get_worktree_file_diff(argument(&args, "path")?, argument(&args, "filePath")?, argument(&args, "oldPath")?).await),
         "git_commit_paths" => result(crate::commands::git::git_commit_paths(argument(&args, "path")?, argument(&args, "message")?, argument(&args, "paths")?).await),
         "git_get_history" => result(crate::commands::git::git_get_history(argument(&args, "path")?, argument(&args, "limit")?, argument(&args, "skip")?).await),
-        "get_claude_hook_settings_status" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::hooks::get_claude_hook_settings_status(argument(&args, "selectedDir")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
-        "save_claude_hook_config_dir" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::hooks::save_claude_hook_config_dir(argument(&args, "selectedDir")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
-        "uninstall_claude_hooks" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::hooks::uninstall_claude_hooks(argument(&args, "selectedDir")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "get_all_profiles" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::profile::get_all_profiles())).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "get_profile" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::profile::get_profile(argument(&args, "id")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "create_profile" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::profile::create_profile(argument(&args, "name")?, argument(&args, "group")?, argument(&args, "terminalType")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
@@ -308,7 +294,6 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
                 alive: crate::services::terminal_agent_relay::heartbeat(crate::models::TerminalActor::Web, &request.subscriptions),
             })
         }
-        "send_claude_hook_decision_notification" => result(crate::web::handlers::claude_hook_handler::send_claude_hook_decision_notification(app.clone(), argument(&args, "decisionId")?).await),
         _ => Err(ApiError::BadRequest(format!("网页端暂不支持此操作：{}", command))),
     }
 }
