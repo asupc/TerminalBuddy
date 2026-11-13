@@ -2142,9 +2142,9 @@ fn normalize_status(status: Option<&str>) -> Option<String> {
 /// （模型接口挂起、CLI 无限重试等），主动结束回合并保留聊天记录。等待用户决策不算停滞。
 /// Claude / Codex 两家循环共用。
 const AGENT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
-/// 完全空闲的 CLI 只保留短暂复用窗口，避免每个历史会话永久占用一个进程。
+/// 完全空闲的 CLI 保留 5 小时复用窗口，避免每个历史会话永久占用一个进程。
 /// 下一条消息通过持久化的 thread_id 恢复；执行中、后台任务与待审批均不参与回收。
-const AGENT_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+const AGENT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60 * 60);
 
 /// 仅在输出接收超时后尝试回收，确保已经就绪的完成事件与后台输出先被处理。
 fn retire_idle_process(cell: &Cell, worker_control: &WorkerControl, idle_since: &mut Option<Instant>, ready: bool) -> Result<bool> {
@@ -2785,7 +2785,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
         if completed { settle_at = Some(Instant::now() + Duration::from_millis(300)); }
         codex_status(cell, &state, &background, request_id.as_deref(), resume_request.is_some() || turn_request.is_some() || settle_at.is_some());
         if completed { refresh_title(cell, true); persist(cell)?; }
-        // turn/completed 仅结束主回合；后台任务继续接收输出，完全空闲后只保留短暂的进程复用窗口。
+        // turn/completed 仅结束主回合；后台任务继续接收输出，完全空闲 5 小时后回收进程。
     }
 }
 
