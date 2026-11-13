@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Play, RefreshCw, Star, X } from 'lucide-react';
 import { AgentIcon } from '../agent-chat/AgentIcon';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
-import { sessionHistory } from '../../services/sessionHistory';
+import { AGENT_HISTORY_AUTO_ARCHIVED_EVENT, sessionHistory } from '../../services/sessionHistory';
 import {
   aiSessionResumeHistory,
   type ClaudeHistoryScanResult,
@@ -166,6 +166,22 @@ export function AgentHistoryPopover({
       unlisten?.();
     };
   }, [history, load]);
+
+  // 服务端自动归档完成后刷新列表（两个 Agent 的会话都可能被归档）。
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void listen(AGENT_HISTORY_AUTO_ARCHIVED_EVENT, () => {
+      if (!cancelled) void load({ silent: true });
+    }).then(fn => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [load]);
 
   // 点外部 / Esc / 窗口尺寸变化时关闭；点击入口按钮本身交给外层做开合切换。
   useEffect(() => {

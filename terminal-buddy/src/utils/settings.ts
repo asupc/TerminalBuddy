@@ -77,6 +77,9 @@ export interface AppSettings {
   webApiShareSessions: boolean;
   /** 新会话形态：true = 原生会话，false = 终端接力（默认）。只影响之后新建的会话。 */
   nativeChatSessions: boolean;
+  /** Agent 历史会话自动归档：开启后把超过 N 天未使用的会话标记为已归档。 */
+  agentAutoArchiveEnabled: boolean;
+  agentAutoArchiveDays: number;
   launchAtLogin: boolean;
   terminalFollowAppTheme: boolean;
   autoResumeClaudeSession: boolean;
@@ -127,6 +130,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   serverMonitorInterval: 3,
   webApiShareSessions: false,
   nativeChatSessions: false,
+  agentAutoArchiveEnabled: false,
+  agentAutoArchiveDays: 30,
   launchAtLogin: false,
   terminalFollowAppTheme: true,
   autoResumeClaudeSession: true,

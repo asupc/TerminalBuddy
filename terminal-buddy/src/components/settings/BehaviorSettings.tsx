@@ -1,6 +1,6 @@
 import { FC, useEffect, useState } from 'react';
 import { isBrowserClient } from '../../services/platform';
-import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, saveNativeChatSessions, getDefaultTerminalStatus, setDefaultTerminalEnabled, getWebApiStatus, type VsCodeTerminalSupport, type DefaultTerminalStatus } from '../../services/tauri';
+import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, saveNativeChatSessions, saveAgentAutoArchive, getDefaultTerminalStatus, setDefaultTerminalEnabled, getWebApiStatus, type VsCodeTerminalSupport, type DefaultTerminalStatus } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { showAlert } from '../../services/dialog';
 import { type AppSettings } from '../../utils/settings';
@@ -13,6 +13,35 @@ interface BehaviorSettingsProps {
 
 export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSetting, vsCodeSupport }) => {
   const vsCodeAvailable = vsCodeSupport?.available === true;
+  const showToast = useAppStore(s => s.showToast);
+  // 天数输入先存草稿，失焦/回车时才提交，避免逐字符触发后端归档任务。
+  const [autoArchiveDays, setAutoArchiveDays] = useState(String(settings.agentAutoArchiveDays));
+  useEffect(() => {
+    setAutoArchiveDays(String(settings.agentAutoArchiveDays));
+  }, [settings.agentAutoArchiveDays]);
+  const reportArchive = (result: { claude: number; codex: number }, justEnabled: boolean) => {
+    const total = result.claude + result.codex;
+    if (total > 0) showToast(`已自动归档 ${total} 个会话`, 'success');
+    else if (justEnabled) showToast('已开启自动归档，当前没有需要归档的会话', 'success');
+  };
+  const toggleAutoArchive = (enabled: boolean) => {
+    updateSetting('agentAutoArchiveEnabled', enabled);
+    saveAgentAutoArchive(enabled, settings.agentAutoArchiveDays)
+      .then(result => reportArchive(result, enabled))
+      .catch(error => showToast(`保存自动归档设置失败：${String(error)}`, 'error'));
+  };
+  const commitAutoArchiveDays = (raw: string) => {
+    const parsed = Number(raw);
+    const days = raw.trim() !== '' && Number.isFinite(parsed)
+      ? Math.min(3650, Math.max(1, Math.round(parsed)))
+      : settings.agentAutoArchiveDays;
+    setAutoArchiveDays(String(days));
+    if (days === settings.agentAutoArchiveDays) return;
+    updateSetting('agentAutoArchiveDays', days);
+    saveAgentAutoArchive(settings.agentAutoArchiveEnabled, days)
+      .then(result => reportArchive(result, false))
+      .catch(error => showToast(`保存自动归档设置失败：${String(error)}`, 'error'));
+  };
   // 默认终端状态自管（不进 localStorage 镜像）：注册表是唯一权威来源。
   const [defaultTerminal, setDefaultTerminal] = useState<DefaultTerminalStatus | null>(null);
   // Web API 默认开启，但没有密码时 HTTP 服务不会启动：首次使用给出明确引导。
@@ -144,6 +173,43 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   }}
                 />
                 <span>终端接力</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">会话自动归档</div>
+            <p className="settings-row-desc">
+              开启后，超过设定天数未使用的 Claude / Codex 历史会话会自动标记为已归档；
+              收藏的会话不受影响，手动取消归档的会话也不会立即被重新归档。
+            </p>
+          </div>
+          <div className="settings-row-ctrl">
+            <div className="settings-number-row" style={{ gap: 10 }}>
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                step={1}
+                value={autoArchiveDays}
+                onChange={e => setAutoArchiveDays(e.target.value)}
+                onBlur={e => commitAutoArchiveDays(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                }}
+                style={{ width: 64, height: 28, padding: '0 6px' }}
+                aria-label="自动归档天数"
+              />
+              <span className="settings-number-unit">天未使用</span>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.agentAutoArchiveEnabled}
+                  onChange={e => toggleAutoArchive(e.target.checked)}
+                />
+                <span className="hook-sr-only">会话自动归档</span>
               </label>
             </div>
           </div>

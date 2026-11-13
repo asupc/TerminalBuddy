@@ -19,6 +19,13 @@ export type AgentDownloadSource = 'npmmirror' | 'official';
 export const saveAgentDownloadSource = (source: AgentDownloadSource) =>
   invoke<void>('save_agent_download_source', { source });
 
+/** Agent 历史会话自动归档一次执行的结果（按 Agent 分类的实际归档数量）。 */
+export interface AgentAutoArchiveResult {
+  claude: number;
+  codex: number;
+  days: number;
+}
+
 export async function getBackendAppSettings(): Promise<{
   closeBehavior: 'exit' | 'tray';
   launchWindowMode: 'windowed' | 'maximized';
@@ -35,6 +42,9 @@ export async function getBackendAppSettings(): Promise<{
   agentDownloadSource?: AgentDownloadSource;
   /** 新会话形态：true = 原生会话，false = 终端接力（默认）。 */
   nativeChatSessions?: boolean;
+  /** Agent 历史会话自动归档：开启后把超过 N 天未使用的会话标记为已归档。 */
+  agentAutoArchiveEnabled?: boolean;
+  agentAutoArchiveDays?: number;
 }> {
   return invoke('get_app_settings');
 }
@@ -46,6 +56,14 @@ export async function saveAgentCommands(claude: string, codex: string): Promise<
 /** 新会话形态：true = 原生会话，false = 终端接力（默认）。只影响之后新建的会话。 */
 export const saveNativeChatSessions = (enabled: boolean) =>
   invoke<void>('save_native_chat_sessions', { enabled });
+
+/** 保存自动归档设置；开启时会立即按新阈值执行一次，返回实际归档数量。 */
+export const saveAgentAutoArchive = (enabled: boolean, days: number) =>
+  invoke<AgentAutoArchiveResult>('save_agent_auto_archive', { enabled, days });
+
+/** 按当前设置立即执行一次自动归档。 */
+export const runAgentAutoArchive = () =>
+  invoke<AgentAutoArchiveResult>('run_agent_auto_archive');
 
 export async function saveCloseBehavior(behavior: 'exit' | 'tray'): Promise<void> {
   return invoke('save_close_behavior', { behavior });

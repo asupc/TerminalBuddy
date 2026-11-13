@@ -43,7 +43,7 @@ import {
   type ResumeLaunchPreset,
 } from './resumeClaudeSession';
 import type { ExtraParamPreset, Project, SessionHistoryProvider } from '../../types';
-import { sessionHistory } from '../../services/sessionHistory';
+import { AGENT_HISTORY_AUTO_ARCHIVED_EVENT, sessionHistory } from '../../services/sessionHistory';
 import { getAgentCliEnvironment } from '../../services/agentCli';
 import { resumedCodexSessionId } from '../../utils/codexLaunch';
 import { openExistingAgentSession } from '../../utils/openAgentChat';
@@ -357,6 +357,16 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
       void unlisten.then(fn => fn());
     };
   }, [history, load]);
+
+  // 服务端自动归档完成后重取列表：两个 Agent 的会话都可能被归档，与当前面板无关。
+  useEffect(() => {
+    const unlisten = listen(AGENT_HISTORY_AUTO_ARCHIVED_EVENT, () => {
+      void load(false);
+    });
+    return () => {
+      void unlisten.then(fn => fn());
+    };
+  }, [load]);
 
   // 点击空白关闭右键菜单
   useEffect(() => {
