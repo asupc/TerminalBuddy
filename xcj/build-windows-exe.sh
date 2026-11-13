@@ -31,7 +31,7 @@ usage() {
 
 环境变量：
   XWIN_CACHE_DIR  Windows SDK 缓存目录，默认 ~/.cache/terminal-buddy/xwin
-  DEPLOY_DIR      构建产物移动目标目录，默认 /mnt/fnos/code
+  DEPLOY_DIR      构建产物移动目标目录，默认 /mnt/fnos/code；设为空字符串时跳过移动
 EOF
 }
 
@@ -129,9 +129,10 @@ if [ ! -d "$SDK_LIB" ]; then
     cargo xwin cache xwin
 fi
 if [ -d "$SDK_LIB" ] && [ ! -e "$SDK_LIB/Rstrtmgr.lib" ]; then
-    RESTART_LIB="$(ls "$SDK_LIB" | grep -ix 'rstrtmgr\.lib' | head -n1 || true)"
+    # find -iname 同时处理大小写差异；-print -quit 避免依赖 ls | grep。
+    RESTART_LIB="$(find "$SDK_LIB" -maxdepth 1 -type f -iname 'rstrtmgr.lib' -print -quit)"
     if [ -n "$RESTART_LIB" ]; then
-        ln -s "$RESTART_LIB" "$SDK_LIB/Rstrtmgr.lib"
+        ln -s "$(basename "$RESTART_LIB")" "$SDK_LIB/Rstrtmgr.lib"
     fi
 fi
 
@@ -153,7 +154,10 @@ printf '%s  %s\n' "$HASH" "$(basename "$TARGET")" > "$TARGET.sha256"
 
 # 构建成功后把 exe（连同 .sha256）移动到 /mnt/fnos/code；
 # 目标目录不可用时保留在 dist/，避免构建成果丢失
-if [ -d "$DEPLOY_DIR" ] || mkdir -p "$DEPLOY_DIR" 2>/dev/null; then
+if [ -z "$DEPLOY_DIR" ]; then
+    echo "==> DEPLOY_DIR 为空，跳过移动，产物保留在 $OUTPUT_DIR"
+    ls -lh "$TARGET" "$TARGET.sha256"
+elif [ -d "$DEPLOY_DIR" ] || mkdir -p "$DEPLOY_DIR" 2>/dev/null; then
     if mv -f "$TARGET" "$TARGET.sha256" "$DEPLOY_DIR/"; then
         echo "==> 已移动产物到 $DEPLOY_DIR"
         ls -lh "$DEPLOY_DIR/$(basename "$TARGET")" "$DEPLOY_DIR/$(basename "$TARGET").sha256"

@@ -1,8 +1,7 @@
 # TerminalBuddy Android APK 构建环境
 #
-# 镜像只提供工具链(JDK 17 + Android SDK 36);源码在运行时以只读方式挂载,
-# 构建过程全部发生在容器内部,Gradle 缓存放在 Docker 命名卷中。
-# 构建入口:scripts/build-android.sh。
+# 仅保留为历史参考；当前构建入口为 xcj/build-android.sh（本机工具链），
+# 本 Dockerfile 不参与当前构建。
 
 FROM eclipse-temurin:17-jdk
 

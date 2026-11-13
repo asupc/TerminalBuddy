@@ -205,7 +205,6 @@ STAMP
 # 全部命中才算「已是最新」：源码没变、部署产物没被替换过、运行进程加载的就是该产物。
 # 任一条不满足都照常走完整流程（宁可多构建一次，也不能漏部署）。
 already_up_to_date() {
-  local want_git=1
   if [ "${FORCE}" = 1 ]; then
     log "已指定 --force，跳过「已是最新」判定"
     return 1
@@ -293,9 +292,18 @@ build_local() {
   command -v cargo >/dev/null 2>&1 || [ -x "${SRC_HOME}/.cargo/bin/cargo" ] \
     || fail "未检测到 cargo，无法构建本机版本（可安装 rustup 到用户目录）"
 
-  if [ ! -d "${REPO_DIR}/terminal-buddy/node_modules" ]; then
-    log "安装前端依赖（npm ci）"
+  # package-lock 变化时必须重装依赖；只判断 node_modules 是否存在会复用旧版本依赖。
+  local npm_lock_file="${REPO_DIR}/terminal-buddy/package-lock.json"
+  local npm_install_stamp="${REPO_DIR}/terminal-buddy/node_modules/.tb-package-lock.sha256"
+  local npm_lock_sha
+  npm_lock_sha="$(sha256sum -- "${npm_lock_file}" | cut -d' ' -f1)"
+  if [ ! -d "${REPO_DIR}/terminal-buddy/node_modules" ] \
+     || [ ! -f "${npm_install_stamp}" ] \
+     || [ "$(cat "${npm_install_stamp}" 2>/dev/null || true)" != "${npm_lock_sha}" ]; then
+    log "前端依赖与 package-lock 不一致，执行 npm ci"
     ( cd "${REPO_DIR}/terminal-buddy" && as_owner npm ci ) || fail "npm ci 失败"
+    as_owner sh -c 'printf "%s\n" "$1" > "$2"' _ "${npm_lock_sha}" "${npm_install_stamp}" \
+      || fail "写入 npm 安装指纹失败"
   fi
   log "构建网页前端（npm run build:web:desktop）"
   ( cd "${REPO_DIR}/terminal-buddy" && as_owner npm run build:web:desktop ) || fail "前端构建失败"
@@ -567,9 +575,10 @@ update_local() {
 
   # 先记下源码指纹：即使随后健康检查失败，也要在重启成功后才有资格写，
   # 因此交给重启路径处理（同步路径在健康检查通过后写，后台路径由 worker 写）。
-  export PENDING_FP="$(source_fingerprint)"
-  export PENDING_BIN_SHA="$(sha256sum -- "${BIN}" | cut -d' ' -f1)"
-  export PENDING_WEB_SHA="$(dir_hash "${WEB}")"
+  PENDING_FP="$(source_fingerprint)"
+  PENDING_BIN_SHA="$(sha256sum -- "${BIN}" | cut -d' ' -f1)"
+  PENDING_WEB_SHA="$(dir_hash "${WEB}")"
+  export PENDING_FP PENDING_BIN_SHA PENDING_WEB_SHA
 
   if in_terminal_buddy_tree; then
     RUN_ID="$(date -u '+%Y%m%d%H%M%S')-$$"

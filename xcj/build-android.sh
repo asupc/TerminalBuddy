@@ -28,6 +28,8 @@ OUTPUT_DIR="$REPO_ROOT/dist"
 DEPLOY_DIR="${DEPLOY_DIR:-/mnt/fnos/code}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/.android-sdk}"
 CMDLINE_TOOLS_VERSION=13114758
+ANDROID_COMPILE_SDK=36
+ANDROID_BUILD_TOOLS=35.0.0
 CLEAN_CACHE=0
 
 usage() {
@@ -42,7 +44,7 @@ usage() {
 
 环境变量：
   ANDROID_HOME  Android SDK 目录，默认 ~/.android-sdk
-  DEPLOY_DIR    构建产物移动目标目录，默认 /mnt/fnos/code
+  DEPLOY_DIR    构建产物移动目标目录，默认 /mnt/fnos/code；设为空字符串时跳过移动
 EOF
 }
 
@@ -137,9 +139,9 @@ else
     need_apt openjdk-17-jdk-headless
 fi
 
-# Android SDK（用户级 → ~/.android-sdk，无需 sudo）：cmdline-tools + SDK 36 + build-tools 35.0.0
+# Android SDK（用户级 → ~/.android-sdk，无需 sudo）：cmdline-tools + compileSdk/build-tools
 export ANDROID_HOME
-if [ ! -d "$ANDROID_HOME/platforms/android-36" ] || [ ! -d "$ANDROID_HOME/build-tools/35.0.0" ]; then
+if [ ! -d "$ANDROID_HOME/platforms/android-${ANDROID_COMPILE_SDK}" ] || [ ! -d "$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}" ]; then
     echo "==> 首次配置 Android SDK → $ANDROID_HOME（下载约 1-2 GB）"
     need_apt ca-certificates curl unzip
     TMP_DIR="$(mktemp -d)"
@@ -152,7 +154,7 @@ if [ ! -d "$ANDROID_HOME/platforms/android-36" ] || [ ! -d "$ANDROID_HOME/build-
     rm -rf "$TMP_DIR"
     SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
     yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-    "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+    "$SDKMANAGER" "platform-tools" "platforms;android-${ANDROID_COMPILE_SDK}" "build-tools;${ANDROID_BUILD_TOOLS}"
 fi
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 
@@ -220,7 +222,7 @@ fi
 cd "$ANDROID_DIR"
 chmod +x gradlew
 
-echo "==> [1/3] 编译 Release APK（首次会下载 Gradle 8.13 与依赖）"
+echo "==> [1/3] 编译 Release APK（首次会下载 Gradle wrapper 与依赖）"
 # --no-daemon：构建结束 JVM 立即退出；Kotlin 编译通过 gradle.properties 走 in-process
 ./gradlew :app:assembleRelease --console=plain --no-daemon
 
@@ -231,7 +233,8 @@ if [ ! -f "$APK" ]; then
 fi
 
 echo "==> [2/3] 校验 Release 签名"
-APKSIGNER="$(ls -1 "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)"
+APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
+[ -x "$APKSIGNER" ] || { echo "错误：未找到 apksigner：$APKSIGNER" >&2; exit 1; }
 "$APKSIGNER" verify --print-certs "$APK"
 
 echo "==> [3/3] 收集产物"
