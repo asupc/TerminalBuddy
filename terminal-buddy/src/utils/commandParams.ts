@@ -1,8 +1,10 @@
 /** extraParams 里历史遗留的 --resume 参数；UUID 至少 8 位才按会话 ID 处理。 */
 export const SAVED_RESUME_RE = /--resume\s+([0-9a-fA-F-]{8,64})/;
 
-/** Codex 的 `codex resume <id>`。 */
-const SAVED_CODEX_RESUME_RE = /\bcodex(?:\.cmd|\.exe|\.bat)?(?:\s+[^\s;&|]+)*\s+resume\s+([a-zA-Z0-9_-]{1,128})/;
+/** Codex 的 `codex resume <id>`；用供应商引用标记（`__TB_CODEX_REF__:<供应商>:<模型>`）
+ * 启动的会话同样以 `resume <id>` 续接，剥离时必须一并识别，否则新建终端会恢复旧会话。 */
+const SAVED_CODEX_RESUME_RE =
+  /(?:__TB_CODEX_REF__:[^\s;&|]+|\bcodex(?:\.cmd|\.exe|\.bat)?)(?:\s+[^\s;&|]+)*\s+resume\s+([a-zA-Z0-9_-]{1,128})/;
 
 export interface StrippedResumeArgs {
   params: string;
@@ -27,7 +29,8 @@ export function stripCodexResumeArgs(params: string): StrippedCodexResumeArgs {
   const sessionId = params.match(SAVED_CODEX_RESUME_RE)?.[1];
   if (!sessionId) return { params };
   return {
-    params: params.replace(/\s*resume\s+[a-zA-Z0-9_-]{1,128}/, ''),
+    // 只删匹配到的那一处，避免误伤参数值里恰好出现的 resume 字样。
+    params: params.replace(new RegExp(`\\s*resume\\s+${sessionId}`), ''),
     sessionId,
   };
 }

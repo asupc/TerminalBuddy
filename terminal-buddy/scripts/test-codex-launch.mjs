@@ -44,6 +44,20 @@ for (const command of ['codex', '__TB_CODEX_REF__:missing', '__TB_CODEX_REF__::m
 }
 console.log('PASS: 桌面 Codex 引用、参数继承、冲突配置剔除、跨工具默认命令及模型标签解析');
 
+// 「以此配置新建终端」必须剥掉续接参数：会话既可能以字面量 codex 启动，
+// 也可能以供应商引用标记（__TB_CODEX_REF__:）启动。
+const params = load('src/utils/commandParams.ts');
+for (const [input, expected, sessionId] of [
+  ['codex --sandbox workspace-write resume abc-123', 'codex --sandbox workspace-write', 'abc-123'],
+  ['__TB_CODEX_REF__:p:m resume abc-123', '__TB_CODEX_REF__:p:m', 'abc-123'],
+  ['__TB_CODEX_REF__:p:m -c model_provider=terminal_buddy_x resume abc-123', '__TB_CODEX_REF__:p:m -c model_provider=terminal_buddy_x', 'abc-123'],
+]) {
+  assert.deepEqual(params.stripCodexResumeArgs(input), { params: expected, sessionId });
+  assert.equal(params.withoutResumeArgs(input), expected);
+}
+assert.equal(params.withoutResumeArgs('__TB_CODEX_REF__:p:m --sandbox workspace-write'), '__TB_CODEX_REF__:p:m --sandbox workspace-write');
+console.log('PASS: 剥离 Codex 续接参数（含供应商引用标记启动的会话）');
+
 for (const source of [[], ['codex --model old --sandbox read-only'], ['echo before', 'codex --resume session']]) {
   assert.equal(claude.inheritableClaudeArgs(source, claude.DEFAULT_CLAUDE_COMMAND), '--dangerously-skip-permissions');
   assert.equal(claude.inheritableClaudeArgs(source), '', '历史恢复仍由已有参数控制');
