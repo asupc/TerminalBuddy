@@ -20,19 +20,9 @@ export interface AgentStatusView {
   updatedAt: number | null;
 }
 
-/** 目录里的思考强度是 CLI 使用的英文枚举，状态栏按中文习惯展示。 */
-const EFFORT_LABELS: Record<string, string> = {
-  minimal: '最低',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '极高',
-  max: '最高',
-};
-
+/** 思考强度保持 CLI 原始英文枚举，避免不同来源的档位被二次翻译。 */
 export function agentEffortLabel(effort: string | null | undefined): string | null {
-  if (!effort) return null;
-  return EFFORT_LABELS[effort] ?? effort;
+  return effort || null;
 }
 
 /** 上下文告警级别：超过 60% 转黄，超过 80% 转红。 */

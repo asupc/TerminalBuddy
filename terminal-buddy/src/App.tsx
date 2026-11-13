@@ -16,13 +16,12 @@ import { ActivityBar, type SidebarPanel } from "./components/shell/ActivityBar";
 import { effectiveProfilePath } from './utils/projectPath';
 import { containsClaudeRef } from './utils/claudeLaunch';
 import { ConfigEditDialog } from "./components/profile-config/ConfigEditDialog";
-import { ExtraParamsDialog } from "./components/profile-config/ExtraParamsDialog";
 import { ClaudeDecisionDialog } from "./components/shared/ClaudeDecisionDialog";
 import { ConfirmDialog } from "./components/shared/Dialog";
 import { GlobalDialogHost } from "./components/shared/GlobalDialogHost";
 import { Toast } from "./components/shared/Toast";
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
-import { useAppStore, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
+import { useAppStore, saveTabsToStorage, initFileTreeNav } from './stores/appStore';
 import { flushPendingSaveTabs } from './stores/slices/sessionsSlice';
 import { getAllProfiles, getProjects, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, getAgentSessionsForTerminals, checkAppUpdate, readClientData, type UpdateInfo } from './services/tauri';
 import { compareVersions } from './utils/version';
@@ -86,7 +85,6 @@ function App() {
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [defaultGroupForNewProfile, setDefaultGroupForNewProfile] = useState<string | undefined>();
-  const [showExtraParamsDialog, setShowExtraParamsDialog] = useState(false);
   const [enableTabNav, setEnableTabNav] = useState(true);
   const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
   const [showStatusBar, setShowStatusBar] = useState(() => getAppSettings().showStatusBar);
@@ -115,12 +113,9 @@ function App() {
       setEditingProfile(e.detail?.profile || profiles[0] || null);
       setShowEditDialog(true);
     };
-    const onOpenExtra = () => setShowExtraParamsDialog(true);
     window.addEventListener('mock-open-profile-edit', onOpenEdit);
-    window.addEventListener('mock-open-extra-params', onOpenExtra);
     return () => {
       window.removeEventListener('mock-open-profile-edit', onOpenEdit);
-      window.removeEventListener('mock-open-extra-params', onOpenExtra);
     };
   }, [profiles]);
 
@@ -242,7 +237,6 @@ function App() {
       applyTheme(theme);
       await initAppSettings();
       await initFileTreeNav();
-      await initExtraParamPresets();
       await initCmdOverrides();
       await initCustomCommands();
 
@@ -270,7 +264,6 @@ function App() {
           launchWindowMode: backend.launchWindowMode,
           enableTabNavigation: backend.enableTabNavigation,
           singleInstance: backend.singleInstance,
-          claudeHookConfigDir: backend.claudeHookConfigDir ?? settings.claudeHookConfigDir,
         };
         // Agent 基础启动命令（后端为数据源；浏览器模式在 WebEntry 里经 /api/runtime 提前写入）
         const commands = backend.agentCommands ?? { claude: '', codex: '' };
@@ -434,8 +427,8 @@ function App() {
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
-    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; groupId?: string; groupName?: string; group?: string; extraParamTag?: string; extraParamTagColor?: string; extraStartupParams?: string; extraStartupMode?: ExtraParamMode; activate?: boolean }>('terminal-created', (event) => {
-      const { id, profileId, profileName, terminalType, owner, groupId, groupName = event.payload.group, extraStartupParams, extraStartupMode, extraParamTag, extraParamTagColor, activate } = event.payload;
+    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; groupId?: string; groupName?: string; group?: string; extraStartupParams?: string; extraStartupMode?: ExtraParamMode; activate?: boolean }>('terminal-created', (event) => {
+      const { id, profileId, profileName, terminalType, owner, groupId, groupName = event.payload.group, extraStartupParams, extraStartupMode, activate } = event.payload;
       const store = useAppStore.getState();
       let resolvedGroupId = groupId || 'default';
       if (groupId && groupName) {
@@ -463,8 +456,6 @@ function App() {
           groupName: groupName ?? existingSession.groupName,
           extraParams: extraStartupParams ?? existingSession.extraParams,
           extraParamMode: extraStartupMode ?? existingSession.extraParamMode,
-          extraParamTag: extraParamTag ?? existingSession.extraParamTag,
-          extraParamTagColor: extraParamTagColor ?? existingSession.extraParamTagColor,
           // 旧版后端对空白终端广播过空 terminalType（已存进页签快照），
           // 会话已存在时事件不会重建，这里有值就回填，让空值不再流传。
           ...(existingSession.terminalType
@@ -487,8 +478,6 @@ function App() {
         owner,
         extraParams: extraStartupParams,
         extraParamMode: extraStartupMode,
-        extraParamTag,
-        extraParamTagColor,
       }, !activate);
     });
 
@@ -557,7 +546,7 @@ function App() {
     }
   }, [setProfiles, setProjects]);
 
-  const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, _presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => {
+  const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, tabName?: string, extraParamMode?: ExtraParamMode) => {
     if (profile.terminalType === 'mstsc') {
       try {
         await startMstsc(profile.id);
@@ -588,11 +577,9 @@ function App() {
         owner: clientTerminalOwner(),
         extraParams,
         extraParamMode,
-        extraParamTag: presetTag,
-        extraParamTagColor: presetTagColor ?? null,
         starting: true,
       }),
-      start: (rows, cols) => startTerminal(profile.id, extraParams, rows, cols, resolvedTabName, undefined, presetTag, presetTagColor ?? null, extraParamMode),
+      start: (rows, cols) => startTerminal(profile.id, extraParams, rows, cols, resolvedTabName, undefined, extraParamMode),
       onStarted: (terminalId) => {
         void updateProfileLastUsed(profile.id).catch(err => console.error('Failed to update profile last used:', err));
         const path = effectiveProfilePath(profile, useAppStore.getState().projects);
@@ -776,7 +763,6 @@ function App() {
               onEditProfile={handleEditProfile}
               onCopyProfile={handleCopyProfile}
               onAddProfile={handleAddProfile}
-              onManageExtraParams={() => setShowExtraParamsDialog(true)}
             />
         </div>
         <div className={`nav-panel-slot nav-panel-files${sidebarPanel === 'files' ? ' active' : ''}`}>
@@ -820,9 +806,6 @@ function App() {
           defaultGroup={defaultGroupForNewProfile}
           profiles={profiles}
         />
-      )}
-      {showExtraParamsDialog && (
-        <ExtraParamsDialog onClose={() => setShowExtraParamsDialog(false)} />
       )}
       {settingsDialogOpen && (
         <Suspense fallback={<div className="settings-dialog-loading">加载设置…</div>}>

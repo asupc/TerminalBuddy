@@ -83,12 +83,9 @@ export interface AppSettings {
   launchAtLogin: boolean;
   terminalFollowAppTheme: boolean;
   autoResumeClaudeSession: boolean;
-  claudeHookConfigDir: string;
   claudeCodeNotifications: boolean;
   claudeDecisionNotifications: boolean;
-  claudeDecisionNotificationDelaySeconds: number;
   claudeCompletionNotifications: boolean;
-  claudeCompletionNotificationDelaySeconds: number;
   listSelectionStyle: 'default' | 'idea' | 'custom';
   listSelectionBg: string;
   listSelectionFg: string;
@@ -135,12 +132,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   terminalFollowAppTheme: true,
   autoResumeClaudeSession: true,
-  claudeHookConfigDir: '',
   claudeCodeNotifications: true,
   claudeDecisionNotifications: true,
-  claudeDecisionNotificationDelaySeconds: 0,
   claudeCompletionNotifications: true,
-  claudeCompletionNotificationDelaySeconds: 0,
   listSelectionStyle: 'idea',
   listSelectionBg: '#4d7db9',
   listSelectionFg: '#ffffff',

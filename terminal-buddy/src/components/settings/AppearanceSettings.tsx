@@ -52,7 +52,7 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
             <label className="settings-toggle">
               <input type="checkbox" checked={summaryEnabled} disabled={summarySaving}
                 onChange={event => { void setTaskSummaryEnabled(event.target.checked); }} />
-              <span className="hook-sr-only">显示任务摘要</span>
+              <span className="settings-sr-only">显示任务摘要</span>
             </label>
           </div>
         </div>
@@ -117,7 +117,7 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
                 checked={settings.terminalFollowAppTheme}
                 onChange={(e) => updateSetting('terminalFollowAppTheme', e.target.checked)}
               />
-              <span className="hook-sr-only">终端跟随应用主题</span>
+              <span className="settings-sr-only">终端跟随应用主题</span>
             </label>
           </div>
         </div>

@@ -2,15 +2,12 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAppStore } from '../stores/appStore';
 import { getAppSettings } from '../utils/settings';
 import {
-  getBotSettings,
   getPendingClaudeHookDecisions,
   onClaudeHookDecision,
   onClaudeHookDecisionExpired,
   onClaudeHookDecisionResolved,
   onClaudeHookTerminalEvent,
   onClaudeNotificationActivated,
-  sendBotNotification,
-  sendClaudeHookDecisionNotification,
   showClaudeCodeNotification as showNativeNotification,
   type ClaudeHookDecisionEvent,
   type ClaudeHookTerminalEvent,
@@ -19,7 +16,6 @@ import {
 type NotificationGuard = () => boolean;
 
 interface PendingNotification {
-  timer: ReturnType<typeof setTimeout>;
   token: number;
 }
 
@@ -85,13 +81,10 @@ async function showStructuredDecisionNotification(decision: ClaudeHookDecisionEv
   if (!name) return;
   const appInForeground = await appIsInForeground();
   if (!isCurrent()) return;
-  const nativePromise = getAppSettings().claudeDecisionNotifications && !appInForeground
-    ? showNativeNotification(decision.terminalId, name, 'question')
-        .catch(error => console.error('发送 Claude Code 决策通知失败:', error))
-    : Promise.resolve();
-  const botPromise = sendClaudeHookDecisionNotification(decision.decisionId)
-    .catch(error => console.error('发送 Claude Code 机器人决策通知失败:', error));
-  await Promise.all([nativePromise, botPromise]);
+  if (getAppSettings().claudeDecisionNotifications && !appInForeground) {
+    await showNativeNotification(decision.terminalId, name, 'question')
+      .catch(error => console.error('发送 Claude Code 决策通知失败:', error));
+  }
 }
 
 async function showAttentionNotification(event: ClaudeHookTerminalEvent, isCurrent: NotificationGuard): Promise<void> {
@@ -117,9 +110,7 @@ async function showCompletionNotification(
   const { terminalId, phase } = details;
   const settings = getAppSettings();
   const nativeEnabled = settings.claudeCompletionNotifications;
-  const botSettings = await getBotSettings().catch(() => null);
-  const botEnabled = Boolean(botSettings?.enabled && botSettings.sendCompletionNotifications);
-  if (!nativeEnabled && !botEnabled) return;
+  if (!nativeEnabled) return;
   const appInForeground = await appIsInForeground();
   if (!isCurrent()) return;
 
@@ -134,25 +125,10 @@ async function showCompletionNotification(
     : failed ? `${agentName} 任务执行失败` : `${agentName} 任务已完成`;
   const summary = details.summary?.trim()
     || (failed ? `${agentName} 未能完成当前任务。` : `${agentName} 已完成当前任务。`);
-  const nativePromise = nativeEnabled && !appInForeground
-    ? showNativeNotification(terminalId, name, failed ? 'failed' : 'completed', title, summary)
-        .catch(error => console.error('发送 Claude Code 任务结束通知失败:', error))
-    : Promise.resolve();
-  const botPromise = botEnabled && !isBeingViewed
-    ? sendBotNotification({
-        eventId: details.eventId,
-        terminalId,
-        terminalName: name,
-        kind: 'completed',
-        title,
-        summary,
-      }).then(reports => {
-        reports.filter(report => !report.success).forEach(report => {
-          console.error(`机器人通道「${report.channelName}」通知失败:`, report.error);
-        });
-      }).catch(error => console.error('发送 Claude Code 机器人任务结束通知失败:', error))
-    : Promise.resolve();
-  await Promise.all([nativePromise, botPromise]);
+  if (nativeEnabled && !isBeingViewed) {
+    await showNativeNotification(terminalId, name, failed ? 'failed' : 'completed', title, summary)
+      .catch(error => console.error('发送 Claude Code 任务结束通知失败:', error));
+  }
 }
 
 function scheduleAttention(
@@ -162,14 +138,11 @@ function scheduleAttention(
 ): void {
   cancelAttention(key);
   const token = ++notificationToken;
-  const delayMs = Math.max(0, getAppSettings().claudeDecisionNotificationDelaySeconds) * 1_000;
-  const timer = setTimeout(() => {
-    const isCurrent = () => pendingAttentionNotifications.get(key)?.token === token;
-    void callback(isCurrent).finally(() => {
-      if (isCurrent()) pendingAttentionNotifications.delete(key);
-    });
-  }, delayMs);
-  pendingAttentionNotifications.set(key, { terminalId, timer, token });
+  const isCurrent = () => pendingAttentionNotifications.get(key)?.token === token;
+  pendingAttentionNotifications.set(key, { terminalId, token });
+  void callback(isCurrent).finally(() => {
+    if (isCurrent()) pendingAttentionNotifications.delete(key);
+  });
 }
 
 function scheduleStructuredDecision(decision: ClaudeHookDecisionEvent): void {
@@ -179,27 +152,20 @@ function scheduleStructuredDecision(decision: ClaudeHookDecisionEvent): void {
 function scheduleCompletion(details: CompletionNotificationDetails): void {
   cancelPendingClaudeCompletion(details.terminalId);
   const token = ++notificationToken;
-  const delayMs = Math.max(0, getAppSettings().claudeCompletionNotificationDelaySeconds) * 1_000;
-  const timer = setTimeout(() => {
-    const isCurrent = () => pendingCompletionNotifications.get(details.terminalId)?.token === token;
-    void showCompletionNotification(details, isCurrent).finally(() => {
-      if (isCurrent()) pendingCompletionNotifications.delete(details.terminalId);
-    });
-  }, delayMs);
-  pendingCompletionNotifications.set(details.terminalId, { timer, token });
+  const isCurrent = () => pendingCompletionNotifications.get(details.terminalId)?.token === token;
+  pendingCompletionNotifications.set(details.terminalId, { token });
+  void showCompletionNotification(details, isCurrent).finally(() => {
+    if (isCurrent()) pendingCompletionNotifications.delete(details.terminalId);
+  });
 }
 
 function cancelAttention(key: string): void {
-  const pending = pendingAttentionNotifications.get(key);
-  if (pending) clearTimeout(pending.timer);
   pendingAttentionNotifications.delete(key);
 }
 
 function cancelAttentionForTerminal(terminalId: string): void {
   for (const [key, pending] of pendingAttentionNotifications) {
-    if (pending.terminalId !== terminalId) continue;
-    clearTimeout(pending.timer);
-    pendingAttentionNotifications.delete(key);
+    if (pending.terminalId === terminalId) pendingAttentionNotifications.delete(key);
   }
 }
 
@@ -220,8 +186,6 @@ function scheduleClaudeActivityExpiry(terminalId: string, expectedUpdatedAt: num
 }
 
 export function cancelPendingClaudeCompletion(terminalId: string): void {
-  const pending = pendingCompletionNotifications.get(terminalId);
-  if (pending) clearTimeout(pending.timer);
   pendingCompletionNotifications.delete(terminalId);
 }
 
@@ -317,7 +281,6 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
       if (!store.applyClaudeHookActivity(decision.terminalId, 'attention', decision.occurredAt, {
         summary: decision.questions[0]?.question,
       })) return;
-      cancelPendingClaudeCompletion(decision.terminalId);
       cancelClaudeActivityExpiry(decision.terminalId);
       scheduleStructuredDecision(decision);
     }),
@@ -388,9 +351,7 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
     cleanups.forEach(cleanup => cleanup());
     if (activeNotificationRuntimeToken !== runtimeToken) return;
     activeNotificationRuntimeToken++;
-    for (const pending of pendingCompletionNotifications.values()) clearTimeout(pending.timer);
     pendingCompletionNotifications.clear();
-    for (const pending of pendingAttentionNotifications.values()) clearTimeout(pending.timer);
     pendingAttentionNotifications.clear();
     for (const timer of claudeActivityExpiryTimers.values()) clearTimeout(timer);
     claudeActivityExpiryTimers.clear();

@@ -4,6 +4,7 @@ import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLau
 import { useAppStore } from '../../stores/appStore';
 import { showAlert } from '../../services/dialog';
 import { type AppSettings } from '../../utils/settings';
+import './SettingsAccessibility.css';
 
 interface BehaviorSettingsProps {
   settings: AppSettings;
@@ -129,7 +130,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   toggleDefaultTerminal(e.target.checked);
                 }}
               />
-              <span className="hook-sr-only">默认终端</span>
+              <span className="settings-sr-only">默认终端</span>
             </label>
           </div>
         </div>
@@ -209,9 +210,43 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   checked={settings.agentAutoArchiveEnabled}
                   onChange={e => toggleAutoArchive(e.target.checked)}
                 />
-                <span className="hook-sr-only">会话自动归档</span>
+                <span className="settings-sr-only">会话自动归档</span>
               </label>
             </div>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">等待处理通知</div>
+            <p className="settings-row-desc">等待确认、提问或需要处理时立即通知；正在查看的终端不重复提醒</p>
+          </div>
+          <div className="settings-row-ctrl">
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={settings.claudeDecisionNotifications}
+                onChange={e => updateSetting('claudeDecisionNotifications', e.target.checked)}
+              />
+              <span className="settings-sr-only">等待处理通知</span>
+            </label>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">任务结束通知</div>
+            <p className="settings-row-desc">任务完成或失败时立即通知；正在查看的终端不重复提醒</p>
+          </div>
+          <div className="settings-row-ctrl">
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={settings.claudeCompletionNotifications}
+                onChange={e => updateSetting('claudeCompletionNotifications', e.target.checked)}
+              />
+              <span className="settings-sr-only">任务结束通知</span>
+            </label>
           </div>
         </div>
 
@@ -296,7 +331,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   saveLaunchAtLogin(value).catch(console.error);
                 }}
               />
-              <span className="hook-sr-only">开机自动启动</span>
+              <span className="settings-sr-only">开机自动启动</span>
             </label>
           </div>
         </div>
@@ -318,7 +353,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   saveCloseBehavior(value).catch(console.error);
                 }}
               />
-              <span className="hook-sr-only">关闭时最小化到托盘</span>
+              <span className="settings-sr-only">关闭时最小化到托盘</span>
             </label>
           </div>
         </div>
@@ -340,7 +375,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   saveSingleInstance(value).catch(console.error);
                 }}
               />
-              <span className="hook-sr-only">仅单窗口运行</span>
+              <span className="settings-sr-only">仅单窗口运行</span>
             </label>
           </div>
         </div>
@@ -364,7 +399,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                 checked={settings.restoreTabsOnStartup}
                 onChange={(e) => updateSetting('restoreTabsOnStartup', e.target.checked)}
               />
-              <span className="hook-sr-only">启动时恢复选项卡</span>
+              <span className="settings-sr-only">启动时恢复选项卡</span>
             </label>
           </div>
         </div>
@@ -381,7 +416,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                 checked={settings.autoResumeClaudeSession}
                 onChange={(e) => updateSetting('autoResumeClaudeSession', e.target.checked)}
               />
-              <span className="hook-sr-only">自动恢复 Claude Code 会话</span>
+              <span className="settings-sr-only">自动恢复 Claude Code 会话</span>
             </label>
           </div>
         </div>
@@ -398,7 +433,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                 checked={settings.configPanelAutoExpand}
                 onChange={(e) => updateSetting('configPanelAutoExpand', e.target.checked)}
               />
-              <span className="hook-sr-only">启动时展开项目与命令面板</span>
+              <span className="settings-sr-only">启动时展开项目与命令面板</span>
             </label>
           </div>
         </div>
@@ -415,7 +450,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                 checked={settings.fileTreeAutoExpand}
                 onChange={(e) => updateSetting('fileTreeAutoExpand', e.target.checked)}
               />
-              <span className="hook-sr-only">启动时展开文件与 Git 面板</span>
+              <span className="settings-sr-only">启动时展开文件与 Git 面板</span>
             </label>
           </div>
         </div>
@@ -432,7 +467,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                 checked={settings.historyPanelAutoExpand}
                 onChange={(e) => updateSetting('historyPanelAutoExpand', e.target.checked)}
               />
-              <span className="hook-sr-only">启动时展开 Claude Code / Codex 会话面板</span>
+              <span className="settings-sr-only">启动时展开 Claude Code / Codex 会话面板</span>
             </label>
           </div>
         </div>
@@ -461,7 +496,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
                 }}
               />
-              <span className="hook-sr-only">纵向会话标签</span>
+              <span className="settings-sr-only">纵向会话标签</span>
             </label>
           </div>
         </div>
@@ -480,7 +515,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   updateSetting('rightClickPaste', e.target.checked);
                 }}
               />
-              <span className="hook-sr-only">右键粘贴</span>
+              <span className="settings-sr-only">右键粘贴</span>
             </label>
           </div>
         </div>
@@ -499,7 +534,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   updateSetting('doubleClickRunBat', e.target.checked);
                 }}
               />
-              <span className="hook-sr-only">双击运行 .bat 文件</span>
+              <span className="settings-sr-only">双击运行 .bat 文件</span>
             </label>
           </div>
         </div>

@@ -2,7 +2,6 @@ import { FC, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   BrainCircuit,
-  MessageSquareMore,
   Boxes,
   Container,
   Database,
@@ -18,8 +17,6 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   SquareTerminal,
-  Terminal,
-  Webhook,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -45,10 +42,7 @@ const CommandsSettings = lazy(() => import('./CommandsSettings').then(module => 
 const ExclusionSettings = lazy(() => import('./ExclusionSettings').then(module => ({ default: module.ExclusionSettings })));
 const AiUsageSettings = lazy(() => import('./AiUsageSettings').then(module => ({ default: module.AiUsageSettings })));
 const SshSettings = lazy(() => import('./SshSettings').then(module => ({ default: module.SshSettings })));
-const BotNotificationSettings = lazy(() => import('./BotNotificationSettings').then(module => ({ default: module.BotNotificationSettings })));
-const HookSettings = lazy(() => import('./HookSettings').then(module => ({ default: module.HookSettings })));
 const WebManageSettings = lazy(() => import('../shared/WebManageDialog').then(module => ({ default: module.WebManageSettings })));
-const ExtraParamsSettings = lazy(() => import('./ExtraParamsSettings').then(module => ({ default: module.ExtraParamsSettings })));
 const AgentManagementSettings = lazy(() => import('./AgentManagementSettings').then(module => ({ default: module.AgentManagementSettings })));
 const LlmProvidersSettings = lazy(() => import('./LlmProvidersSettings').then(module => ({ default: module.LlmProvidersSettings })));
 const ClaudeSettingsEditor = lazy(() => import('../claude-panel/segments/ClaudeSettingsSegment').then(module => ({ default: module.ClaudeSettingsSegment })));
@@ -99,10 +93,7 @@ type SettingsSectionId =
   | 'ai-usage'
   | 'ssh'
   | 'web-auth'
-  | 'hooks'
   | 'web-management'
-  | 'bot-notifications'
-  | 'extra-params'
   | 'agent-cli'
   | 'llm-providers'
   | 'claude-settings';
@@ -136,9 +127,8 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
     id: 'terminal',
     label: '终端与连接',
     sections: [
-      { id: 'profiles', label: '连接管理', icon: Plug, description: '本地 Shell、SSH、Docker、K8s 连接项维护', keywords: ['profile', 'ssh', 'docker', 'powershell', 'cmd'] },
+      { id: 'profiles', label: '项目与命令', icon: Plug, description: '项目、连接配置与命令模板集中管理', keywords: ['profile', 'ssh', 'docker', 'powershell', 'cmd'] },
       { id: 'commands', label: '命令模板', icon: SquareTerminal, description: '常用终端命令模板库与自定义命令', keywords: ['template', 'cmd', 'snippet'] },
-      { id: 'extra-params', label: '启动参数', icon: Terminal, description: '自定义启动参数预设与彩色角标', keywords: ['params', 'flag', 'preset'] },
       { id: 'ssh', label: 'SSH 设置', icon: Server, description: 'SSH 远程文件下载路径与服务器负载探针刷新', keywords: ['download', 'monitor', 'cpu', 'memory'] },
       // Docker 网页版专属：非 Docker 环境在 visibleGroups 中过滤掉
       { id: 'web-auth', label: '网页认证', icon: ShieldCheck, description: 'Docker 网页登录管理员密码与主页标题', keywords: ['web', 'docker', 'password', 'title', 'login', 'auth', '认证', '标题'] },
@@ -159,8 +149,6 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
     label: '扩展与服务',
     sections: [
       { id: 'web-management', label: 'Web 管理', icon: Globe2, description: '局域网 Web 终端访问服务与扫码连接', keywords: ['web', 'remote', 'port', 'password'] },
-      { id: 'bot-notifications', label: '机器人通知', icon: MessageSquareMore, description: '飞书、钉钉、企微等审批回调通知网关', keywords: ['bot', 'feishu', 'dingtalk', 'notification', 'webhook'] },
-      { id: 'hooks', label: 'Hook 设置', icon: Webhook, description: 'Claude Code 自动化决策拦截 Hook 脚本注入', keywords: ['hook', 'intercept', 'claude'] },
       { id: 'exclusions', label: '文件排除', icon: FileX2, description: '项目文件树只读监视排除正则与忽略目录', keywords: ['exclude', 'ignore', 'tree'] },
     ],
   },
@@ -246,7 +234,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         nativeChatSessions: backend.nativeChatSessions ?? previous.nativeChatSessions,
         agentAutoArchiveEnabled: backend.agentAutoArchiveEnabled ?? previous.agentAutoArchiveEnabled,
         agentAutoArchiveDays: backend.agentAutoArchiveDays ?? previous.agentAutoArchiveDays,
-        claudeHookConfigDir: backend.claudeHookConfigDir ?? previous.claudeHookConfigDir,
       };
       setSettings(synced);
       saveAppSettings(synced);
@@ -343,14 +330,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         return <SshSettings settings={settings} updateSetting={updateSetting} />;
       case 'web-auth':
         return <WebAuthSettings />;
-      case 'hooks':
-        return <HookSettings settings={settings} updateSetting={updateSetting} />;
       case 'web-management':
         return <WebManageSettings />;
-      case 'bot-notifications':
-        return <BotNotificationSettings />;
-      case 'extra-params':
-        return <ExtraParamsSettings />;
       case 'agent-cli':
         return <AgentManagementSettings
           active={activeSection === 'agent-cli'}
