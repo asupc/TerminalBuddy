@@ -4,7 +4,7 @@
 
 **基于 Tauri 2 + React 19 + Rust 的现代化多端终端工作台（桌面 · Web · 手机 · 安卓）**
 
-[![Version](https://img.shields.io/badge/version-1.8.0-blue)](terminal-buddy/package.json)
+[![Version](https://img.shields.io/badge/version-1.9.0-blue)](terminal-buddy/package.json)
 [![Rust](https://img.shields.io/badge/Rust-edition%202021-orange)](terminal-buddy/src-tauri/Cargo.toml)
 [![React](https://img.shields.io/badge/React-19-blue)](terminal-buddy/package.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)

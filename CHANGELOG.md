@@ -9,12 +9,19 @@
 
 ## [未发布]
 
+暂无
+
+---
+
+## [1.9.0] - 2026-11-13
+
 ### 🧹 功能精简
 
 - **移除启动参数预设**：删除设置入口、连接右键预设菜单、预设管理接口与持久化文件；终端内部仍保留一次性启动参数，项目启动命令和 Claude / Codex 会话恢复不受影响；
 - **移除机器人通知**：删除飞书、钉钉、企业微信等机器人通道、回调与长连接服务及设置界面；App 通知、原生 AI 会话通知和 Claude Hook 终端决策继续保留；
 - **设置导航调整**：设置中的“连接管理”更名为“项目与命令”，项目、连接配置与命令模板集中管理；
-- **通知不再延迟**：等待处理与任务完成通知均立即发送，Hook 决策等待时长使用固定服务端上限。
+- **通知不再延迟**：等待处理与任务完成通知均立即发送，Hook 决策等待时长使用固定服务端上限；
+- **下线 Pi Agent**：移除 Pi 供应商配置、模型启动、会话历史与恢复、扩展与 Hook、RPC 原生会话及安卓端支持，统一收敛为 Claude / Codex 双 Agent，相关配置不再读取。
 
 ### ⚙️ 设置项整理
 
@@ -75,10 +82,10 @@
 
 ### 📱 服务端任务通知与决策推送至 App
 
-- **同源通知**：Claude / Pi 终端完成、失败及待决策事件在服务端统一发布，原先推送到微信 / 飞书的机器人通知保持不变；
+- **同源通知**：Claude / Codex 终端完成、失败及待决策事件在服务端统一发布，并替代原先推送到微信 / 飞书的机器人通知；
 - **App 通知通道**：新增 `/ws/notifications` 与 `/api/notifications/decisions`，App 重连时补发待决策快照，后台监听断线时用 REST 补偿；
 - **App 内决策**：决策通知点击后打开 App 决策面板，支持单选、多选、自定义回答，提交到 `POST /api/notifications/decisions/{id}/answer` 后由服务端回填原 CLI；完成 / 失效事件自动撤销通知；
-- **去重与兼容**：源事件与机器人完成事件使用同一事件 ID，App 只提醒一次；旧服务端没有新接口时暂停该通道，不影响原有 AI 会话通知。
+- **去重与兼容**：源事件与完成事件使用同一事件 ID，App 只提醒一次；旧服务端没有新接口时暂停该通道，不影响原有 AI 会话通知。
 
 ### 📱 安卓简版 / 完整版切换
 
@@ -92,36 +99,17 @@
 
 - **发送方式设置**：安卓客户端新增「发送方式」全局设置（首页「更多」菜单进入，默认**排队发送**，仅影响本机 App 的发送行为）；
 - **排队发送（默认）**：AI 回复期间发送的消息在**服务端**排队（App 后台被杀或关闭也不丢失），等当前回合任务（含后台任务）全部完成后，由服务端写入**同一个 CLI 进程**继续，不重启进程、不需要 `--resume`；对话页输入区上方展示单行省略的紧凑排队列表，消息行高度减少约五分之一，移除编辑入口，每条右侧依次提供删除按钮和插话箭头；
-- **原生插话**：`SendAiMessage` 新增可选 `steer` 字段——回复进行中发送时把消息直接交给运行中的 CLI 进程，由它选择合适节点接收并继续任务，不中断当前任务；Codex 走活动回合的 `turn/start`，Pi 走 RPC 的 `steer`，Claude 写入同一个 stream-json stdin；
+- **原生插话**：`SendAiMessage` 新增可选 `steer` 字段——回复进行中发送时把消息直接交给运行中的 CLI 进程，由它选择合适节点接收并继续任务，不中断当前任务；Codex 走活动回合的 `turn/start`，Claude 写入同一个 stream-json stdin；
 - **排队消息编辑与删除**：新增 `PATCH/DELETE /api/ai/sessions/{id}/pending/{requestId}`，编辑保留原顺序、删除取消续发，队列变更同步持久化；已开始执行的消息拒绝修改，删除后保留请求去重记录以防旧请求重试重新入队；
 - **排队消息「插话」**：`POST /api/ai/sessions/{id}/flush` 改为把指定排队消息直接交给运行中的 CLI 进程（worker 已退出时按选中消息启动新回合），不再中断当前回复；
 - **Claude 常驻进程**：回合结束后保留 stdin 与 CLI 进程，队列消息在结算完成后直接写入同一进程；仅在服务重启、历史恢复或中断/异常后的冷启动使用 `--resume`；空闲会话删除或服务退出时回收进程；
-- **Codex/Pi 插话与续发**：空闲队列仍在常驻进程内续发；运行中插话复用各自原生的补充输入能力，不重置当前回合的用量与后台任务状态。
+- **Codex 插话与续发**：空闲队列仍在常驻进程内续发；运行中插话复用原生补充输入能力，不重置当前回合的用量与后台任务状态。
 
 ### 📱 App 历史会话浏览与恢复（M7-06）
 
-- **历史会话接口**：新增 `GET /api/ai/history`（按 `agent` + `projectDir` 过滤）与 `POST /api/ai/history/rescan`（展开前的增量索引，与 PC 端历史面板同一入口），三种 Agent 共用 `models::session_history` 协议，Claude / Codex / Pi 的转录历史首次对手机端可见；
-- **恢复交互**：`CreateAiSession` 新增 `resumeSessionId`——服务端从历史索引定位项目与标题、绑定原会话线程（Claude `--resume`、Codex `thread/resume`、Pi 以历史会话 ID 复用同一会话文件）并预填最近 300 条消息（按 seq 从尾部截取，角色收敛为 user/assistant/tool），项目以历史会话所在目录为准并沿用项目白名单校验；同一账号重复恢复同一历史线程自动复用已有会话，Pi 会话被其他账号占用时明确报错；
+- **历史会话接口**：新增 `GET /api/ai/history`（按 `agent` + `projectDir` 过滤）与 `POST /api/ai/history/rescan`（展开前的增量索引，与 PC 端历史面板同一入口），Claude / Codex 共用 `models::session_history` 协议，两者的转录历史首次对手机端可见；
+- **恢复交互**：`CreateAiSession` 新增 `resumeSessionId`——服务端从历史索引定位项目与标题、绑定原会话线程（Claude `--resume`、Codex `thread/resume`）并预填最近 300 条消息（按 seq 从尾部截取，角色收敛为 user/assistant/tool），项目以历史会话所在目录为准并沿用项目白名单校验；同一账号重复恢复同一历史线程自动复用已有会话；
 - **安卓客户端**：首页新增「历史会话」折叠区（默认收起），展开后列出当前项目 + 所选 Agent 的历史列表（标题、消息数、模型、相对时间），切换项目 / Agent 自动重载，点击一条即恢复并直接进入对话；增量扫描失败不阻断列表展示。
-
-### 📱 原生 AI 会话接入 Pi（App 功能集成）
-
-- **Pi 原生会话（M7-01/02）**：`ai_chat_service` 新增 Pi RPC 驱动——以 `pi --mode rpc --session-id <会话ID>` 常驻运行，会话 ID 直接复用 TerminalBuddy 的 AI 会话 ID（Pi 按该 ID 落盘、复用同一会话文件并随项目目录归档，恢复无需额外映射）；`text_delta`/`message_end` 流式与权威正文、`tool_execution_*` 工具卡片、`agent_settled` 回合结束全量映射，空闲进程保留、手机续发消息直接走 `prompt` 复用
-- **供应商与模型目录（M7-02）**：手机首页供应商目录加入 Pi 供应商卡片（`pi:<卡片ID>`，含默认卡片标记、模型与默认思考级别），启动展开为 `--provider/--model/--thinking`；新增「服务端默认配置」占位；模型卡片配置的 contextWindow 用于上下文用量展示
-- **用量与审批（M7-03）**：回合结束后调用 `get_session_stats` 做权威 Token 结算（覆盖工具嵌套的模型消耗），contextUsage 映射上下文占用与窗口；RPC 扩展交互桥把 `extension_ui_request`（select/confirm/input/editor）映射为手机审批卡并代答 `extension_ui_response`，通知类请求静默忽略；压缩时上下文用量即时失效
-- **Pi 扩展双通道审批**：扩展在 RPC 模式（原生会话）下经扩展 UI 确认 `bash/edit/write`，桌面终端链路保持 HTTP Hook 不变；工具审批仍默认关闭
-- **Android 客户端（M7-05）**：项目 Agent 开关识别 `pi`（默认启用）、Agent 选择与供应商过滤加入 Pi、会话/供应商标签显示「Pi」、Agent 标志使用 pi.dev 官方三色几何图（还原官方配色，不再手绘 π 线条）；审批卡、Token 用量、会话恢复等既有能力对 Pi 会话直接生效
-
-### π Pi Agent 全面支持（P0/P1）
-
-- **Agent 管理**：新增 Pi 卡片，支持 `pi --version` 检测（含 `--help` 签名校验，避免同名命令误判）、npm 安装/更新；Docker 运行镜像内置 Node 24，Windows 预检 Node ≥ 22.19 与 Git Bash，缺失时给出明确安装指引
-- **启动与命令模板**：Agent 管理新增 Pi 基础启动命令（默认 `pi --approve`）；命令模板/建议加入 `pi`、`pi -c`、`pi -r`、`pi --session`、`pi -p`、`pi --tui-mode regular`；项目右键新增「启动 Pi」，项目编辑支持启用/关闭 Pi
-- **Pi 会话历史**：扫描 `~/.pi/agent/sessions`（支持 `PI_CODING_AGENT_SESSION_DIR` / `settings.sessionDir`），按树形 JSONL 的活动分支解析与索引，支持列表、全文搜索、回放、重命名、收藏、归档、删除（移入回收目录）与 Markdown/JSONL 导出；历史标签按安装状态显示
-- **精确绑定与恢复**：Pi 会话绑定由扩展与 Hook 上报 `session_start` 等事件完成（新启动的 `pi` 不注入 `--session-id`，仅恢复会话时带 `--session`）；容器重启后页签按 `pi --session` 恢复；Codex 页签同样接入通用会话绑定/恢复链路
-- **状态与通知**：解析 Pi OSC 7501 与扩展事件，标签指示灯/桌面/机器人通知支持 working、blocked、done、error；终端环境自动设置 `PI_PROGRAM_STATUS`、`PI_CLIPBOARD_OSC52`、`PI_TRUE_COLOR`、`PI_HYPERLINKS`、`PI_IMAGE_PROTOCOL=none`
-- **Pi 模型菜单**：调用 `pi --list-models` 获取 provider/model，项目/历史右键可按 provider/model/thinking 启动与恢复，标签显示模型 chip
-- **Pi 供应商管理**：设置页「模型供应商」新增 Pi 分页，管理兼容端点的 baseUrl、API 协议、密钥、模型、思考级别映射与 compat 覆盖，保存/删除自动同步到 Pi 的 `models.json`（带归属标记，只动本应用条目，手写条目与内置覆盖原样保留）；密钥支持明文（加密落盘）/ `$环境变量` / `!命令` 三种形态，支持从 models.json 导入已有端点；右键菜单 Pi 无供应商时跳转到 Pi 分页
-- **Pi 扩展与工具确认**：扩展随应用注入（可选全局安装），默认 no-op；工具确认默认关闭，开启后 `bash/edit/write` 执行前可在桌面/手机允许或拒绝，超时默认放行
 
 ### 🖥️ 桌面版浏览器直达完整界面
 
@@ -131,8 +119,6 @@
 
 ### 🐛 修复
 
-- **兼容 pi 等全屏 TUI 的滚轮**：Windows ConPTY 会在 stdin 进入 raw mode 前吞掉 pi 写入的鼠标模式，xterm 因此把滚轮翻译成 ↑/↓、触发输入框历史而不是滚动对话；现在检测到该状态时按应用期望补发 SGR 滚轮报文
-- **修复 pi 的 IME 候选窗飘移**：输入区由上下两条横线包围、没有 `>` 提示符时，锚定到真实光标所在格（并为滚动指示边框保留识别），多行输入或输入区滚动时候选窗不再固定到首行左侧
 - **修复 Windows 桌面端关闭 Web 服务时偶发整体崩溃**：旧实现在 accept 循环退出后用 `Arc::into_inner().expect()` 回收 `GracefulShutdown` 所有权，关停瞬间只要有存活连接（浏览器 keep-alive、在途请求）就回收失败 panic，而 release 的 `panic = "abort"` 会直接崩掉整个进程。改为连接 task 只携带独立的 `Watcher`、关停方独占本体，排空等待设 10 秒上限
 - 同端口快速「停止→重启」服务时，旧监听 socket 释放与新 bind 之间的调度间隙偶发端口占用：绑定增加 2 秒 AddrInUse 重试窗口
 - **App 查看服务端终端不再右侧留白**：渲染容器去掉 4px 内缩并隐藏 xterm 自绘滚动条，尺寸计算改用容器实际宽度（旧 `addon-fit` 固定为滚动条预留 14px，与隐藏后的布局不符），终端铺满整个屏幕宽度
