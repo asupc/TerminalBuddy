@@ -92,10 +92,15 @@ fn compact(text: &str) -> Option<String> {
     Some(excerpt(&value, 80))
 }
 
-/// Codex 把项目说明、运行环境与 /goal 内部提示写成 user 消息，不能拿它们充当用户的问题。
-fn title_candidate(text: &str) -> Option<String> {
-    let trimmed = text.trim();
-    if [
+/// 这些 user 消息由 Codex 注入给模型，不是用户发出的内容。
+///
+/// 新版 rollout 在 payload 的 `internal_chat_message_metadata_passthrough`
+/// 里给出 `content_item_kinds`（普通用户输入是 `user.text`），可精确判定；
+/// 旧版没有该字段时按正文前缀兜底。`# Environment` 是部分版本的旧格式，
+/// 当前实际为 `<environment_context>`。
+fn is_injected_user_context(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    [
         "# AGENTS.md instructions",
         "# Environment",
         "<environment_context>",
@@ -105,10 +110,43 @@ fn title_candidate(text: &str) -> Option<String> {
     ]
     .iter()
     .any(|prefix| trimmed.starts_with(prefix))
-    {
+}
+
+fn user_content_kind(kind: &str) -> bool {
+    kind.starts_with("user.")
+}
+
+/// 按新版 rollout 的 block 级 metadata 只保留用户内容。
+///
+/// `content_item_kinds` 与 content blocks 一一对应：AGENTS.md、环境上下文、
+/// 权限说明等 kind 不属于 `user.*`，不能进入聊天镜像；图片、音频等用户内容
+/// 也以 `user.*` 标注，必须保留。若 metadata 缺失或与
+/// content 数量不一致，则退回整段文本，由调用方按旧格式前缀兜底。
+fn visible_user_text(payload: &Value) -> Option<String> {
+    let content = payload.get("content").unwrap_or(&Value::Null);
+    let kinds = payload
+        .get("internal_chat_message_metadata_passthrough")?
+        .get("content_item_kinds")?
+        .as_array()?;
+    let blocks = content.as_array()?;
+    if kinds.len() != blocks.len() {
         return None;
     }
-    compact(trimmed)
+    let visible = blocks
+        .iter()
+        .zip(kinds)
+        .filter(|(_, kind)| kind.as_str().is_some_and(user_content_kind))
+        .map(|(block, _)| block.clone())
+        .collect::<Vec<_>>();
+    Some(text_content(&Value::Array(visible)))
+}
+
+/// Codex 把项目说明、运行环境与 /goal 内部提示写成 user 消息，不能拿它们充当用户的问题。
+fn title_candidate(text: &str) -> Option<String> {
+    if is_injected_user_context(text) {
+        return None;
+    }
+    compact(text.trim())
 }
 
 /// /goal 功能注入的内部上下文不是用户输入，但目标本身值得作为标题兜底：
@@ -141,6 +179,8 @@ pub(super) fn parse(content: &str) -> CodexTranscript {
     let mut tool_names = HashMap::<String, String>::new();
     let mut last_usage = (0_i64, 0_i64);
     let mut has_totals = false;
+    // 注入上下文不展示，但 /goal 的目标仍可在没有真实提问时充当标题。
+    let mut goal_title = None;
     for (line_index, line) in content.lines().enumerate() {
         let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
             continue;
@@ -231,7 +271,23 @@ pub(super) fn parse(content: &str) -> CodexTranscript {
                         continue;
                     }
                     message.role = role.to_string();
-                    message.text = text_content(&payload["content"]);
+                    let raw_text = text_content(&payload["content"]);
+                    if role == "user" {
+                        if let Some(visible) = visible_user_text(payload) {
+                            if visible.trim().is_empty() {
+                                goal_title = goal_title.or_else(|| goal_candidate(&raw_text));
+                                continue;
+                            }
+                            message.text = visible;
+                        } else if is_injected_user_context(&raw_text) {
+                            goal_title = goal_title.or_else(|| goal_candidate(&raw_text));
+                            continue;
+                        } else {
+                            message.text = raw_text;
+                        }
+                    } else {
+                        message.text = raw_text;
+                    }
                 }
                 "function_call" | "custom_tool_call" | "tool_call" | "mcp_tool_call" => {
                     let name = payload
@@ -296,7 +352,11 @@ pub(super) fn parse(content: &str) -> CodexTranscript {
                     .unwrap_or(&Value::Null),
             );
             if !message.text.trim().is_empty() {
-                events.push((line_index, message));
+                if message.role == "user" && is_injected_user_context(&message.text) {
+                    goal_title = goal_title.or_else(|| goal_candidate(&message.text));
+                } else {
+                    events.push((line_index, message));
+                }
             }
         }
     }
@@ -322,7 +382,6 @@ pub(super) fn parse(content: &str) -> CodexTranscript {
     }
     canonical.sort_by_key(|(index, _)| *index);
     // 真实用户提问优先；只有整段会话都是 /goal 注入时才退回用目标当标题。
-    let mut goal_title = None;
     result.messages = canonical
         .into_iter()
         .enumerate()
@@ -374,9 +433,70 @@ mod tests {
         assert_eq!(result.project_dir, "D:\\项目");
         assert_eq!(result.title.as_deref(), Some("修复中文搜索"));
         assert_eq!(result.model.as_deref(), Some("gpt-5-codex"));
-        assert_eq!(result.messages.len(), 3);
-        assert_eq!(result.messages[2].seq, 2);
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].text, "修复中文搜索");
+        assert_eq!(result.messages[1].seq, 1);
+        assert!(result.messages.iter().all(|message| !message.text.contains("AGENTS.md")));
         assert_eq!(result.started_at, Some(1792281600000));
+    }
+
+    #[test]
+    fn hides_chunked_agents_and_environment_context_but_keeps_user_text() {
+        // Codex 0.168 的真实格式：AGENTS.md 与环境上下文同在一个 user 消息里，
+        // content_item_kinds 按 block 标注，普通输入是 user.text。
+        let result = parse(&jsonl(vec![
+            json!({"type":"response_item","payload":{
+                "type":"message","role":"user",
+                "content":[
+                    {"type":"input_text","text":"# AGENTS.md instructions for repo\n\n<INSTRUCTIONS>\n# AGENTS.md\n全量说明"},
+                    {"type":"input_text","text":"<environment_context>\n<cwd>/work</cwd>\n</environment_context>"}
+                ],
+                "internal_chat_message_metadata_passthrough":{
+                    "content_item_kinds":["agents_md.instructions","environments.environment_context"]
+                }
+            }}),
+            json!({"type":"response_item","payload":{
+                "type":"message","role":"user",
+                "content":[{"type":"input_text","text":"你好"}],
+                "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}
+            }}),
+            json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"你好！"}]}}),
+        ]));
+        assert_eq!(result.title.as_deref(), Some("你好"));
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].role, "user");
+        assert_eq!(result.messages[0].text, "你好");
+        assert_eq!(result.messages[0].seq, 0);
+        assert!(result.messages.iter().all(|message| !message.text.contains("AGENTS.md")));
+    }
+
+    #[test]
+    fn keeps_only_user_blocks_from_mixed_metadata_message() {
+        let result = parse(&jsonl(vec![json!({"type":"response_item","payload":{
+            "type":"message","role":"user",
+            "content":[
+                {"type":"input_text","text":"用户粘贴的提问"},
+                {"type":"input_text","text":"<environment_context>内部环境</environment_context>"}
+            ],
+            "internal_chat_message_metadata_passthrough":{
+                "content_item_kinds":["user.text","environments.environment_context"]
+            }
+        }})]));
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].text, "用户粘贴的提问");
+        assert_eq!(result.title.as_deref(), Some("用户粘贴的提问"));
+    }
+
+    #[test]
+    fn hides_legacy_injected_context_without_metadata() {
+        let result = parse(&jsonl(vec![
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for repo\n旧格式"}]}}),
+            json!({"type":"event_msg","payload":{"type":"user_message","message":"# Environment\n旧环境"}}),
+            json!({"type":"event_msg","payload":{"type":"user_message","message":"真实提问"}}),
+        ]));
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].text, "真实提问");
+        assert_eq!(result.title.as_deref(), Some("真实提问"));
     }
 
     #[test]

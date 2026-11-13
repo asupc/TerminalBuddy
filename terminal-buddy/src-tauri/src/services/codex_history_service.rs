@@ -21,7 +21,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::UNIX_EPOCH;
 
 const BATCH_SIZE: usize = 60;
-const ANALYZER_VERSION: i64 = 1;
+const ANALYZER_VERSION: i64 = 2;
 static INDEX_LOCK: Mutex<()> = Mutex::new(());
 
 fn index_lock() -> Result<MutexGuard<'static, ()>, String> {
