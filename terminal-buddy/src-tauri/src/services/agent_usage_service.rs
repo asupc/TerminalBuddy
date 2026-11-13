@@ -309,11 +309,24 @@ fn default_claude_window(model: Option<&str>) -> Option<u64> {
 
 /// 当前选中终端背后的 Agent 用量；终端尚未绑定 Agent 时返回 None。
 pub fn usage(terminal_id: &str) -> Result<Option<TerminalAgentUsage>, String> {
+    let launch = llm_provider_service::terminal_launch_config(terminal_id);
     let Some(location) = terminal_task_service::locate_transcript(terminal_id) else {
-        return Ok(None);
+        // 绑定已经建立、但 transcript 还没落盘（Claude 首轮对话之前 / Codex 刚启动）
+        // 或暂时找不到文件时，先用启动配置给状态栏一个快照，避免整条 Agent 信息
+        // 在会话最初几秒里消失；用量留空，下一轮轮询会补齐。
+        let Some((provider, _session_id)) = terminal_task_service::current_binding(terminal_id) else {
+            return Ok(None);
+        };
+        return Ok(Some(TerminalAgentUsage {
+            provider,
+            model: launch.as_ref().and_then(|config| config.model.clone()),
+            effort: launch.as_ref().and_then(|config| config.effort.clone()),
+            context_window_tokens: launch.as_ref().and_then(|config| config.context_window),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            ..Default::default()
+        }));
     };
     let parsed = parse_file(&location.path, &location.provider)?;
-    let launch = llm_provider_service::terminal_launch_config(terminal_id);
     let model = parsed
         .model
         .clone()
