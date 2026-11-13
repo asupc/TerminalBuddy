@@ -2,7 +2,6 @@ import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayout
 import { useAppStore } from '../../stores/appStore';
 import { buildClaudeRefCommand, deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
-import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
@@ -29,11 +28,10 @@ const PINNED_GROUP_ID = '__pinned__';
 interface ConfigPanelProps {
   isActive: boolean;
   isSidebarMode: boolean;
-  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, tabName?: string, extraParamMode?: ExtraParamMode) => void;
   onEditProfile: (profile: Profile) => void;
   onCopyProfile: (profile: Profile) => void;
   onAddProfile: (defaultGroup?: string) => void;
-  onManageExtraParams: () => void;
 }
 
 export const ConfigNav: FC<ConfigPanelProps> = ({
@@ -43,7 +41,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   onEditProfile,
   onCopyProfile,
   onAddProfile,
-  onManageExtraParams,
 }) => {
   const profiles = useAppStore(s => s.profiles);
   const projects = useAppStore(s => s.projects);
@@ -54,7 +51,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const configPanelVisible = useAppStore(s => s.configPanelVisible);
   const configSearchQuery = useAppStore(s => s.configSearchQuery);
   const setConfigSearchQuery = useAppStore(s => s.setConfigSearchQuery);
-  const extraParamPresets = useAppStore(s => s.extraParamPresets);
   const setDragProfileId = useAppStore(s => s.setDragProfileId);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
@@ -237,7 +233,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   useLayoutEffect(() => {
     if (!contextMenu && !blankContextMenu) return;
     adjustContextMenuPosition();
-  }, [contextMenu, blankContextMenu, adjustContextMenuPosition, extraParamPresets, projects, profiles]);
+  }, [contextMenu, blankContextMenu, adjustContextMenuPosition, projects, profiles]);
 
   useEffect(() => {
     if (!contextMenu && !blankContextMenu) return;
@@ -284,12 +280,12 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
    * 原 claude 命令的参数（如 --dangerously-skip-permissions）继承到引用命令后。 */
   const startProfileWithModel = (profile: Profile, providerId: string, modelId: string) => {
     closeContextMenu();
-    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands, currentClaudeCommand())), undefined, undefined, undefined, undefined, 'independent');
+    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands, currentClaudeCommand())), undefined, 'independent');
   };
 
   const startProfileWithCodexModel = (profile: Profile, providerId: string, modelId: string) => {
     closeContextMenu();
-    onStartTerminal(profile, buildCodexRefCommand(providerId, modelId, profile.startupCommands), undefined, undefined, undefined, undefined, 'independent');
+    onStartTerminal(profile, buildCodexRefCommand(providerId, modelId, profile.startupCommands), undefined, 'independent');
   };
 
   const gotoProvidersSettings = (source: 'claude' | 'codex' = 'claude') => {
@@ -491,22 +487,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             if (target) onStartTerminal(target);
             closeContextMenu();
           }}>启动</div>
-          {matchingStartupPresets(extraParamPresets,
-            profiles.find(p => p.id === contextMenu.profileId)?.startupCommands || [])
-            .map((preset) => (
-            <div key={preset.id} className="context-menu-item" onClick={() => {
-              const target = profiles.find((p) => p.id === contextMenu.profileId);
-              if (target) onStartTerminal(target, preset.params, preset.name, undefined, preset.name, preset.tagColor, preset.mode);
-              closeContextMenu();
-            }}>
-              启动<span
-                className="config-nav-preset-chip"
-                style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
-              >
-                {preset.name}
-              </span>
-            </div>
-          ))}
           <div className="context-menu-item" onClick={async () => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             closeContextMenu();
@@ -603,9 +583,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             添加配置
           </div>
           <div className="context-menu-item" onClick={() => editProject()}>添加项目</div>
-          <div className="context-menu-item" onClick={() => { onManageExtraParams(); closeContextMenu(); }}>
-            启动参数管理
-          </div>
         </div>
       )}
 

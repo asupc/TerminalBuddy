@@ -38,11 +38,8 @@ import { supportsSystemExplorerOpen } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { ClaudeExportDialog } from './ClaudeExportDialog';
-import {
-  type ClaudeVendorRef,
-  type ResumeLaunchPreset,
-} from './resumeClaudeSession';
-import type { ExtraParamPreset, Project, SessionHistoryProvider } from '../../types';
+import { type ClaudeVendorRef } from './resumeClaudeSession';
+import type { Project, SessionHistoryProvider } from '../../types';
 import { AGENT_HISTORY_AUTO_ARCHIVED_EVENT, sessionHistory } from '../../services/sessionHistory';
 import { getAgentCliEnvironment } from '../../services/agentCli';
 import { resumedCodexSessionId } from '../../utils/codexLaunch';
@@ -105,26 +102,16 @@ interface MenuItemProps {
   label: string;
   hint?: string;
   danger?: boolean;
-  /** 带预设的条目：在文字后显示预设名色块，与配置右键同款样式。 */
-  preset?: ExtraParamPreset;
   onClick: () => void;
 }
 
-const MenuItem: FC<MenuItemProps> = ({ icon: Icon, label, hint, danger, preset, onClick }) => (
+const MenuItem: FC<MenuItemProps> = ({ icon: Icon, label, hint, danger, onClick }) => (
   <div
     className={`claude-hist-context-item${danger ? ' danger' : ''}`}
     onClick={onClick}
   >
     <span className="claude-hist-context-icon"><Icon size={14} strokeWidth={1.6} /></span>
     <span className="claude-hist-context-label">{label}</span>
-    {preset && (
-      <span
-        className="claude-hist-context-chip"
-        style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
-      >
-        {preset.name}
-      </span>
-    )}
     {hint && <span className="claude-hist-context-hint">{hint}</span>}
   </div>
 );
@@ -198,9 +185,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
   const sessions = useAppStore(s => s.sessions);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
-  const profiles = useAppStore(s => s.profiles);
   const projects = useAppStore(s => s.projects);
-  const extraParamPresets = useAppStore(s => s.extraParamPresets);
   // 默认风格下由标题栏的显示/隐藏按钮控制（侧栏风格下由面板互斥控制，不看它）
   const historyPanelVisible = useAppStore(s => s.historyPanelVisible);
   const scopeDir = useActiveTabProjectDirectory();
@@ -462,27 +447,6 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
     setFulltextQuery('');
   }, []);
 
-  /**
-   * 会话可用的启动参数预设，过滤规则与 ConfigNav 右键菜单一致（enabled + commandMatch
-   * 比对启动命令）。另排除 independent 预设：它整体替换启动命令（如 codex），接不上 --resume。
-   */
-  const presetsFor = useCallback((item: ClaudeSessionItem) => {
-    const profile = history.pickProfile(profiles, item.projectDir);
-    // 没有匹配连接时，按空白终端回退路径实际要跑的命令判定 commandMatch
-    const commands = (profile?.startupCommands ?? [provider]).map(cmd => cmd.toLowerCase());
-    return extraParamPresets.filter(preset => {
-      if (!preset.enabled || preset.mode !== 'append') return false;
-      const match = preset.commandMatch?.toLowerCase();
-      return !match || commands.some(cmd => cmd.includes(match));
-    });
-  }, [history, provider, extraParamPresets, profiles]);
-
-  // 原生会话恢复不消费终端预设参数（审查 M-18）：该模式下隐藏预设菜单项，
-  // 避免用户选择「恢复会话（预设X）」后参数被静默丢弃。
-  const isNativeResume = useCallback((item: ClaudeSessionItem) =>
-    getAppSettings().nativeChatSessions && !liveTerminalBySession.has(item.sessionId),
-  [liveTerminalBySession]);
-
   // 「新会话形态」为原生会话时，历史恢复走原生聊天标签（独立 CLI 进程 + --resume/thread 续接），
   // 与项目模型启动共用同一开关；会话仍活在某个终端里时保持终端路径（聚焦原终端）。
   const resumeNative = useCallback(async (item: ClaudeSessionItem, vendorRef?: ClaudeVendorRef) => {
@@ -495,21 +459,16 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
     openExistingAgentSession(session);
   }, [provider]);
 
-  const handleResume = useCallback((item: ClaudeSessionItem, preset?: ExtraParamPreset) => {
+  const handleResume = useCallback((item: ClaudeSessionItem) => {
     if (getAppSettings().nativeChatSessions && !liveTerminalBySession.has(item.sessionId)) {
       void resumeNative(item).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
       return;
     }
-    const launchPreset: ResumeLaunchPreset | undefined = preset && {
-      name: preset.name,
-      params: preset.params,
-      tagColor: preset.tagColor,
-    };
     void history.resume({
       sessionId: item.sessionId,
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
-    }, launchPreset).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
+    }).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
   }, [history, liveTerminalBySession, resumeNative, showToast]);
 
   const handleResumeWithModel = useCallback((item: ClaudeSessionItem, vendorRef: ClaudeVendorRef) => {
@@ -521,7 +480,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
       sessionId: item.sessionId,
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
-    }, undefined, vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
+    }, vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
   }, [history, liveTerminalBySession, resumeNative, showToast]);
 
   const handleReplay = useCallback((sessionId: string, title: string, projectDir: string, focusSeq?: number) => {
@@ -537,10 +496,10 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
     }
     setSelectedId(item.sessionId);
     const MENU_W = 210;
-    const MENU_H = 320 + (isNativeResume(item) ? 0 : presetsFor(item).length) * 28;
+    const MENU_H = 320;
     const pos = fitContextMenuToViewport(e.clientX, e.clientY, MENU_W, MENU_H);
     setContextMenu({ x: pos.x, y: pos.y, item });
-  }, [presetsFor, isNativeResume, selectedIds]);
+  }, [selectedIds]);
 
   const handleToggleFlag = useCallback(async (
     item: ClaudeSessionItem,
@@ -912,15 +871,6 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
             hint="（双击）"
             onClick={() => { handleResume(contextMenuItem); setContextMenu(null); }}
           />
-          {!isNativeResume(contextMenuItem) && presetsFor(contextMenuItem).map(preset => (
-            <MenuItem
-              key={preset.id}
-              icon={Play}
-              label="恢复会话"
-              preset={preset}
-              onClick={() => { handleResume(contextMenuItem, preset); setContextMenu(null); }}
-            />
-          ))}
           <ClaudeModelMenuSection
             source={provider}
             itemClassName="claude-hist-context-item"

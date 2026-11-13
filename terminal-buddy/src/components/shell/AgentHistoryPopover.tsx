@@ -303,7 +303,6 @@ export function AgentHistoryPopover({
       } else {
         await history.resume(
           { sessionId: item.sessionId, title, projectDir: item.projectDir },
-          undefined,
           vendorRef,
         );
       }

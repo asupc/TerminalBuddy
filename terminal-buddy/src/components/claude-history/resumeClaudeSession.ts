@@ -13,25 +13,10 @@ export interface ResumableClaudeSession {
   projectDir: string;
 }
 
-/** 追加到恢复命令上的启动参数预设（只取 append 语义，见 HistoryPanel 的过滤）。 */
-export interface ResumeLaunchPreset {
-  name: string;
-  params: string;
-  tagColor: string | null;
-}
-
 /** 指定模型恢复：引用标记指向的供应商与模型。 */
 export interface ClaudeVendorRef {
   providerId: string;
   modelId: string;
-}
-
-/** 与引用展开同名的参数：preset 自带时会与展开结果并存（CLI 以后者为准），必须前置过滤。 */
-const REF_CONFLICT_PARAMS = ['--model', '--settings', '--effort'];
-
-export function presetConflictsWithModelRef(preset: ResumeLaunchPreset): boolean {
-  const params = ` ${preset.params} `;
-  return REF_CONFLICT_PARAMS.some(flag => new RegExp(`\\s${flag}(\\s|=|$)`).test(params));
 }
 
 function normalizeDir(path: string): string {
@@ -78,11 +63,11 @@ export function focusTerminalById(terminalId: string): void {
 /**
  * 恢复历史 Claude 会话：
  * - 该会话已在某个终端运行 → 聚焦原终端，不重复 resume
- * - 否则用「启动命令里跑 claude」的连接开新终端，`--resume <id>`（连同启动参数预设）
+ * - 否则用「启动命令里跑 claude」的连接开新终端，`--resume <id>`
  *   作为该连接的追加参数
  * - 没有这类连接时退回空白终端，按 Agent 管理的基础命令参数（如
  *   `--dangerously-skip-permissions`）+ `--resume <id>` 执行
- * - 有 `vendorRef` 时走 independent 语义：`[引用] [preset.params] --resume <id>`，
+ * - 有 `vendorRef` 时走 independent 语义：`[引用] --resume <id>`，
  *   不继承 profile.startup_commands；blank 路必须存快照以便重启恢复
  *
  * 两条路径都不再前端 writeToTerminal：后端把 shell 启动命令延迟 300ms 批量写入，
@@ -91,7 +76,6 @@ export function focusTerminalById(terminalId: string): void {
  */
 export async function resumeClaudeSession(
   session: ResumableClaudeSession,
-  preset?: ResumeLaunchPreset,
   vendorRef?: ClaudeVendorRef,
 ): Promise<void> {
   const store = useAppStore.getState();
@@ -100,14 +84,6 @@ export async function resumeClaudeSession(
   if (liveId && store.sessions.some(item => item.id === liveId)) {
     focusTerminalById(liveId);
     return;
-  }
-
-  // 指定模型恢复时，preset 自带的 --model/--settings/--effort 会与引用展开的
-  // 同名参数并存（CLI 以后者为准），前置过滤掉冲突 preset。
-  let effectivePreset = preset;
-  if (vendorRef && preset && presetConflictsWithModelRef(preset)) {
-    store.showToast(`预设「${preset.name}」含 --model/--settings/--effort，已忽略该预设`, 'info');
-    effectivePreset = undefined;
   }
 
   const name = session.title || 'Claude 会话';
@@ -123,8 +99,8 @@ export async function resumeClaudeSession(
   const appendedBaseArgs = profile ? (profileArgs ? '' : baseArgs) : inheritArgs;
   // 快照里存整条含引用的命令（不含 --resume，恢复时临时拼）。
   const snapshotParams = vendorRef
-    ? buildClaudeRefCommand(vendorRef.providerId, vendorRef.modelId, [inheritArgs, effectivePreset?.params].filter(Boolean).join(' '))
-    : [appendedBaseArgs, effectivePreset?.params.trim(), resumeArg].filter(Boolean).join(' ');
+    ? buildClaudeRefCommand(vendorRef.providerId, vendorRef.modelId, inheritArgs)
+    : [appendedBaseArgs, resumeArg].filter(Boolean).join(' ');
   // 本次启动实际跑的命令（含 --resume）。
   const launchParams = vendorRef ? `${snapshotParams} ${resumeArg}` : snapshotParams;
   const base = {
@@ -150,8 +126,6 @@ export async function resumeClaudeSession(
         owner: clientTerminalOwner(),
         extraParams: vendorRef ? snapshotParams : launchParams,
         extraParamMode: vendorRef ? 'independent' : 'append',
-        extraParamTag: effectivePreset?.name,
-        extraParamTagColor: effectivePreset?.tagColor ?? null,
         starting: true,
       }),
       start: (rows, cols) => startTerminal(
@@ -161,8 +135,6 @@ export async function resumeClaudeSession(
         cols,
         name,
         session.projectDir || undefined,
-        effectivePreset?.name,
-        effectivePreset?.tagColor ?? null,
         vendorRef ? 'independent' : 'append',
         // 恢复命令通常没有模型引用，让后端补一份只含 hooks 的临时 --settings。
         true,
@@ -196,8 +168,6 @@ export async function resumeClaudeSession(
       owner: clientTerminalOwner(),
       // 有 vendorRef 的 blank 路必须存快照，否则重启恢复丢失模型。
       ...(vendorRef ? { extraParams: snapshotParams, extraParamMode: 'independent' as const } : {}),
-      extraParamTag: effectivePreset?.name,
-      extraParamTagColor: effectivePreset?.tagColor ?? null,
       starting: true,
     }),
     start: (rows, cols) => startBlankTerminal(
@@ -207,8 +177,6 @@ export async function resumeClaudeSession(
       session.projectDir || undefined,
       name,
       vendorRef ? launchParams : `claude ${launchParams}`,
-      effectivePreset?.name,
-      effectivePreset?.tagColor ?? null,
       project?.name,
       // 无供应商引用的恢复命令同样让后端补 hooks 临时 --settings。
       true,

@@ -126,8 +126,7 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
     let path_keys: &[&str] = if command.starts_with("remote_") { &["localPath", "localDir"] } else if file_manager_command { &[] } else {
         // destPath：claude/codex_history_export 直接落盘写文件，必须与 path 一样受
         // scope 约束，否则持 JWT 可向任意路径写文件（审查 M-1）。
-        // selectedDir：uninstall_claude_hooks 会在该目录写 settings.json（M-1 同类）。
-        &["path", "startupPath", "projectDir", "filePath", "newPath", "destPath", "selectedDir"]
+        &["path", "startupPath", "projectDir", "filePath", "newPath", "destPath"]
     };
     for key in path_keys {
         // Git 的 filePath 是仓库内相对路径（如 src/App.tsx），命令层用
@@ -217,7 +216,7 @@ struct TerminalRequest {
     display_name: Option<String>, extra_startup_params: Option<String>, extra_startup_mode: Option<String>,
     #[serde(default)] initial_rows: u16,
     #[serde(default)] initial_cols: u16,
-    startup_path: Option<String>, initial_command: Option<String>, extra_param_tag: Option<String>, extra_param_tag_color: Option<String>,
+    startup_path: Option<String>, initial_command: Option<String>,
     /// 项目启动的空白终端归属分组（桌面端浏览器版恢复页签时带上项目名）。
     group_override: Option<String>,
     /// 历史会话恢复：命令没有模型引用时补 hooks 临时 settings。
@@ -297,12 +296,12 @@ async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, ap
                 let id = if blank { service.create_blank_terminal(
                     if request.terminal_type.is_empty() { crate::commands::terminal::default_terminal_type() } else { &request.terminal_type },
                     request.display_name.as_deref(), request.group_override.as_deref(), request.initial_rows, request.initial_cols,
-                    request.startup_path.as_deref(), request.initial_command.as_deref(), request.extra_param_tag.as_deref(),
-                    request.extra_param_tag_color.as_deref(), request.inject_claude_hooks.unwrap_or(false),
+                    request.startup_path.as_deref(), request.initial_command.as_deref(),
+                    request.inject_claude_hooks.unwrap_or(false),
                     app.clone(), TerminalOwner::Web, creator,
                 ) } else { service.create_terminal(
                     &request.profile_id, request.display_name.as_deref(), request.extra_startup_params.as_deref(), request.extra_startup_mode.as_deref(),
-                    request.initial_rows, request.initial_cols, request.startup_path.as_deref(), request.extra_param_tag.as_deref(), request.extra_param_tag_color.as_deref(),
+                    request.initial_rows, request.initial_cols, request.startup_path.as_deref(),
                     request.inject_claude_hooks.unwrap_or(false), app.clone(), TerminalOwner::Web, creator,
                 ) }.map_err(ApiError::BadRequest)?;
                 if let Some(info) = service.list_terminals_info_for(TerminalActor::Web).into_iter().find(|i| i.id == id) {

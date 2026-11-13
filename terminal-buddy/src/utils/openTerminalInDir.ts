@@ -17,8 +17,6 @@ export async function openTerminalInDir(dir?: string, options?: {
   command?: string;
   name?: string;
   groupName?: string;
-  presetTag?: string;
-  presetTagColor?: string | null;
 }): Promise<void> {
   const store = useAppStore.getState();
   if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
@@ -35,7 +33,6 @@ export async function openTerminalInDir(dir?: string, options?: {
   }
   const terminalId = await startBlankTerminal(
     defaultShellType(), estRows, estCols, dir, options?.name, options?.command,
-    undefined, undefined,
     // 项目启动时把项目名写进后端分组，手机端与重启恢复都依赖它。
     groupName,
   );
@@ -48,8 +45,6 @@ export async function openTerminalInDir(dir?: string, options?: {
     // 空白终端没有配置命令，保存完整启动命令，供会话右键再次启动。
     extraParams: options?.command,
     extraParamMode: options?.command !== undefined ? 'independent' : undefined,
-    extraParamTag: options?.presetTag,
-    extraParamTagColor: options?.presetTagColor,
     terminalType: defaultShellType(),
     colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
     tabColor: null,

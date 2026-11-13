@@ -7,7 +7,7 @@ import { buildCodexResumeCommand, isCodexCommand, parseCodexRef, resumedCodexSes
 import { currentCodexCommand } from '../../utils/agentCommands';
 import { PRESET_THEMES, type Profile } from '../../types';
 import { useAppStore } from '../../stores/appStore';
-import { focusTerminalById, type ResumableClaudeSession, type ResumeLaunchPreset, type ClaudeVendorRef } from './resumeClaudeSession';
+import { focusTerminalById, type ResumableClaudeSession, type ClaudeVendorRef } from './resumeClaudeSession';
 
 export function pickCodexProfile(profiles: Profile[], projectDir: string): Profile | undefined {
   const dir = normalizeProjectPath(projectDir);
@@ -29,7 +29,6 @@ export function pickCodexProfile(profiles: Profile[], projectDir: string): Profi
 
 export async function resumeCodexSession(
   session: ResumableClaudeSession,
-  preset?: ResumeLaunchPreset,
   vendorRef?: ClaudeVendorRef,
 ): Promise<void> {
   const store = useAppStore.getState();
@@ -39,7 +38,7 @@ export async function resumeCodexSession(
   if (!session.projectDir) throw new Error('该会话缺少工作目录，无法恢复');
   const profile = pickCodexProfile(store.profiles, session.projectDir);
   const project = projectForDirectory(store.projects, session.projectDir);
-  const command = buildCodexResumeCommand(session.sessionId, profile?.startupCommands ?? currentCodexCommand(), vendorRef, preset?.params);
+  const command = buildCodexResumeCommand(session.sessionId, profile?.startupCommands ?? currentCodexCommand(), vendorRef);
   const name = session.title || 'Codex 会话';
   const terminalType = profile?.terminalType ?? defaultShellType();
   const theme = PRESET_THEMES.find(item => item.id === profile?.colorTheme) ?? PRESET_THEMES[0];
@@ -52,12 +51,11 @@ export async function resumeCodexSession(
       colorTheme: { background: theme.background, foreground: theme.foreground },
       tabColor: profile?.tabColor ?? null, groupId: 'default', groupName: project?.name,
       owner: clientTerminalOwner(), startupPath: session.projectDir,
-      extraParams: command, extraParamMode: 'independent', extraParamTag: preset?.name,
-      extraParamTagColor: preset?.tagColor ?? null, starting: true,
+      extraParams: command, extraParamMode: 'independent', starting: true,
     }),
     start: (rows, cols) => profile
-      ? startTerminal(profile.id, command, rows, cols, name, session.projectDir, preset?.name, preset?.tagColor ?? null, 'independent')
-      : startBlankTerminal(defaultShellType(), rows, cols, session.projectDir, name, command, preset?.name, preset?.tagColor ?? null, project?.name),
+      ? startTerminal(profile.id, command, rows, cols, name, session.projectDir, 'independent')
+      : startBlankTerminal(defaultShellType(), rows, cols, session.projectDir, name, command, project?.name),
     onStarted: terminalId => {
       const current = useAppStore.getState();
       current.setSessionDirectory(terminalId, session.projectDir);

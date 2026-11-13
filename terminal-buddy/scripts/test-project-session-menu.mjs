@@ -67,14 +67,17 @@ function load(file, mocks = {}) {
 const claudeLaunch = load('src/utils/claudeLaunch.ts');
 const codexLaunch = load('src/utils/codexLaunch.ts', { './claudeLaunch': claudeLaunch });
 const commandParams = load('src/utils/commandParams.ts');
-const startupPresets = load('src/utils/startupPresets.ts');
+const agentCommands = load('src/utils/agentCommands.ts', {
+  './claudeLaunch': claudeLaunch, './codexLaunch': codexLaunch,
+  '../stores/appStore': { useAppStore: store },
+});
 const sessionHistory = load('src/utils/sessionHistory.ts', {
   './tauri': tauri, '../types': load('src/types/index.ts'),
   '../components/claude-history/resumeClaudeSession': { pickClaudeProfile: () => undefined, resumeClaudeSession: async () => {} },
   '../components/claude-history/resumeCodexSession': { pickCodexProfile: () => undefined, resumeCodexSession: async () => {} },
 });
 const openTerminal = load('src/utils/openTerminalInDir.ts', {
-  '../stores/appStore': { useAppStore: store }, '../services/tauri': tauri, './startupPresets': startupPresets,
+  '../stores/appStore': { useAppStore: store }, '../services/tauri': tauri, './agentCommands': agentCommands,
   '../services/platform': { defaultShellType: () => 'powershell' },
   './projectPath': load('src/utils/projectPath.ts', { '../services/platform': { serverUsesWindowsPaths: () => false } }),
   './claudeLaunch': claudeLaunch, './codexLaunch': codexLaunch,
@@ -83,7 +86,6 @@ const { TabContextMenu } = load('src/components/shell/TabContextMenu.tsx', {
   '../../stores/appStore': { useAppStore: store },
   '../../utils/projectPath': load('src/utils/projectPath.ts'),
   '../../utils/openTerminalInDir': openTerminal,
-  '../../utils/startupPresets': startupPresets,
   '../../services/tauri': tauri,
   '../../services/platform': { supportsSystemExplorerOpen: () => true },
 });
@@ -96,14 +98,16 @@ const appStore = load('src/stores/appStore.ts', {
 const restore = load('src/services/sessionRestore.ts', {
   './tauri': tauri, '../stores/appStore': appStore,
   '../utils/settings': { getAppSettings: () => ({ autoResumeClaudeSession: false }) },
-  './dialog': {}, '../types': load('src/types/index.ts'),
+  '../utils/agentCommands': agentCommands,
+  './dialog': {}, '../types': load('src/types/index.ts'), './agentCommands': agentCommands,
   './platform': { isBrowserClient: () => false, clientTerminalOwner: () => 'pc', defaultShellType: () => 'powershell' },
 });
 function reset() {
   calls = [];
   failStart = false;
   state = {
-    projects: [], extraParamPresets: [], sessions: [], sessionDirectories: {}, claudeSessionIds: {}, agentSessionBindings: {},
+    projects: [], sessions: [], sessionDirectories: {}, claudeSessionIds: {}, agentSessionBindings: {},
+    agentTabs: [], activeAgentTabKey: null, activeSpecialTab: null,
     splitMode: 'off', splitSlots: [], activeSessionId: null, toasts: [],
     addSession: session => state.sessions.push(session),
     setSessionDirectory: (id, directory) => { state.sessionDirectories[id] = directory; },
@@ -132,7 +136,6 @@ async function recreate(session, profiles, onStartTerminal) {
   assert.equal(menu.closed(), 1);
 }
 const project = { name: '测试项目', path: 'D:\\work\\project', startupCommand: 'claude' };
-const preset = { id: 'preset', name: '开发', params: '--model sonnet', mode: 'append', tagColor: '#123456', enabled: true };
 // 825f2da 起项目启动是纯空白终端（命令由 Agent 命令行注入），
 // 启动命令快照会话改为手工构造，覆盖追加/独立参数的重建链路。
 for (const [extraParams, expected] of [
@@ -143,29 +146,28 @@ for (const [extraParams, expected] of [
   reset();
   const original = { id: 'session-1', profileId: '', profileName: '重命名会话', groupName: project.name, startupPath: project.path, terminalType: 'powershell', extraParams, extraParamMode: 'independent' };
   state.sessions.push(original);
-  // 项目/预设已删除、终端已 cd 时，仍按原启动快照重建。
+  // 项目已删除、终端已 cd 时，仍按原启动快照重建。
   state.sessionDirectories[original.id] = 'D:\\other';
   await recreate(original);
-  assert.deepEqual(calls[0], ['powershell', 0, 0, project.path, original.profileName, expected, undefined, undefined, project.name]);
+  assert.deepEqual(calls[0], ['powershell', 0, 0, project.path, original.profileName, expected, project.name]);
   const duplicate = state.sessions[1];
   assert.equal(duplicate.profileId, '');
   assert.equal(duplicate.groupName, project.name);
   assert.equal(duplicate.extraParams, expected);
 }
-console.log('PASS: 项目启动快照与已删除项目/预设的重建');
+console.log('PASS: 项目启动快照与已删除项目的重建');
 reset();
 state.projects = [project];
-state.extraParamPresets = [preset];
-const legacy = { id: 'legacy', profileId: '', profileName: '旧会话', groupName: project.name, terminalType: 'powershell', extraParamTag: preset.name, extraParamTagColor: preset.tagColor };
+const legacy = { id: 'legacy', profileId: '', profileName: '旧会话', groupName: project.name, terminalType: 'powershell' };
 await recreate(legacy);
-// 无快照的旧会话按预设参数回退启动（projectStartupCommand 已随 825f2da 移除）
-assert.deepEqual(calls[0], ['powershell', 0, 0, project.path, legacy.profileName, preset.params, undefined, undefined, project.name]);
+// 无快照的旧项目会话仍从项目路径重建空白终端。
+assert.deepEqual(calls[0], ['powershell', 0, 0, project.path, legacy.profileName, undefined, project.name]);
 console.log('PASS: 无快照旧项目会话兼容');
 const profile = { id: 'profile', terminalType: 'powershell', startupPath: '', group: project.name };
 const configured = { ...legacy, profileId: profile.id, extraParams: '--verbose', extraParamMode: 'append' };
 let configuredArgs;
 await recreate(configured, [profile], (...args) => { configuredArgs = args; });
-assert.deepEqual(configuredArgs, [profile, '--verbose', preset.name, legacy.profileName, preset.name, preset.tagColor, 'append']);
+assert.deepEqual(configuredArgs, [profile, '--verbose', '旧会话', 'append']);
 for (const session of [
   { ...legacy, sessionType: 'editor' }, { ...legacy, terminalType: 'ssh' },
   { ...legacy, groupName: undefined }, { ...legacy, profileId: 'missing-profile' },

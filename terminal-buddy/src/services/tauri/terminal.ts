@@ -6,8 +6,8 @@ import type { ExtraParamMode } from '../../types';
 import type { AiTokenUsage } from './aiChat';
 
 // Terminal Commands
-export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number, displayName?: string, startupPath?: string, extraParamTag?: string, extraParamTagColor?: string | null, extraStartupMode?: ExtraParamMode, injectClaudeHooks?: boolean): Promise<string> {
-  return invoke('start_terminal', { profileId, displayName: displayName || null, extraStartupParams: extraStartupParams || null, extraStartupMode: extraStartupMode || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null, extraParamTag: extraParamTag || null, extraParamTagColor: extraParamTagColor ?? null, injectClaudeHooks: injectClaudeHooks ?? null });
+export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number, displayName?: string, startupPath?: string, extraStartupMode?: ExtraParamMode, injectClaudeHooks?: boolean): Promise<string> {
+  return invoke('start_terminal', { profileId, displayName: displayName || null, extraStartupParams: extraStartupParams || null, extraStartupMode: extraStartupMode || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null, injectClaudeHooks: injectClaudeHooks ?? null });
 }
 
 export async function updateTerminalDisplayName(id: string, displayName: string): Promise<void> {
@@ -63,9 +63,9 @@ export async function onClaudeNotificationActivated(callback: (terminalId: strin
   return listenTauri<string>('claude-notification-activated', callback);
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string, initialCommand?: string, extraParamTag?: string, extraParamTagColor?: string | null, groupName?: string, injectClaudeHooks?: boolean): Promise<string> {
+export async function startBlankTerminal(terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string, initialCommand?: string, groupName?: string, injectClaudeHooks?: boolean): Promise<string> {
   // groupName 写入后端分组（项目启动传项目名），容器重启恢复后手机端才能按项目分组。
-  return invoke('start_blank_terminal', { terminalType, displayName: displayName || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null, initialCommand: initialCommand || null, extraParamTag: extraParamTag || null, extraParamTagColor: extraParamTagColor ?? null, groupOverride: groupName || null, injectClaudeHooks: injectClaudeHooks ?? null });
+  return invoke('start_blank_terminal', { terminalType, displayName: displayName || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null, initialCommand: initialCommand || null, groupOverride: groupName || null, injectClaudeHooks: injectClaudeHooks ?? null });
 }
 
 /** 后端存活终端（与 Rust `TerminalInfo` 的 camelCase 序列化一致）。 */
@@ -78,8 +78,6 @@ export interface BackendTerminalInfo {
   terminalType: string;
   loadingMode: string;
   owner: 'pc' | 'web';
-  extraParamTag?: string;
-  extraParamTagColor?: string;
   extraStartupParams?: string;
   extraStartupMode?: ExtraParamMode;
   /** 会话当前目录（启动目录或最近 cd 上报），跨端跟随文件导航/会话历史用。 */

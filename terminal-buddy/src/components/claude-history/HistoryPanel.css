@@ -386,26 +386,6 @@
   min-width: 0;
 }
 
-/* 启动参数预设名色块，与配置右键的 .config-nav-preset-chip 同款 */
-.claude-hist-context-chip {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 6px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  color: #fff;
-  background: var(--accent);
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
-  max-width: 120px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 .claude-hist-context-item:hover {
   background: var(--accent);
   color: var(--accent-contrast);

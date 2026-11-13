@@ -190,8 +190,6 @@ pub struct TerminalInstance {
     /// 变成空串，Web 端「以此配置新建终端」的本地 Shell 判定随之失效。
     pub terminal_type: String,
     takeover: crate::models::TerminalTakeover,
-    pub extra_param_tag: Option<String>,
-    pub extra_param_tag_color: Option<String>,
     /// 启动时使用的额外参数（快照，供 Web 端「以此配置新建终端」复用）
     pub extra_startup_params: Option<String>,
     /// 额外参数模式：append / independent
@@ -897,8 +895,6 @@ struct NewTerminalSpec {
     group_override: Option<String>,
     owner: TerminalOwner,
     creator: TerminalCreator,
-    extra_param_tag: Option<String>,
-    extra_param_tag_color: Option<String>,
     extra_startup_params: Option<String>,
     extra_startup_mode: Option<String>,
     /// 仅用于失败日志定位，不含凭据。
@@ -1232,8 +1228,6 @@ impl TerminalService {
             creator: TerminalCreator,
             terminal_type: String,
             group_override: Option<String>,
-            extra_param_tag: Option<String>,
-            extra_param_tag_color: Option<String>,
             extra_startup_params: Option<String>,
             extra_startup_mode: Option<String>,
             current_directory: Option<String>,
@@ -1251,8 +1245,6 @@ impl TerminalService {
                     creator: inst.creator,
                     terminal_type: inst.terminal_type.clone(),
                     group_override: inst.group_override.clone(),
-                    extra_param_tag: inst.extra_param_tag.clone(),
-                    extra_param_tag_color: inst.extra_param_tag_color.clone(),
                     extra_startup_params: inst.extra_startup_params.clone(),
                     extra_startup_mode: inst.extra_startup_mode.clone(),
                     current_directory: inst.current_directory.clone(),
@@ -1271,8 +1263,6 @@ impl TerminalService {
                      creator,
                      terminal_type,
                      group_override,
-                     extra_param_tag,
-                     extra_param_tag_color,
                      extra_startup_params,
                      extra_startup_mode,
                      current_directory,
@@ -1301,8 +1291,6 @@ impl TerminalService {
                         profile_id,
                         owner,
                         creator,
-                        extra_param_tag,
-                        extra_param_tag_color,
                         extra_startup_params,
                         extra_startup_mode,
                         directory: current_directory,
@@ -1337,8 +1325,6 @@ impl TerminalService {
             group_override,
             owner,
             creator,
-            extra_param_tag,
-            extra_param_tag_color,
             extra_startup_params,
             extra_startup_mode,
             terminal_type,
@@ -1401,8 +1387,6 @@ impl TerminalService {
             owner,
             creator,
             terminal_type,
-            extra_param_tag,
-            extra_param_tag_color,
             extra_startup_params,
             extra_startup_mode,
             current_directory: startup_path.clone(),
@@ -1446,8 +1430,6 @@ impl TerminalService {
         initial_rows: u16,
         initial_cols: u16,
         startup_path_override: Option<&str>,
-        extra_param_tag: Option<&str>,
-        extra_param_tag_color: Option<&str>,
         // 历史会话恢复：命令没有模型引用时补一份只含 hooks 的临时 `--settings`。
         // 普通新建终端不传，行为保持不变。
         inject_claude_hooks: bool,
@@ -1556,8 +1538,6 @@ impl TerminalService {
                 group_override: None,
                 owner,
                 creator,
-                extra_param_tag: extra_param_tag.map(str::to_string),
-                extra_param_tag_color: extra_param_tag_color.map(str::to_string),
                 extra_startup_params: extra_startup_params.map(str::to_string),
                 extra_startup_mode: extra_startup_mode.map(str::to_string),
                 terminal_type: terminal_type.to_string(),
@@ -1813,8 +1793,6 @@ impl TerminalService {
         startup_path: Option<&str>,
         // 排在 shell 启动命令之后、同一批次写入的额外命令（如 `claude --resume`）。
         initial_command: Option<&str>,
-        extra_param_tag: Option<&str>,
-        extra_param_tag_color: Option<&str>,
         // 历史会话恢复：没有模型引用的 Claude 命令补一份只含 hooks 的临时
         // `--settings`。普通空白终端不传，行为保持不变。
         inject_claude_hooks: bool,
@@ -1930,8 +1908,6 @@ impl TerminalService {
                     .map(str::to_string),
                 owner,
                 creator,
-                extra_param_tag: extra_param_tag.map(str::to_string),
-                extra_param_tag_color: extra_param_tag_color.map(str::to_string),
                 // 保留原始启动命令，摘要生成前及刷新页面后也能识别工具和模型。
                 extra_startup_params: initial_command
                     .map(str::trim)
@@ -1986,8 +1962,6 @@ impl TerminalService {
             creator: TerminalCreator::Desktop,
             // handoff 的基座是 cmd.exe，与下方 terminal-created 事件的 "cmd" 一致
             terminal_type: "cmd".to_string(),
-            extra_param_tag: None,
-            extra_param_tag_color: None,
             extra_startup_params: None,
             extra_startup_mode: None,
             // handoff 会话接管的是外部已运行的终端，无从得知其目录，等前端 cd 检测后上报。
@@ -2038,8 +2012,6 @@ pub async fn start_terminal(
     initial_rows: u16,
     initial_cols: u16,
     startup_path: Option<String>,
-    extra_param_tag: Option<String>,
-    extra_param_tag_color: Option<String>,
     // 恢复历史会话时置 true：命令不带模型引用也能拿到 hooks 临时 settings。
     inject_claude_hooks: Option<bool>,
     app: AppHandle,
@@ -2055,8 +2027,6 @@ pub async fn start_terminal(
             initial_rows,
             initial_cols,
             startup_path.as_deref(),
-            extra_param_tag.as_deref(),
-            extra_param_tag_color.as_deref(),
             inject_claude_hooks.unwrap_or(false),
             app,
             TerminalOwner::Pc,
@@ -2176,8 +2146,6 @@ pub async fn start_blank_terminal(
     initial_cols: u16,
     startup_path: Option<String>,
     initial_command: Option<String>,
-    extra_param_tag: Option<String>,
-    extra_param_tag_color: Option<String>,
     // 项目启动的空白终端需要把项目名写入后端分组，容器重启恢复后
     // 手机端 `GET /terminals` 才能继续按项目分组展示。
     group_override: Option<String>,
@@ -2196,8 +2164,6 @@ pub async fn start_blank_terminal(
             initial_cols,
             startup_path.as_deref(),
             initial_command.as_deref(),
-            extra_param_tag.as_deref(),
-            extra_param_tag_color.as_deref(),
             inject_claude_hooks.unwrap_or(false),
             app,
             TerminalOwner::Pc,

@@ -134,7 +134,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     ? tab.directory
     : undefined;
   const terminalId = tab.profileId
-    ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath, undefined, undefined, launchMode)
+    ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath, launchMode)
     : await startBlankTerminal(
       blankTerminalType,
       estRows,
@@ -142,8 +142,6 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
       startupPath,
       tab.profileName,
       blankCommand,
-      undefined,
-      undefined,
       // 项目启动的空白终端依靠分组名归位；不传的话容器重启后会掉进“默认”。
       tab.groupName,
     );
@@ -160,8 +158,6 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     startupPath: tab.startupPath,
     extraParams: tab.profileId ? baseParams : tab.extraParams,
     extraParamMode: tab.extraParamMode,
-    extraParamTag: tab.extraParamTag,
-    extraParamTagColor: tab.extraParamTagColor ?? null,
     manualTitle: tab.manualTitle,
   }, true);
   // 统一回填 Agent 会话绑定；旧 claudeSessionId 同步派生。
@@ -520,8 +516,6 @@ export async function reconcileBackendSessions() {
         groupName: existingSession.groupName || terminal.group || undefined,
         extraParams: terminal.extraStartupParams ?? existingSession.extraParams,
         extraParamMode: terminal.extraStartupMode ?? existingSession.extraParamMode,
-        extraParamTag: terminal.extraParamTag ?? existingSession.extraParamTag,
-        extraParamTagColor: terminal.extraParamTagColor ?? existingSession.extraParamTagColor,
         // 旧快照可能存了空 terminalType（旧版后端广播空串），对账时按后端真值回填。
         ...(existingSession.terminalType
           ? {}
@@ -551,8 +545,6 @@ export async function reconcileBackendSessions() {
       owner: terminal.owner,
       extraParams: terminal.extraStartupParams,
       extraParamMode: terminal.extraStartupMode,
-      extraParamTag: terminal.extraParamTag,
-      extraParamTagColor: terminal.extraParamTagColor,
     }, keepActive);
     if (terminal.directory) {
       useAppStore.getState().setSessionDirectory(terminal.id, terminal.directory, { skipRemoteSync: true });

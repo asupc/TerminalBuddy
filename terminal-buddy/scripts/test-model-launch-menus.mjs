@@ -36,10 +36,10 @@ function hooks() {
       return [values[index], value => { values[index] = typeof value === 'function' ? value(values[index]) : value; }];
     },
     useRef(initial) { return refs[refIndex++] ??= { current: initial }; },
-    useMemo: compute => compute(),
-    useCallback: callback => callback,
+    useMemo(compute) { return compute(); },
+    useCallback(callback) { return callback; },
     useEffect: effect => effects.push(effect),
-    useLayoutEffect() {},
+    useLayoutEffect(effect) { effect(); },
   };
 }
 function nodes(tree) {
@@ -51,16 +51,20 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const claude = load('src/utils/claudeLaunch.ts');
 const codex = load('src/utils/codexLaunch.ts', { './claudeLaunch': claude });
 const claudeRef = load('src/services/tauri/claudeEnhance.ts', { '@tauri-apps/api/core': {} });
+const openAgentChat = { openNewAgentSession: async () => {} };
+const agentCommands = load('src/utils/agentCommands.ts', {
+  './claudeLaunch': claude, './codexLaunch': codex,
+  '../stores/appStore': { useAppStore: { getState: () => ({ agentCommands: { claude: claude.DEFAULT_CLAUDE_COMMAND, codex: codex.DEFAULT_CODEX_COMMAND } }) } },
+});
 const types = load('src/types/index.ts');
 const projectPath = load('src/utils/projectPath.ts', { '../services/platform': { serverUsesWindowsPaths: () => false } });
-const startupPresets = load('src/utils/startupPresets.ts');
 const TreeView = () => null;
 const ClaudeModelMenuSection = () => null;
 const event = { preventDefault() {}, stopPropagation() {}, clientX: 30, clientY: 40,
   currentTarget: { getBoundingClientRect: () => ({ left: 30, bottom: 40 }) } };
 
-function desktop(command, kind = 'profile', terminalType = 'cmd') {
-  return desktopWithProject({ name: '测试项目', path: '/test/project', startupCommand: command })(command, kind, terminalType);
+function desktop(command, kind = 'profile', terminalType = 'cmd', enabledAgents = undefined) {
+  return desktopWithProject({ name: '测试项目', path: '/test/project', startupCommand: command, enabledAgents })(command, kind, terminalType);
 }
 
 function desktopWithProject(project) {
@@ -68,7 +72,8 @@ function desktopWithProject(project) {
   const react = hooks(), launches = [], settings = [];
   const profile = { id: 'profile', name: '测试命令', group: project.name, terminalType, startupPath: '', startupCommands: [command] };
   const state = {
-    profiles: [profile], projects: [project], extraParamPresets: [], configSearchQuery: '',
+    profiles: [profile], projects: [project], configSearchQuery: '',
+    refreshClaudeLaunchTargets: async () => {}, refreshCodexLaunchTargets: async () => {},
     selectProfile() {}, setProviderSettingsTab: source => settings.push(source), openSettingsDialog() {},
   };
   const useAppStore = selector => selector(state);
@@ -77,17 +82,31 @@ function desktopWithProject(project) {
     react,
     '../../stores/appStore': { useAppStore },
     '../../utils/openTerminalInDir': { openProjectAgentTerminal: async () => {} },
-    '../../utils/startupPresets': startupPresets, '../../types': types,
+    '../../utils/openAgentChat': openAgentChat,
+    '../../utils/agentCommands': agentCommands,
+    '../../hooks/useAgentAvailability': { useAgentAvailability: () => ({ claude: true, codex: true }) },
+    '../../types': types,
     './ClaudeModelMenuSection': { ClaudeModelMenuSection },
   });
+  const ProjectContextMenu = load('src/components/shared/ProjectContextMenu.tsx', {
+    react,
+    '../../stores/appStore': { useAppStore },
+    '../../services/tauri': claudeRef,
+    '../../services/platform': { supportsSystemExplorerOpen: () => false },
+    '../../utils/contextMenu': { fitContextMenuToViewport: ({ x, y }) => ({ x, y }) },
+    './ProjectLaunchMenuItems': launchMenu,
+  }).ProjectContextMenu;
   const { ConfigNav } = load('src/components/profile-config/ConfigNav.tsx', {
     react, '../../stores/appStore': { useAppStore }, '../../services/tauri': claudeRef,
     '../../utils/openTerminalInDir': { openTerminalInDir: async (...args) => launches.push(args) },
-    '../../utils/startupPresets': startupPresets, '../../utils/contextMenu': {}, '../../utils/terminalResizeEvent': {},
+    '../../utils/contextMenu': {}, '../../utils/terminalResizeEvent': {},
     '../../utils/codexLaunch': codex, '../../utils/claudeLaunch': claude,
+    '../../utils/agentCommands': agentCommands,
     '../file-explorer/TreeView': { TreeView }, '../shared/Dialog': {},
     '../shared/ClaudeModelMenuSection': { ClaudeModelMenuSection },
-    '../shared/ProjectLaunchMenuItems': launchMenu, '@tauri-apps/plugin-dialog': {},
+    '../shared/ProjectLaunchMenuItems': launchMenu, '../shared/ProjectContextMenu': { ProjectContextMenu },
+    '../shared/ProjectEditDialog': {}, '../shared/ProjectDeleteDialog': {},
+    '@tauri-apps/plugin-dialog': {},
     '../../types': types,
     '../../utils/projectPath': projectPath, '../../services/platform': { isDockerClient: () => false, supportsSystemExplorerOpen: () => false },
   });
@@ -97,14 +116,20 @@ function desktopWithProject(project) {
   }
   const tree = nodes(render()).find(node => node.type === TreeView);
   tree.props.onContextMenu(event, kind === 'profile' ? { data: profile } : { isGroup: true, id: project.name });
-  const menu = nodes(render()).find(node => node.props.className === 'context-menu');
-  // 分组菜单的模型区在 ProjectLaunchMenuItems 子组件里，手动展开一层再收集 sections。
-  const menuNodes = kind === 'group'
-    ? nodes(menu).flatMap(node => node.type === launchMenu.ProjectLaunchMenuItems ? [node, ...nodes(node.type(node.props))] : [node])
-    : nodes(menu);
-  const sections = menuNodes.filter(node => node.type === ClaudeModelMenuSection);
+  const rendered = nodes(render());
+  let launchNodes = [];
+  if (kind === 'group') {
+    const projectMenu = rendered.find(node => node.type === ProjectContextMenu);
+    const projectMenuNodes = nodes(ProjectContextMenu(projectMenu.props));
+    const launchElement = projectMenuNodes.find(node => node.type === launchMenu.ProjectLaunchMenuItems);
+    launchNodes = [...projectMenuNodes, ...nodes(launchMenu.ProjectLaunchMenuItems(launchElement.props))];
+  } else {
+    const profileMenu = rendered.find(node => node.props?.className === 'context-menu');
+    launchNodes = nodes(profileMenu);
+  }
+  const sections = launchNodes.filter(node => node.type === ClaudeModelMenuSection);
   if (sections.length) {
-    assert.ok(menuNodes.indexOf(sections[0]) > menuNodes.findIndex(node => node.props.children === '命令行'));
+    assert.ok(launchNodes.indexOf(sections[0]) > launchNodes.findIndex(node => node.props?.children === '命令行'));
   }
   return { sections, launches, settings, profile, project };
   };
@@ -118,7 +143,8 @@ for (const kind of ['profile', 'group']) {
     ['CLAUDE.CMD --resume session', ['claude', 'codex']],
     ['"codex.exe" --sandbox read-only', ['codex', 'claude']],
   ]) {
-    const d = desktop(command, kind);
+    const enabledAgents = kind === 'group' ? { claude: true, codex: true } : undefined;
+    const d = desktop(command, kind, 'cmd', enabledAgents);
     // profile 按 profile 启动命令推导顺序；group 固定按项目启用顺序（claude → codex）。
     assert.deepEqual(d.sections.map(section => section.props.source), kind === 'profile' ? order : ['claude', 'codex']);
     for (const source of ['claude', 'codex']) {
@@ -132,7 +158,7 @@ for (const kind of ['profile', 'group']) {
         const dc = d.launches.at(-1);
         assert.equal(dc[0], d.profile);
         assert.equal(dc[1], expected);
-        assert.equal(dc[6], 'independent', '配置模型启动应替换整条原命令');
+        assert.equal(dc[3], 'independent', '配置模型启动应替换整条原命令');
       }
       ds.props.onGotoProviders();
       assert.equal(d.settings.at(-1), source);

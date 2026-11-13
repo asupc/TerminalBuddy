@@ -31,7 +31,6 @@ export const ProjectContextMenu: FC<ProjectContextMenuProps> = ({
 }) => {
   const projects = useAppStore(s => s.projects);
   const profiles = useAppStore(s => s.profiles);
-  const extraParamPresets = useAppStore(s => s.extraParamPresets);
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
 
@@ -46,7 +45,7 @@ export const ProjectContextMenu: FC<ProjectContextMenuProps> = ({
     const { width: menuWidth, height: menuHeight } = menu.getBoundingClientRect();
     const next = fitContextMenuToViewport(x, y, menuWidth, menuHeight);
     setPos(prev => (prev.x === next.x && prev.y === next.y ? prev : next));
-  }, [x, y, extraParamPresets, projects, profiles]);
+  }, [x, y, projects, profiles]);
 
   useEffect(() => {
     const close = () => onClose();
@@ -66,7 +65,7 @@ export const ProjectContextMenu: FC<ProjectContextMenuProps> = ({
     <div ref={menuRef} className="context-menu" style={{ left: pos.x, top: pos.y }} onMouseDown={(e) => e.stopPropagation()}>
       {project && projectPath && (
         <>
-          {/* 启动区（命令行 / 预设 / Agent 模型）与会话标签栏「新建配置终端」悬停菜单共用 */}
+          {/* 启动区（命令行 / Agent 模型）与会话标签栏「新建配置终端」悬停菜单共用 */}
           <ProjectLaunchMenuItems project={project} onLaunched={onClose} />
           <div className="context-menu-separator" />
           {supportsSystemExplorerOpen() && (

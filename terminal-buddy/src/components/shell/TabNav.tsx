@@ -7,7 +7,6 @@ import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWi
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getIndicatorLight, getIndicatorClassName, getIndicatorColor, getIndicatorTitle, getNativeAgentLight } from '../../utils/claudeIndicator';
-import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
@@ -28,7 +27,7 @@ interface TabSidebarProps {
   isActive: boolean;
   isSidebarMode: boolean;
   profiles: Profile[];
-  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, tabName?: string, extraParamMode?: ExtraParamMode) => void;
   onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => void;
   onStartTextEditor: () => void;
   /** 「添加配置」入口：与会话标签栏分组右键菜单共用配置编辑弹窗。 */
@@ -283,9 +282,6 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
             }
             const session = leaf.session;
             const isEditor = session.sessionType === 'editor';
-            const profile = profiles.find(profile => profile.id === session.profileId);
-            const hasTaskLabel = !isEditor && Boolean(taskSummaries[session.id]
-              || getTaskLaunchInfo(session.extraParams, profile?.startupCommands, session.extraParamMode));
             return {
               id: session.id,
               label: session.profileName,
@@ -313,15 +309,6 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                           />
                         );
                       })()}
-                      {session.extraParamTag && !hasTaskLabel && (
-                        <span
-                          className="tab-nav-tag-chip"
-                          style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
-                          title="启动参数预设"
-                        >
-                          {session.extraParamTag}
-                        </span>
-                      )}
                     </>
                   )}
                 </>

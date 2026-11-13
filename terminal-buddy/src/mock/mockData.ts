@@ -1,7 +1,6 @@
 import type {
   Profile,
   Project,
-  ExtraParamPreset,
   ServerStats,
 } from '../types';
 import type {
@@ -161,47 +160,7 @@ export const MOCK_PROJECTS: Project[] = [
   },
 ];
 
-// ==================== 3. 启动参数预设 (Extra Param Presets) ====================
-export const MOCK_EXTRA_PARAM_PRESETS: ExtraParamPreset[] = [
-  {
-    id: 'preset-dev',
-    name: '开发环境 (Dev)',
-    params: '--mode development --port 3000',
-    mode: 'append',
-    commandMatch: 'pnpm|npm|yarn|vite',
-    tagColor: '#10b981',
-    enabled: true,
-  },
-  {
-    id: 'preset-staging',
-    name: '预发布测试 (Staging)',
-    params: '--mode staging --mock=false',
-    mode: 'append',
-    commandMatch: 'pnpm|npm|yarn|vite',
-    tagColor: '#3b82f6',
-    enabled: true,
-  },
-  {
-    id: 'preset-debug',
-    name: '调试模式 (Debug)',
-    params: '-Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5005',
-    mode: 'append',
-    commandMatch: 'mvn|java|spring-boot',
-    tagColor: '#ef4444',
-    enabled: true,
-  },
-  {
-    id: 'preset-k8s-watch',
-    name: '实时监控 (Watch)',
-    params: '--watch -o wide',
-    mode: 'append',
-    commandMatch: 'kubectl',
-    tagColor: '#8b5cf6',
-    enabled: true,
-  },
-];
-
-// ==================== 4. 终端 ANSI 彩色输出数据 ====================
+// ==================== 3. 终端 ANSI 彩色输出数据 ====================
 export const MOCK_TERMINAL_OUTPUTS: Record<string, string> = {
   'term-vue-admin': [
     '\x1b[2J\x1b[H', // 清屏并定位到左上角

@@ -13,7 +13,7 @@ interface TabContextMenuProps {
   sessionId: string;
   sessions: TerminalSession[];
   profiles: Profile[];
-  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, tabName?: string, extraParamMode?: ExtraParamMode) => void;
   onClose: () => void;
   onRename: (session: TerminalSession | undefined) => void;
   onCloseSession: (sessionId: string) => void;
@@ -59,27 +59,19 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
               profile,
               // 从历史恢复的会话 extraParams 含 --resume，新建终端必须剥除，避免续接旧会话。
               withoutResumeArgs(session.extraParams),
-              session.extraParamTag,
               session.profileName,
-              session.extraParamTag,
-              session.extraParamTagColor,
               session.extraParamMode,
             );
           } else {
             const state = useAppStore.getState();
             // 兼容尚未记录启动快照的旧项目会话，优先使用会话保存的命令和目录。
             const project = state.projects.find(item => item.name === session.groupName);
-            const preset = session.extraParamTag
-              ? state.extraParamPresets.find(item => item.name === session.extraParamTag)
-              : undefined;
             const path = session.startupPath ?? (project?.path || state.sessionDirectories[sessionId]);
-            const command = withoutResumeArgs(session.extraParams) ?? preset?.params;
+            const command = withoutResumeArgs(session.extraParams);
             void openTerminalInDir(path, {
               command,
               name: session.profileName,
               groupName: session.groupName,
-              presetTag: session.extraParamTag,
-              presetTagColor: session.extraParamTagColor,
             }).catch(error => useAppStore.getState().showToast('启动终端失败：' + String(error), 'error'));
           }
           onClose();

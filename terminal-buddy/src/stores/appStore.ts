@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Profile, TerminalSession, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem, SessionHistoryProvider, AgentSessionBinding } from "../types";
+import type { Profile, TerminalSession, TabGroup, RemoteFileEntry, ServerStats, TransferItem, SessionHistoryProvider, AgentSessionBinding } from "../types";
 import { readClientData, writeClientData } from "../services/tauri";
 import { createProfilesSlice } from "./slices/profilesSlice";
 import { createFileTreeSlice } from "./slices/fileTreeSlice";
@@ -25,8 +25,6 @@ interface SavedTab {
 	startupPath?: string;
 	extraParams?: string;
 	extraParamMode?: "append" | "independent";
-	extraParamTag?: string;
-	extraParamTagColor?: string | null;
 	directory?: string;
 	/** 后端终端 ID（editor 页签没有）。浏览器重启后用它回查持久化的 Claude 会话 ID。 */
 	terminalId?: string;
@@ -146,8 +144,6 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 			startupPath: s.startupPath,
 			extraParams: s.extraParams,
 			extraParamMode: s.extraParamMode,
-			extraParamTag: s.extraParamTag,
-			extraParamTagColor: s.extraParamTagColor ?? null,
 			directory: dirs[s.id],
 			claudeSessionId: claudeIds[s.id],
 			agentSession: bindings[s.id],
@@ -215,8 +211,6 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 		startupPath: typeof tab.startupPath === "string" ? tab.startupPath : undefined,
 		extraParams: typeof tab.extraParams === "string" ? tab.extraParams : undefined,
 		extraParamMode: tab.extraParamMode === "independent" ? "independent" : tab.extraParamMode === "append" ? "append" : undefined,
-		extraParamTag: typeof tab.extraParamTag === "string" ? tab.extraParamTag : undefined,
-		extraParamTagColor: typeof tab.extraParamTagColor === "string" ? tab.extraParamTagColor : null,
 		directory: typeof tab.directory === "string" ? tab.directory : undefined,
 		terminalId,
 		claudeSessionId: typeof tab.claudeSessionId === "string" ? tab.claudeSessionId : undefined,
@@ -291,26 +285,6 @@ function normalizeSavedAgentTab(raw: unknown): SavedNativeAgentTab | null {
 		model: typeof tab.model === "string" ? tab.model : null,
 		openedAt: typeof tab.openedAt === "number" && Number.isFinite(tab.openedAt) ? tab.openedAt : Date.now(),
 	};
-}
-
-export async function initExtraParamPresets() {
-	try {
-		const raw = await readClientData("extra_param_presets");
-		if (raw) {
-			const parsed = JSON.parse(raw) as Array<Partial<ExtraParamPreset>>;
-			// 兼容旧数据：补齐后续版本新增的可选字段
-			const normalized: ExtraParamPreset[] = (Array.isArray(parsed) ? parsed : []).map((p) => ({
-				id: p.id ?? crypto.randomUUID(),
-				name: p.name ?? "",
-				params: p.params ?? "",
-				mode: p.mode === "independent" ? "independent" : "append",
-				tagColor: p.tagColor ?? null,
-				commandMatch: p.commandMatch ?? null,
-				enabled: p.enabled !== false,
-			}));
-			useAppStore.setState({ extraParamPresets: normalized });
-		}
-	} catch {}
 }
 
 export async function initFileTreeNav() {
@@ -524,13 +498,6 @@ export interface AppState {
 	// 拖拽中的 profile id（ConfigNav → TabNav 启动终端）
 	dragProfileId: string | null;
 	setDragProfileId: (id: string | null) => void;
-
-	// Extra param presets
-	extraParamPresets: ExtraParamPreset[];
-	addExtraParamPreset: (name: string, params: string, tagColor?: string | null, commandMatch?: string | null, mode?: "append" | "independent") => void;
-	updateExtraParamPreset: (id: string, patch: Partial<Omit<ExtraParamPreset, "id">>) => void;
-	removeExtraParamPreset: (id: string) => void;
-	reorderExtraParamPresets: (fromId: string, toId: string, position: "before" | "after") => void;
 
 	// Last click region for F2 routing
 	lastClickRegion: "config" | "tab" | "history" | null;

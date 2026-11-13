@@ -1,7 +1,6 @@
 import type { StoreApi } from "zustand";
 import type { AppState } from "../appStore";
 import type { TransferItem } from "../../types";
-import { writeClientData } from "../../services/tauri";
 
 const TRANSFER_STORAGE_KEY = "terminalbuddy_transfers";
 let _transferSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -28,42 +27,6 @@ function persistTransfers(transfers: TransferItem[], immediately = false) {
 export const createTransfersSlice = (
 	set: StoreApi<AppState>["setState"],
 ): Partial<AppState> => ({
-	// Extra param presets
-	extraParamPresets: [],
-	addExtraParamPreset: (name, params, tagColor = null, commandMatch = null, mode = "append") =>
-		set((state) => {
-			const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params, mode, tagColor, commandMatch, enabled: true }];
-			writeClientData("extra_param_presets", JSON.stringify(next)).catch(() => {});
-			return { extraParamPresets: next };
-		}),
-	updateExtraParamPreset: (id, patch) =>
-		set((state) => {
-			const next = state.extraParamPresets.map((p) => (p.id === id ? { ...p, ...patch } : p));
-			writeClientData("extra_param_presets", JSON.stringify(next)).catch(() => {});
-			return { extraParamPresets: next };
-		}),
-	removeExtraParamPreset: (id) =>
-		set((state) => {
-			const next = state.extraParamPresets.filter((p) => p.id !== id);
-			writeClientData("extra_param_presets", JSON.stringify(next)).catch(() => {});
-			return { extraParamPresets: next };
-		}),
-	reorderExtraParamPresets: (fromId, toId, position) =>
-		set((state) => {
-			const list = state.extraParamPresets;
-			const fromIndex = list.findIndex((p) => p.id === fromId);
-			const toIndex = list.findIndex((p) => p.id === toId);
-			if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return {};
-			const next = [...list];
-			const [moved] = next.splice(fromIndex, 1);
-			// splice 后 toIndex 可能漂移：若移除点在目标之前，需要回退 1
-			const adjustedTarget = fromIndex < toIndex ? toIndex - 1 : toIndex;
-			const insertAt = position === "after" ? adjustedTarget + 1 : adjustedTarget;
-			next.splice(insertAt, 0, moved);
-			writeClientData("extra_param_presets", JSON.stringify(next)).catch(() => {});
-			return { extraParamPresets: next };
-		}),
-
 	// Server stats
 	serverStats: null,
 	setServerStats: (stats) => set({ serverStats: stats }),

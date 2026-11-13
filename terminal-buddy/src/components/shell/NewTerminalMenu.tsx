@@ -6,7 +6,6 @@ import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ProjectLaunchMenuItems } from '../shared/ProjectLaunchMenuItems';
 import type { ExtraParamMode, Profile, Project } from '../../types';
-import { matchingStartupPresets } from '../../utils/startupPresets';
 
 interface NewTerminalMenuProps {
   x: number;
@@ -18,7 +17,7 @@ interface NewTerminalMenuProps {
   visibleSubmenuItems: TreeItem[];
   menuRef: React.RefObject<HTMLDivElement | null>;
   submenuRef: React.RefObject<HTMLDivElement | null>;
-  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, tabName?: string, extraParamMode?: ExtraParamMode) => void;
   onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => void;
   onStartTextEditor: () => void;
   onCloseAllTabs: () => void;
@@ -49,14 +48,11 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
   onCloseAllTabs,
   onClose,
 }) => {
-  const presets = useAppStore(state => state.extraParamPresets);
   const projects = useAppStore(state => state.projects);
   // 子菜单紧贴「新建配置终端」行右侧展开（右侧放不下时翻到左侧），顶部与该行对齐。
   const [submenuPos, setSubmenuPos] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
-  const [hoveredTarget, setHoveredTarget] = useState<{ target: Profile; pos: HoverMenuPos } | null>(null);
   const [hoveredProject, setHoveredProject] = useState<{ project: Project; pos: HoverMenuPos } | null>(null);
   const hoverTimerRef = useRef<number | null>(null);
-  const matchingPresets = (target: Profile) => matchingStartupPresets(presets, target.startupCommands);
 
   // 三级浮动菜单延迟展开：鼠标只是扫过配置行时不要立刻弹层，
   // 也避免鼠标从行移向浮层途中经过其它行导致面板来回跳动。
@@ -75,7 +71,6 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
       window.clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;
     }
-    setHoveredTarget(null);
     setHoveredProject(null);
   };
 
@@ -143,10 +138,9 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
       return;
     }
     const rowBounds = row.getBoundingClientRect();
-    // 项目分组行：展开与「项目与命令」右键同步的启动菜单（命令行 / 预设 / Agent 模型）。
+    // 项目分组行：展开与「项目与命令」右键同步的启动菜单（命令行 / Agent 模型）。
     const projectId = marker.dataset.projectId;
     if (projectId) {
-      setHoveredTarget(null);
       const project = projects.find(p => p.name === projectId && p.path);
       if (!project) {
         clearHoverMenus();
@@ -157,15 +151,7 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
         ? current : { project, pos }));
       return;
     }
-    setHoveredProject(null);
-    const target = visibleSubmenuItems.find(item => item.id === marker.dataset.profileId)?.data as Profile | undefined;
-    if (!target || matchingPresets(target).length === 0) {
-      clearHoverMenus();
-      return;
-    }
-    const pos = hoverMenuPos(rowBounds, 190);
-    scheduleHover(() => setHoveredTarget(current => current?.target === target && sameMenuPos(current.pos, pos)
-      ? current : { target, pos }));
+    clearHoverMenus();
   };
 
   return (
@@ -177,7 +163,6 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
         style={{ left: x, top: y }}
         onMouseOver={event => {
           if (!(event.target as HTMLElement).closest('.has-submenu')) {
-            setHoveredTarget(null);
             setHoveredProject(null);
           }
         }}
@@ -192,7 +177,7 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
           文本编辑器
         </div>
         <div
-          className={`context-menu-item has-submenu${hoveredTarget || hoveredProject ? ' submenu-active' : ''}`}
+          className={`context-menu-item has-submenu${hoveredProject ? ' submenu-active' : ''}`}
           onMouseEnter={handleSubmenuAnchor}
           onMouseLeave={clearHoverMenus}
         >
@@ -225,13 +210,6 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
                       </span>
                     ) : null;
                   }
-                  if (item.data && 'group' in (item.data as object)) {
-                    return (
-                      <span data-profile-id={(item.data as Profile).id} className="submenu-profile-end">
-                        {matchingPresets(item.data as Profile).length > 0 && <span className="submenu-arrow">›</span>}
-                      </span>
-                    );
-                  }
                   return null;
                 }}
                 className="submenu-tree"
@@ -239,26 +217,9 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
               />
             </div>
           </div>
-          {hoveredTarget && (
-            <div
-              className="new-terminal-preset-menu"
-              style={{ left: hoveredTarget.pos.left, top: hoveredTarget.pos.top, bottom: hoveredTarget.pos.bottom, maxHeight: hoveredTarget.pos.maxHeight }}
-            >
-              {matchingPresets(hoveredTarget.target).map(preset => (
-                <div key={preset.id} className="context-menu-item" onClick={event => {
-                  event.stopPropagation();
-                  onStartTerminal(hoveredTarget.target, preset.params, preset.name, undefined, preset.name, preset.tagColor, preset.mode);
-                  onClose();
-                }}>
-                  <span className="new-terminal-preset-dot" style={{ backgroundColor: preset.tagColor || 'var(--accent)' }} />
-                  <span className="new-terminal-preset-name">{preset.name}</span>
-                </div>
-              ))}
-            </div>
-          )}
           {hoveredProject && (
             <div
-              className="new-terminal-preset-menu new-terminal-project-menu"
+              className="new-terminal-project-menu"
               style={{ left: hoveredProject.pos.left, top: hoveredProject.pos.top, bottom: hoveredProject.pos.bottom, maxHeight: hoveredProject.pos.maxHeight }}
             >
               <ProjectLaunchMenuItems project={hoveredProject.project} onLaunched={onClose} />

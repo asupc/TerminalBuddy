@@ -1,7 +1,6 @@
 import {
   MOCK_PROFILES,
   MOCK_PROJECTS,
-  MOCK_EXTRA_PARAM_PRESETS,
   MOCK_TERMINAL_OUTPUTS,
   MOCK_FILE_NODES,
   MOCK_FILE_CONTENTS,
@@ -69,8 +68,6 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
         owner: 'pc',
         startupPath: 'D:\\Projects\\shop-admin',
         directory: 'D:\\Projects\\shop-admin',
-        extraParamTag: 'DEV',
-        extraParamTagColor: '#10b981',
       },
       {
         profileId: 'prof-centos-ssh',
@@ -107,8 +104,6 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
         owner: 'pc',
         startupPath: 'D:\\Backend\\order-service',
         directory: 'D:\\Backend\\order-service',
-        extraParamTag: 'DBG',
-        extraParamTagColor: '#ef4444',
       },
     ],
     activeIndex: 0,
@@ -137,7 +132,6 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
         sakura: 0,
       },
     }),
-    extra_param_presets: JSON.stringify(MOCK_EXTRA_PARAM_PRESETS),
   };
 
   // 4. 活跃终端管理
@@ -151,8 +145,6 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
     terminalType: 'powershell',
     loadingMode: 'none',
     owner: 'pc',
-    extraParamTag: 'DEV',
-    extraParamTagColor: '#10b981',
   });
   activeTerminals.set('term-centos-ssh', {
     id: 'term-centos-ssh',
@@ -180,8 +172,6 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
     terminalType: 'cmd',
     loadingMode: 'none',
     owner: 'pc',
-    extraParamTag: 'DBG',
-    extraParamTagColor: '#ef4444',
   });
 
   let termCounter = 1;
@@ -259,12 +249,6 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
       case 'save_app_settings':
         return null;
 
-      // ===== Extra Param Presets =====
-      case 'get_extra_param_presets':
-        return [...MOCK_EXTRA_PARAM_PRESETS];
-      case 'save_extra_param_presets':
-        return null;
-
       // ===== Templates & History =====
       case 'get_command_templates':
       case 'init_command_templates':
@@ -303,8 +287,6 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
           terminalType: prof?.terminalType || 'powershell',
           loadingMode: 'none',
           owner: 'pc',
-          extraParamTag: args.extraParamTag,
-          extraParamTagColor: args.extraParamTagColor,
         });
         return id;
       }
@@ -524,54 +506,6 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
       case 'save_web_api_settings':
       case 'restart_web_server':
         return null;
-
-      // ===== Bot Notification =====
-      case 'get_bot_settings':
-        return {
-          enabled: true,
-          sendDecisionNotifications: true,
-          sendCompletionNotifications: true,
-          decisionTtlMinutes: 10,
-          appendEnter: true,
-          channels: [
-            {
-              id: 'bot-feishu-prod',
-              name: '飞书运维告警通道 (长连接)',
-              platform: 'feishu',
-              enabled: true,
-              targetId: 'oc_8492048f9a21b34e56c',
-              receiveIdType: 'chat_id',
-              webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/xxx',
-              appId: 'cli_a1b2c3d4e5f6',
-              secret: '******',
-              callbackToken: '******',
-              allowedUserIds: [],
-              hasSecret: true,
-              hasCallbackToken: true,
-            },
-            {
-              id: 'bot-dingtalk-dev',
-              name: '钉钉研发通知机器人',
-              platform: 'dingtalk',
-              enabled: true,
-              targetId: '',
-              receiveIdType: 'webhook',
-              webhookUrl: 'https://oapi.dingtalk.com/robot/send?access_token=xxx',
-              appId: '',
-              secret: '******',
-              callbackToken: '',
-              allowedUserIds: [],
-              hasSecret: true,
-              hasCallbackToken: false,
-            },
-          ],
-        };
-      case 'get_bot_long_connection_status':
-        return [
-          { channelId: 'bot-feishu-prod', state: 'connected' },
-        ];
-      case 'get_bot_callback_base_url':
-        return 'http://192.168.10.88:9600/api/bot/callback';
 
       // ===== Updates & System =====
       case 'check_app_update':

@@ -311,15 +311,6 @@ export const TerminalTabBar: FC = () => {
             />
           ) : (
             <>
-              {session.extraParamTag && session.sessionType !== 'editor' && (
-                <span
-                  className="terminal-tab-tag-chip"
-                  style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
-                  title="启动参数预设"
-                >
-                  {session.extraParamTag}
-                </span>
-              )}
               {session.sessionType !== 'editor' && (() => {
                 const params = session.extraParams ?? '';
                 const modelRef = parseCodexRef(params) ?? parseClaudeRef(params);

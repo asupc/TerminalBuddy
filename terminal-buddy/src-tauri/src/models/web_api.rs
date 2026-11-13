@@ -99,10 +99,6 @@ pub struct TerminalInfo {
     pub owner: TerminalOwner,
     /// 创建端设备（"desktop" | "mobile"），用于来源标识与接管提示。
     pub creator: TerminalCreator,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_param_tag: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_param_tag_color: Option<String>,
     /// 启动时使用的额外参数快照（供 Web 端「以此配置新建终端」复用）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_startup_params: Option<String>,
@@ -168,10 +164,6 @@ pub struct StartTerminalRequest {
     pub extra_startup_params: Option<String>,
     #[serde(default)]
     pub extra_startup_mode: Option<String>,
-    #[serde(default)]
-    pub extra_param_tag: Option<String>,
-    #[serde(default)]
-    pub extra_param_tag_color: Option<String>,
     /// 自定义标签名（与 PC 端 startTerminal 的 displayName 对齐）
     #[serde(default)]
     pub display_name: Option<String>,
