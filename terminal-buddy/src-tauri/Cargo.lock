@@ -5338,7 +5338,7 @@ dependencies = [
 
 [[package]]
 name = "terminal-buddy"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "aes-gcm",
  "axum",

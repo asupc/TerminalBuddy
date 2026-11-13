@@ -1,7 +1,7 @@
 {
-  "version": "1.8.0",
-  "releaseDate": "2026-10-21",
+  "version": "1.9.0",
+  "releaseDate": "2026-11-13",
   "mandatory": false,
-  "changelogMd": "## 1.8.0\n\n### 🧠 大模型供应商与模型配置\n\n- 新增 Claude / Codex 供应商管理：API Key 加密存储、模型列表、上下文窗口与推理等级；启动时自动展开注入\n- 右键菜单可指定模型启动，标签以「模型 chip」展示；effort 五档与子代理模型全锚定，压制用户级残留配置\n- Codex 每模型单独配置推理等级（默认 MAX），项目启动菜单支持 Claude / Codex 供应商双向切换\n\n### 🤖 Agent 管理\n\n- 原「容器环境」重构为 Agent 管理页：检测 Claude Code / Codex CLI 安装与版本，应用内一键安装 / 更新\n\n### 📚 Codex 会话历史与任务摘要\n\n- Codex 历史会话可搜索 / 重命名 / 导出，一键 `codex resume` 续接\n- 桌面与手机显示 Claude / Codex 任务摘要；会话树双行布局，Codex 专属配色\n\n### 🔄 Web 端体验\n\n- 容器重启后自动恢复页签并续接 Claude 会话；登录有效期延长至 30 天且重启不掉线\n- 手机版独立界面自动分流，补齐项目 / 命令管理与供应商设置；多项触摸滚动与中文 IME 修复\n\n### 🐮 部署链路\n\n- 新增飞牛 fnOS 一键部署与 `update.sh` 本地自更新（失败自动回退）\n- Linux / Docker 版本适配，CentOS 部署两段式重构，Windows 单文件 exe 交叉编译脚本\n\n### 📌 升级提示\n\n- Windows 桌面版可直接覆盖安装；新增 llm_providers.json 自动创建\n- Docker 升级后首次需重新登录一次，此后重启不再掉线",
-  "downloadUrl": "https://gitee.com/updateme/terminal-buddy/releases/tag/v1.8.0"
+  "changelogMd": "## 1.9.0\n\n### ✨ 主要新增\n\n- 状态栏 Agent 信息合并为统一组件：模型、思考强度、上下文占比与 Token 用量集中展示，超 60% 变黄、超 80% 变红\n- Agent 会话支持按闲置天数自动归档，覆盖 Claude / Codex，收藏会话永不自动归档\n- 原生会话可实时查看 AI 思考过程与当前动作，工具组标题跟随最近一次调用\n- 安卓 App：斜杠命令提示、简版 / 完整版切换、历史会话浏览与恢复、连续发送排队与原生插话、服务端任务通知与决策推送\n- 简版首页「开始对话」改为服务端终端，手机与电脑完全同步；最近会话统一平铺\n- 网页版文件导航支持下载到本机，文件夹可打包为 ZIP\n- 桌面版浏览器访问 `/` 直达完整界面\n\n### 🧹 功能精简\n\n- 移除启动参数预设、机器人通知与 Hook 设置入口；通知改为事件发生后立即发送\n- 下线 Pi Agent，移除供应商配置、模型启动、会话历史与恢复等能力，统一收敛为 Claude / Codex\n- 设置导航「连接管理」更名为「项目与命令」\n\n### 🐞 修复\n\n- 修复 Windows 桌面端关闭 Web 服务时偶发整体崩溃、同端口快速重启偶发端口占用\n- 修复 App 查看服务端终端右侧留白、关闭终端后未回到列表、子代理抽屉始终为空\n\n### 📌 升级提示\n\n- Windows 桌面版可直接覆盖安装\n- Docker / 飞牛部署建议使用 `update.sh` 滚动升级，失败自动回退",
+  "downloadUrl": "https://gitee.com/updateme/terminal-buddy/releases/tag/v1.9.0"
 }
