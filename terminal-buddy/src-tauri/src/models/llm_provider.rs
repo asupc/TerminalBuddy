@@ -21,6 +21,12 @@ pub const AUTH_TYPES: &[&str] = &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
 /// 引用标记前缀：`__TB_CLAUDE_REF__:<providerId>:<modelId>`。
 pub const CLAUDE_REF_PREFIX: &str = "__TB_CLAUDE_REF__:";
 
+/// Claude 订阅供应商（`claude:<uuid>` 目录 id）的终端引用前缀：
+/// `__TB_CLAUDE_PROVIDER_REF__:<rawProviderId>[:<modelId>]`。
+/// 与 `CLAUDE_REF_PREFIX` 分开，因为前者的供应商主键是 UUID、模型允许为空，
+/// 且供应商数据来自 `claude_provider_service` 而不是 `llm_providers.json`。
+pub const CLAUDE_PROVIDER_REF_PREFIX: &str = "__TB_CLAUDE_PROVIDER_REF__:";
+
 /// 临时 settings 文件名前缀（`terminal-buddy-claude-<uuid>` 已被安装器占用，勿混用）。
 pub const CLAUDE_TEMP_SETTINGS_PREFIX: &str = "terminal-buddy-claude-settings-";
 

@@ -20,8 +20,8 @@ use super::crypto_service::{decrypt_secret_field, encrypt_secret_field};
 use super::path_service::PathService;
 use crate::models::llm_provider::{
     resolve_model_effort, LlmLaunchModel, LlmLaunchTarget, LlmProvider, LlmProviderFile,
-    LlmProviderInput, LlmProviderView, CLAUDE_REF_PREFIX, CLAUDE_TEMP_SETTINGS_PREFIX,
-    EFFORT_LEVELS,
+    LlmProviderInput, LlmProviderView, CLAUDE_PROVIDER_REF_PREFIX, CLAUDE_REF_PREFIX,
+    CLAUDE_TEMP_SETTINGS_PREFIX, EFFORT_LEVELS,
 };
 use crate::models::profile_validation::{quote_cmd_argument, reject_control_chars};
 
@@ -824,7 +824,54 @@ pub(crate) fn native_session_settings(provider_id: &str, model_id: &str) -> Resu
     Ok(settings)
 }
 
+/// Claude 订阅供应商引用：`__TB_CLAUDE_PROVIDER_REF__:<rawProviderId>[:<modelId>]`
+/// → 临时 `--settings`（含 managed hooks）。供应商主键是 UUID，首个 `:` 无歧义；
+/// 模型允许为空（Claude 供应商目录里存在空模型项）。临时文件按终端登记，
+/// 终端 teardown 时统一清理。
+fn expand_leading_claude_provider_ref(command: &str, terminal_id: &str) -> Result<String, String> {
+    let trimmed = command.trim_start();
+    let rest = trimmed
+        .strip_prefix(CLAUDE_PROVIDER_REF_PREFIX)
+        .ok_or_else(|| "Claude 供应商引用格式无效".to_string())?;
+    let token_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let token = &rest[..token_end];
+    let (provider_id, model_id) = match token.split_once(':') {
+        Some((provider, model)) => (provider, model),
+        None => (token, ""),
+    };
+    if provider_id.is_empty() || model_id.contains(':') {
+        return Err("Claude 供应商引用格式无效，请重新选择模型".into());
+    }
+    reject_control_chars("Claude 供应商引用", token)?;
+    let mut settings = super::claude_provider_service::native_session_settings(provider_id, model_id)?;
+    // `native_session_settings` 只准备模型配置，HTTP Hook 必须在这里补，
+    // 否则终端里的 CLI 不会上报绑定与阶段事件。
+    if let Some(object) = settings.as_object_mut() {
+        object.insert("hooks".to_string(), super::claude_hook_settings::managed_hooks_object());
+    }
+    let path = write_temp_settings(&settings)?;
+    if let Err(error) = register_temp_file(terminal_id, &path) {
+        let _ = fs::remove_file(&path);
+        return Err(error);
+    }
+    let quoted_path = quote_cmd_argument("临时模型配置", &path.to_string_lossy())?;
+    let mut expanded = format!("claude --settings {}", quoted_path);
+    if !model_id.is_empty() {
+        let quoted_model = quote_cmd_argument("模型", model_id)?;
+        expanded.push_str(&format!(" --model {}", quoted_model));
+    }
+    let suffix = rest[token_end..].trim_start();
+    if !suffix.is_empty() {
+        expanded.push(' ');
+        expanded.push_str(suffix);
+    }
+    Ok(expanded)
+}
+
 pub fn expand_leading_claude_ref(command: &str, terminal_id: &str) -> Result<String, String> {
+    if command.trim_start().starts_with(CLAUDE_PROVIDER_REF_PREFIX) {
+        return expand_leading_claude_provider_ref(command, terminal_id);
+    }
     if command.trim_start().starts_with(super::codex_provider_service::CODEX_REF_PREFIX) {
         return super::codex_provider_service::expand_leading_codex_ref(command);
     }
