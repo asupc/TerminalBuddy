@@ -1,0 +1,1491 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TerminalBuddy · 定时任务 UI 预览</title>
+<style>
+  /* ---------- 主题令牌：取自 src/styles/global.css ---------- */
+  :root {
+    color-scheme: dark;
+    --bg-primary: #181a1d;
+    --bg-secondary: #202226;
+    --bg-tertiary: #2a2d31;
+    --bg-elevated: #25282c;
+    --bg-overlay: rgba(10, 12, 14, 0.66);
+    --text-primary: #e3e5e8;
+    --text-secondary: #9aa0a8;
+    --text-tertiary: #6f767f;
+    --accent: #4b95e9;
+    --accent-hover: #62a4ed;
+    --accent-contrast: #ffffff;
+    --border: #34383d;
+    --border-subtle: #2b2f33;
+    --danger: #ef6b73;
+    --success: #55b988;
+    --warning: #d9a441;
+    --list-hover-bg: #292c30;
+    --radius-xs: 3px;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.28);
+    --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.42);
+    --motion-fast: 140ms;
+    --motion-normal: 180ms;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg-primary: #f3f4f6;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #e9ebee;
+    --bg-elevated: #ffffff;
+    --bg-overlay: rgba(22, 26, 31, 0.46);
+    --text-primary: #24272c;
+    --text-secondary: #626870;
+    --text-tertiary: #8a9098;
+    --accent: #176fbd;
+    --accent-hover: #0d62aa;
+    --border: #d6d9de;
+    --border-subtle: #e4e6e9;
+    --danger: #c9434d;
+    --success: #23845b;
+    --warning: #9a6b12;
+    --list-hover-bg: #edf0f3;
+    --shadow-menu: 0 10px 30px rgba(24, 30, 38, 0.16);
+    --shadow-dialog: 0 24px 64px rgba(24, 30, 38, 0.22);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    min-height: 100%;
+    background-color: var(--bg-primary);
+    background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text-tertiary) 22%, transparent) 1px, transparent 0);
+    background-size: 24px 24px;
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+
+  .icon {
+    width: 16px; height: 16px;
+    fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round;
+    flex: 0 0 auto;
+  }
+  .icon-sm { width: 14px; height: 14px; }
+  .icon-fill { fill: currentColor; stroke: none; }
+
+  /* ---------- 预览工具条 ---------- */
+  .preview-bar {
+    position: sticky; top: 0; z-index: 60;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 12px 24px;
+    background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .preview-title {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 12px; color: var(--text-secondary); letter-spacing: .02em;
+  }
+  .preview-title strong { color: var(--text-primary); font-size: 13px; font-weight: 600; }
+  .preview-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent);
+  }
+  .preview-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 30px; padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 12px; font-weight: 500;
+    transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--list-hover-bg); border-color: color-mix(in srgb, var(--border) 70%, var(--text-tertiary)); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn-ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
+  .btn-ghost:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+  .btn-danger { color: var(--danger); }
+  .btn-danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+  .btn-sm { height: 26px; padding: 0 9px; font-size: 12px; }
+  .btn-icon { width: 28px; height: 28px; padding: 0; border-color: transparent; background: transparent; color: var(--text-secondary); }
+  .btn-icon:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+  .btn:focus-visible, .switch:focus-visible, .seg-btn:focus-visible, .chip:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 78%, white); outline-offset: 1px;
+  }
+
+  .stage {
+    min-height: calc(100vh - 55px);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 32px 24px 56px;
+  }
+
+  /* ---------- 应用窗口与独立工作区页面 ---------- */
+  .app-window {
+    width: min(1240px, calc(100vw - 48px));
+    height: min(860px, calc(100vh - 100px));
+    min-height: 520px;
+    display: flex; flex-direction: column;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow-dialog);
+    overflow: hidden;
+    animation: dialog-enter .3s var(--ease-enter) both;
+  }
+  @keyframes dialog-enter { from { opacity: 0; transform: translateY(10px) scale(.99); } to { opacity: 1; transform: none; } }
+
+  .app-titlebar {
+    flex: 0 0 38px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 12px 0 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-secondary);
+  }
+  .app-title { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+  .app-title .icon { color: var(--accent); }
+  .app-window-controls { display: flex; gap: 6px; }
+  .app-window-control { width: 10px; height: 10px; border-radius: 50%; background: var(--text-tertiary); opacity: .45; }
+
+  .workspace-tabbar {
+    flex: 0 0 34px;
+    display: flex; align-items: stretch; gap: 1px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-primary);
+    overflow-x: auto;
+  }
+  .workspace-tab {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 0 12px; border: 0; border-bottom: 2px solid transparent;
+    background: transparent; color: var(--text-secondary);
+    font-size: 12px; white-space: nowrap; cursor: pointer;
+  }
+  .workspace-tab:hover { color: var(--text-primary); background: var(--list-hover-bg); }
+  .workspace-tab.active { color: var(--text-primary); background: var(--bg-secondary); border-bottom-color: var(--accent); font-weight: 600; }
+  .workspace-tab .icon { width: 14px; height: 14px; }
+  .workspace-tab-close {
+    width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center;
+    border: 0; border-radius: 3px; background: transparent; color: var(--text-tertiary);
+    margin-left: 2px;
+  }
+  .workspace-tab-close:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+  .workspace-tab-close .icon { width: 11px; height: 11px; }
+
+  .workspace-main { flex: 1; min-height: 0; display: flex; overflow: hidden; background: var(--bg-secondary); }
+  .workspace-page { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .workspace-scroll {
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding: 0 26px 24px;
+    scrollbar-width: thin;
+  }
+  .workspace-scroll::-webkit-scrollbar, .editor-body::-webkit-scrollbar, .runs-body::-webkit-scrollbar { width: 6px; }
+  .workspace-scroll::-webkit-scrollbar-thumb, .editor-body::-webkit-scrollbar-thumb, .runs-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ---------- 状态栏 ---------- */
+  .statusbar {
+    flex: 0 0 24px; height: 24px;
+    display: flex; align-items: stretch;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: 11px; line-height: 1; user-select: none;
+  }
+  .statusbar-left, .statusbar-right { display: flex; align-items: stretch; min-width: 0; }
+  .statusbar-right { margin-left: auto; }
+  .statusbar-item {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 0 8px; border: 0; background: transparent; color: inherit;
+    font: inherit; white-space: nowrap;
+  }
+  .statusbar-item.clickable { cursor: pointer; }
+  .statusbar-item.clickable:hover { background: var(--list-hover-bg); color: var(--text-primary); }
+  .statusbar-item.active { background: var(--bg-tertiary); color: var(--text-primary); }
+  .statusbar-icon { width: 12px; height: 12px; flex: none; stroke-width: 1.7; }
+  .statusbar-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 18%, transparent); flex: none; }
+  .statusbar-dot.idle { background: var(--text-tertiary); box-shadow: none; }
+  .statusbar-badge {
+    flex: none; padding: 1px 4px; border-radius: 3px;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent); font-size: 9px; font-weight: 600; line-height: 1.2;
+  }
+  .statusbar-mono { font-family: var(--font-mono); }
+  .statusbar-divider { width: 1px; margin-block: 6px; background: var(--border-subtle); flex: none; }
+
+  .page-header {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+    padding-bottom: 14px; margin-bottom: 14px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  }
+  .page-header h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+  .page-header p { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+  .page-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .workspace-page .page-header { padding: 18px 26px 12px; margin-bottom: 0; flex: 0 0 auto; }
+
+  .notice {
+    display: flex; align-items: flex-start; gap: 9px;
+    padding: 10px 12px; margin-bottom: 14px;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+    border-radius: var(--radius-md);
+    color: var(--text-secondary); font-size: 12px; line-height: 1.55;
+  }
+  .notice .icon { color: var(--accent); margin-top: 1px; }
+  .notice strong { color: var(--text-primary); font-weight: 600; }
+
+  .summary-strip {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 12px; margin-bottom: 14px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .summary-strip b { color: var(--text-primary); font-weight: 650; font-variant-numeric: tabular-nums; }
+  .summary-strip .muted { color: var(--text-tertiary); }
+  .summary-strip .accent { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
+  .summary-strip .accent b { color: var(--accent); }
+  .summary-strip .strip-dot { width: 1px; height: 11px; background: var(--border); }
+  .summary-strip .push { margin-left: auto; }
+
+  .list-toolbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-bottom: 8px;
+  }
+  .list-toolbar-left { display: flex; align-items: center; gap: 8px; color: var(--text-tertiary); font-size: 12px; }
+  .list-toolbar-left .sep { width: 1px; height: 12px; background: var(--border); }
+  .toolbar-filter {
+    display: inline-flex; gap: 2px; padding: 2px;
+    background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .filter-btn {
+    height: 24px; padding: 0 9px; border: none; border-radius: var(--radius-xs);
+    background: transparent; color: var(--text-tertiary); font-size: 12px;
+  }
+  .filter-btn:hover { color: var(--text-primary); }
+  .filter-btn.active { background: var(--bg-tertiary); color: var(--text-primary); }
+
+  .task-list { display: flex; flex-direction: column; gap: 8px; }
+  .task-card {
+    position: relative;
+    display: flex; align-items: stretch; gap: 0;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    transition: border-color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+  }
+  .task-card:hover { border-color: color-mix(in srgb, var(--border) 55%, var(--text-tertiary)); }
+  .task-card.is-running { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); }
+  .task-card.is-failed { border-color: color-mix(in srgb, var(--danger) 32%, var(--border)); }
+  .task-card.is-off .task-main { opacity: .62; }
+  .task-rail { width: 3px; flex: 0 0 3px; background: var(--success); }
+  .task-card.is-running .task-rail { background: var(--accent); }
+  .task-card.is-failed .task-rail { background: var(--danger); }
+  .task-card.is-off .task-rail { background: var(--text-tertiary); }
+
+  .task-main { flex: 1; min-width: 0; padding: 10px 14px 9px; }
+  .task-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .task-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+  .task-name { font-size: 13px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 19px; padding: 0 6px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: .01em;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .badge .icon { width: 11px; height: 11px; }
+  .badge-project { color: var(--text-secondary); background: var(--bg-tertiary); border-color: var(--border); }
+  .badge-agent { color: color-mix(in srgb, var(--accent) 82%, var(--text-primary)); background: color-mix(in srgb, var(--accent) 13%, transparent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+  .badge-off { color: var(--text-tertiary); background: transparent; border-color: var(--border); }
+
+  .task-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 7px; color: var(--text-secondary); font-size: 12px; }
+  .task-meta .icon { width: 13px; height: 13px; color: var(--text-tertiary); }
+  .meta-item { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+  .meta-item code {
+    font-family: var(--font-mono); font-size: 11.5px;
+    padding: 1px 5px; border-radius: 3px;
+    background: var(--bg-tertiary); border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+  }
+  .meta-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-tertiary); }
+
+  .task-schedule {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-top: 7px; padding-top: 7px;
+    border-top: 1px dashed color-mix(in srgb, var(--border) 78%, transparent);
+    font-size: 12px;
+  }
+  .schedule-main { display: inline-flex; align-items: center; gap: 5px; color: var(--text-primary); font-weight: 500; }
+  .schedule-main .icon { width: 13px; height: 13px; color: var(--text-tertiary); }
+  .tz {
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-tertiary);
+    padding: 1px 5px; border: 1px solid var(--border-subtle); border-radius: 3px;
+  }
+  .next-run { margin-left: auto; color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .next-run b { color: var(--text-primary); font-weight: 600; }
+  .next-run.is-muted b { color: var(--text-tertiary); }
+
+  .task-last { display: flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 11.5px; color: var(--text-tertiary); min-width: 0; }
+  .task-last .last-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 19px; padding: 0 6px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600; white-space: nowrap; flex: 0 0 auto;
+  }
+  .status-pill .icon { width: 11px; height: 11px; }
+  .status-pill.success { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+  .status-pill.danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+  .status-pill.running { color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
+  .status-pill.idle { color: var(--text-tertiary); background: var(--bg-tertiary); }
+  .status-pill.warn { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+  .pulse-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+
+  .task-actions {
+    display: flex; align-items: center; gap: 2px;
+    padding: 0 8px 0 0;
+    opacity: .85;
+  }
+  .task-card:hover .task-actions { opacity: 1; }
+
+  .toggle-wrap { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .switch {
+    position: relative; width: 38px; height: 22px; flex: 0 0 38px;
+    background: var(--bg-tertiary); border: 1px solid var(--border);
+    border-radius: 12px; padding: 0; transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--text-secondary);
+    transition: transform var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+  }
+  .switch.checked { background: var(--accent); border-color: var(--accent); }
+  .switch.checked::after { transform: translateX(16px); background: #fff; }
+
+  #emptyContent { min-height: 560px; display: flex; align-items: center; justify-content: center; }
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 0; text-align: center; padding: 40px 20px;
+  }
+  .empty-illustration {
+    width: 74px; height: 74px; border-radius: 18px;
+    display: grid; place-items: center; margin-bottom: 18px;
+    color: var(--accent);
+    background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
+    border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  }
+  .empty-illustration .icon { width: 34px; height: 34px; stroke-width: 1.4; }
+  .empty-state h4 { margin: 0 0 7px; font-size: 15px; font-weight: 600; }
+  .empty-state p { margin: 0 0 18px; color: var(--text-secondary); font-size: 12px; line-height: 1.6; max-width: 380px; }
+  .empty-samples { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+
+  /* ---------- 遮罩与弹窗 ---------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; background: var(--bg-overlay);
+    animation: overlay-in var(--motion-fast) var(--ease-standard) both;
+  }
+  .overlay[hidden] { display: none; }
+  @keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+
+  .modal {
+    display: flex; flex-direction: column;
+    width: min(780px, calc(100vw - 48px));
+    max-height: min(920px, calc(100vh - 48px));
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-dialog);
+    overflow: hidden;
+    animation: modal-in .26s var(--ease-enter) both;
+  }
+  .modal-runs { width: min(900px, calc(100vw - 48px)); }
+  @keyframes modal-in { from { opacity: 0; transform: translateY(12px) scale(.985); } to { opacity: 1; transform: none; } }
+
+  .modal-header {
+    flex: 0 0 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 0 10px 0 18px; border-bottom: 1px solid var(--border-subtle);
+  }
+  .modal-title { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; }
+  .modal-title .icon { color: var(--text-secondary); }
+  .modal-sub { font-size: 11.5px; color: var(--text-tertiary); font-weight: 400; margin-left: 4px; }
+  .modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; }
+  .modal-footer {
+    flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 12px 18px; border-top: 1px solid var(--border-subtle); background: var(--bg-secondary);
+  }
+  .footer-hint { font-size: 11.5px; color: var(--text-tertiary); display: flex; align-items: center; gap: 5px; }
+  .footer-actions { display: flex; align-items: center; gap: 8px; }
+
+  /* ---------- 编辑器表单 ---------- */
+  .form-section { margin-bottom: 18px; }
+  .form-section:last-child { margin-bottom: 4px; }
+  .section-label {
+    display: flex; align-items: center; gap: 6px;
+    margin-bottom: 9px; color: var(--text-secondary);
+    font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .section-label .icon { width: 13px; height: 13px; color: var(--text-tertiary); }
+  .section-label::after { content: ""; flex: 1; height: 1px; background: var(--border-subtle); margin-left: 4px; }
+
+  .field { margin-bottom: 11px; }
+  .field:last-child { margin-bottom: 0; }
+  .field-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; font-size: 12px; color: var(--text-secondary); }
+  .field-label .req { color: var(--danger); margin-left: 2px; }
+  .field-hint { font-size: 11px; color: var(--text-tertiary); line-height: 1.45; margin-top: 4px; }
+  .field-row { display: flex; gap: 10px; }
+  .field-row > .field { flex: 1; min-width: 0; margin-bottom: 0; }
+
+  .input, .select, .textarea {
+    width: 100%; background: var(--bg-primary); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-primary); font-size: 12.5px;
+    outline: none; transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
+  }
+  .input, .select { height: 32px; padding: 0 9px; }
+  .textarea { padding: 8px 9px; min-height: 96px; resize: vertical; line-height: 1.55; font-family: var(--font-ui); }
+  .input:focus, .select:focus, .textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .input::placeholder, .textarea::placeholder { color: var(--text-tertiary); }
+  .select {
+    appearance: none; cursor: pointer; padding-right: 28px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236f767f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+  }
+  html[data-theme="light"] .select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238a9098' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  }
+  .input-with-suffix { position: relative; }
+  .input-with-suffix .input { padding-right: 46px; }
+  .input-suffix { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--text-tertiary); pointer-events: none; }
+  .char-count { font-size: 11px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+  .seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .seg-btn {
+    height: 27px; padding: 0 12px; border: none; border-radius: var(--radius-xs);
+    background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .seg-btn:hover { color: var(--text-primary); }
+  .seg-btn.active { background: var(--bg-tertiary); color: var(--text-primary); box-shadow: inset 0 0 0 1px var(--border); }
+  .seg-btn .icon { width: 14px; height: 14px; }
+  .seg-wide { display: flex; width: 100%; }
+  .seg-wide .seg-btn { flex: 1; justify-content: center; }
+
+  .switch-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 7px 11px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+  }
+  .switch-row + .switch-row { margin-top: 7px; }
+  .inline-switch {
+    height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 0 11px;
+    border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .switch-row-title { font-size: 12.5px; color: var(--text-primary); margin-bottom: 2px; }
+  .switch-row-desc { font-size: 11px; color: var(--text-tertiary); line-height: 1.4; }
+
+  .hint-box {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 9px 11px; margin-top: 9px;
+    background: color-mix(in srgb, var(--bg-tertiary) 55%, transparent);
+    border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+    font-size: 11.5px; color: var(--text-secondary); line-height: 1.55;
+  }
+  .hint-box .icon { color: var(--text-tertiary); margin-top: 1px; width: 13px; height: 13px; }
+  .hint-box strong { color: var(--text-primary); font-weight: 600; }
+
+  .field-note-warn {
+    display: flex; align-items: flex-start; gap: 7px;
+    margin-top: 8px; padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
+    background: color-mix(in srgb, var(--warning) 9%, transparent);
+    border-radius: var(--radius-sm); font-size: 11.5px; color: var(--text-secondary); line-height: 1.5;
+  }
+  .field-note-warn .icon { color: var(--warning); width: 13px; height: 13px; margin-top: 1px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    height: 28px; padding: 0 11px;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--bg-primary); color: var(--text-secondary);
+    font-size: 12px; display: inline-flex; align-items: center; gap: 5px;
+    transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+  }
+  .chip:hover { color: var(--text-primary); border-color: color-mix(in srgb, var(--border) 55%, var(--text-tertiary)); }
+  .chip.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); font-weight: 600; }
+  .chip .icon { width: 13px; height: 13px; }
+
+  .weekdays { display: flex; gap: 5px; flex-wrap: wrap; }
+  .weekday {
+    width: 32px; height: 28px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg-primary); color: var(--text-secondary); font-size: 11.5px;
+  }
+  .weekday:hover { color: var(--text-primary); }
+  .weekday.active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, transparent); font-weight: 600; }
+
+  .schedule-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+  .schedule-row .field { margin-bottom: 0; }
+  .schedule-row .field-time { width: 116px; flex: 0 0 116px; }
+  #fieldOnce { width: 210px; flex: 0 0 210px; }
+  .schedule-row .field-tz { width: 190px; flex: 0 0 190px; }
+  .schedule-row .field-grow { flex: 1; min-width: 180px; }
+
+  .preview-box {
+    margin-top: 10px; padding: 10px 12px;
+    background: var(--bg-primary); border: 1px dashed color-mix(in srgb, var(--border) 70%, var(--text-tertiary));
+    border-radius: var(--radius-sm);
+  }
+  .preview-box-title { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: var(--text-tertiary); margin-bottom: 7px; }
+  .preview-box-title .icon { width: 12px; height: 12px; }
+  .preview-times { display: flex; flex-wrap: wrap; gap: 5px 12px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); }
+  .preview-times span { white-space: nowrap; }
+  .preview-times span:first-child { color: var(--accent); }
+
+  /* ---------- 运行记录 ---------- */
+  .runs-summary { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .runs-summary-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+  .runs-summary-item b { color: var(--text-primary); font-weight: 600; }
+  .run-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+  .run-table th {
+    text-align: left; font-size: 10.5px; font-weight: 600; color: var(--text-tertiary);
+    letter-spacing: .05em; text-transform: uppercase; padding: 0 10px 8px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .run-table td { padding: 10px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); vertical-align: middle; }
+  .run-table tr:last-child td { border-bottom: none; }
+  .run-table tr:hover td { background: color-mix(in srgb, var(--bg-tertiary) 34%, transparent); }
+  .run-time { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
+  .run-trigger { color: var(--text-tertiary); font-size: 11.5px; white-space: nowrap; }
+  .run-duration { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
+  .run-message { color: var(--text-secondary); max-width: 300px; }
+  .run-message.fail { color: color-mix(in srgb, var(--danger) 78%, var(--text-secondary)); }
+  .run-action { text-align: right; white-space: nowrap; }
+  .run-link { border: none; background: transparent; color: var(--accent); font-size: 11.5px; padding: 2px 4px; border-radius: var(--radius-xs); }
+  .run-link:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+  /* ---------- Toast ---------- */
+  .toast {
+    position: fixed; right: 24px; bottom: 24px; z-index: 200;
+    display: flex; align-items: center; gap: 8px;
+    min-width: 220px; max-width: 380px;
+    padding: 10px 14px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-menu);
+    font-size: 12.5px; color: var(--text-primary);
+    opacity: 0; transform: translateY(8px); pointer-events: none;
+    transition: opacity var(--motion-normal) var(--ease-standard), transform var(--motion-normal) var(--ease-standard);
+  }
+  .toast.show { opacity: 1; transform: none; }
+  .toast .icon { color: var(--success); }
+  .toast.error .icon { color: var(--danger); }
+
+  @media (max-width: 900px) {
+    .summary-strip .push { margin-left: 0; }
+    .workspace-scroll { padding: 0 16px 20px; }
+    .workspace-page .page-header { padding: 16px 16px 10px; }
+    .preview-title span { display: none; }
+  }
+  @media (max-width: 640px) {
+    .stage { padding: 12px; }
+    .app-window { width: calc(100vw - 24px); height: calc(100vh - 90px); }
+    .page-header { flex-direction: column; }
+    .task-actions { flex-direction: column; justify-content: center; padding-right: 4px; }
+    .field-row { flex-direction: column; }
+    .schedule-row .field-time, .schedule-row .field-tz { width: 100%; flex: 1 1 auto; }
+    .modal { width: calc(100vw - 24px); max-height: calc(100vh - 32px); }
+    .run-table th:nth-child(4), .run-table td:nth-child(4) { display: none; }
+    .statusbar-hide-narrow, .workspace-tab:not(.active) { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 图标精灵 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".9" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".9" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".9" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".9" fill="currentColor" stroke="none"/><path d="M12 2a10 10 0 1 0 0 20 2.4 2.4 0 0 0 2.4-2.4c0-.7-.3-1.3-.7-1.8-.4-.5-.6-1-.6-1.6a2.4 2.4 0 0 1 2.4-2.4h2.1A3.4 3.4 0 0 0 21 10.4 10 10 0 0 0 12 2Z"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 17h8"/></symbol>
+  <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5M9 8V2M15 8V2M6 8h12v3a6 6 0 0 1-12 0V8Z"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-container" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></symbol>
+  <symbol id="i-boxes" viewBox="0 0 24 24"><path d="M2.5 8.5 7 6l4.5 2.5L7 11 2.5 8.5ZM2.5 8.5v5L7 16l4.5-2.5v-5"/><path d="M12.5 15.5 17 13l4.5 2.5L17 18l-4.5-2.5ZM12.5 15.5v5L17 23l4.5-2.5v-5"/><path d="m7.5 2 4.5 2.5L16.5 2 12 0 7.5 2ZM7.5 2v5L12 9.5 16.5 7V2"/></symbol>
+  <symbol id="i-filejson" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M10 12a1.5 1.5 0 0 0-1.5 1.5v1A1.5 1.5 0 0 1 7 16a1.5 1.5 0 0 1 1.5 1.5v1A1.5 1.5 0 0 0 10 20M14 12a1.5 1.5 0 0 1 1.5 1.5v1A1.5 1.5 0 0 0 17 16a1.5 1.5 0 0 0-1.5 1.5v1A1.5 1.5 0 0 1 14 20"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 0 0-5.9-.8A3 3 0 0 0 4 9.5 3 3 0 0 0 5.5 15 3 3 0 0 0 9 20a3 3 0 0 0 3-3Z"/><path d="M12 5a3 3 0 0 1 5.9-.8A3 3 0 0 1 20 9.5a3 3 0 0 1-1.5 5.5A3 3 0 0 1 15 20a3 3 0 0 1-3-3Z"/><path d="M12 5v12"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><circle cx="12" cy="16" r="3.2"/><path d="M12 14.8V16l1 1"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18Z"/></symbol>
+  <symbol id="i-filex" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M9 14l6 6M15 14l-6 6"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3.5 20 12 6 20.5Z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.5 2.3 17a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-13.5a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 14h.01M15 14h.01M9 17h6"/><circle cx="12" cy="3" r="1"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 6-6 6 6 6M16 6l6 6-6 6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="7" r="2.5"/><path d="M6 7.5v9M8.5 5H14a4 4 0 0 1 4 4v0"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
+  <symbol id="i-memory" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 7v10M11 7v10M15 7v10M19 7v10M6 3v4M12 3v4M18 3v4M6 17v4M12 17v4M18 17v4"/></symbol>
+</svg>
+
+<div class="preview-bar">
+  <div class="preview-title">
+    <span class="preview-dot"></span>
+    <strong>TerminalBuddy · 定时任务</strong>
+    <span>UI 设计预览 / 静态演示</span>
+  </div>
+  <div class="preview-actions">
+    <button class="btn btn-sm" id="themeToggle"><svg class="icon icon-sm"><use href="#i-palette"/></svg><span>浅色主题</span></button>
+    <button class="btn btn-sm" data-open="editor"><svg class="icon icon-sm"><use href="#i-plus"/></svg>新建任务</button>
+    <button class="btn btn-sm" data-open="runs"><svg class="icon icon-sm"><use href="#i-history"/></svg>运行记录</button>
+    <button class="btn btn-sm" data-toggle-empty><svg class="icon icon-sm"><use href="#i-calendar"/></svg><span>空状态</span></button>
+  </div>
+</div>
+
+<main class="stage">
+  <div class="app-window">
+    <div class="app-titlebar">
+      <div class="app-title"><svg class="icon icon-sm"><use href="#i-folder"/></svg>TerminalBuddy — 项目开发</div>
+      <div class="app-window-controls"><span class="app-window-control"></span><span class="app-window-control"></span><span class="app-window-control"></span></div>
+    </div>
+
+    <div class="workspace-tabbar" role="tablist" aria-label="工作区标签">
+      <button class="workspace-tab" type="button" role="tab" aria-selected="false">
+        <svg class="icon"><use href="#i-terminal"/></svg>项目开发
+      </button>
+      <button class="workspace-tab active" type="button" role="tab" aria-selected="true">
+        <svg class="icon"><use href="#i-calendar"/></svg>定时任务
+        <span class="workspace-tab-close" title="关闭页面" aria-label="关闭定时任务页面"><svg class="icon"><use href="#i-x"/></svg></span>
+      </button>
+      <button class="workspace-tab" type="button" role="tab" aria-selected="false">
+        <svg class="icon"><use href="#i-history"/></svg>未提交变更
+      </button>
+    </div>
+
+    <div class="workspace-main">
+      <div class="workspace-page">
+        <div class="page-header">
+          <div>
+            <h3>定时任务</h3>
+            <p>按计划自动启动项目配置，或让 Agent 在指定项目中执行任务。</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn" id="pauseAll"><svg class="icon icon-sm"><use href="#i-pause"/></svg>全部暂停</button>
+            <button class="btn btn-primary" data-open="editor"><svg class="icon icon-sm"><use href="#i-plus"/></svg>新建任务</button>
+            <button class="btn btn-icon" title="关闭页面" aria-label="关闭定时任务页面" data-close-page><svg class="icon"><use href="#i-x"/></svg></button>
+          </div>
+        </div>
+
+        <div class="workspace-scroll">
+          <div id="listContent">
+          <div class="notice">
+            <svg class="icon"><use href="#i-info"/></svg>
+            <div>定时任务只在 TerminalBuddy 运行时执行。桌面端退出后停止；需要 7×24 执行请部署到 <strong>Docker 服务端</strong>。</div>
+          </div>
+
+          <div class="summary-strip">
+            <span><b>3</b> 启用中</span>
+            <span class="strip-dot"></span>
+            <span class="accent"><span class="pulse-dot"></span><b>1</b> 正在运行</span>
+            <span class="strip-dot"></span>
+            <span><b>4</b> 今日执行 <span class="muted">2 成功 · 1 失败</span></span>
+            <span class="strip-dot"></span>
+            <span class="push">下次触发 <b>今天 18:00</b></span>
+          </div>
+
+          <div class="list-toolbar">
+            <div class="list-toolbar-left">
+              <span>共 4 个任务</span>
+              <span class="sep"></span>
+              <span>上次刷新 14:32:08</span>
+            </div>
+            <div class="toolbar-filter" role="group" aria-label="任务筛选">
+              <button class="filter-btn active">全部</button>
+              <button class="filter-btn">启用</button>
+              <button class="filter-btn">已暂停</button>
+              <button class="filter-btn">失败</button>
+            </div>
+          </div>
+
+          <div class="task-list">
+            <!-- 任务 1：项目配置 -->
+            <article class="task-card" data-task="1">
+              <div class="task-rail"></div>
+              <div class="task-main">
+                <div class="task-top">
+                  <div class="task-title-row">
+                    <span class="task-name">工作日晨间开发环境</span>
+                    <span class="badge badge-project"><svg class="icon"><use href="#i-terminal"/></svg>项目配置</span>
+                  </div>
+                  <div class="toggle-wrap">
+                    <button class="switch checked" role="switch" aria-checked="true" aria-label="启用任务"></button>
+                  </div>
+                </div>
+                <div class="task-meta">
+                  <span class="meta-item"><svg class="icon"><use href="#i-folder"/></svg>TerminalBuddy</span>
+                  <span class="meta-dot"></span>
+                  <span class="meta-item"><code>开发环境</code></span>
+                  <span class="meta-dot"></span>
+                  <span class="meta-item">PowerShell · 自动关闭 120 分钟</span>
+                </div>
+                <div class="task-schedule">
+                  <span class="schedule-main"><svg class="icon"><use href="#i-clock"/></svg>工作日 09:30</span>
+                  <span class="tz">Asia/Shanghai</span>
+                  <span class="next-run">下次 <b>明天 09:30</b></span>
+                </div>
+                <div class="task-last">
+                  <span class="status-pill success"><svg class="icon"><use href="#i-check"/></svg>已完成</span>
+                  <span class="last-text">今天 09:30 · 用时 8s · 终端已启动</span>
+                </div>
+              </div>
+              <div class="task-actions">
+                <button class="btn btn-icon" title="立即运行" data-run><svg class="icon"><use href="#i-play"/></svg></button>
+                <button class="btn btn-icon" title="编辑" data-edit><svg class="icon"><use href="#i-pencil"/></svg></button>
+                <button class="btn btn-icon" title="运行记录" data-open="runs"><svg class="icon"><use href="#i-history"/></svg></button>
+                <button class="btn btn-icon" title="更多"><svg class="icon"><use href="#i-more"/></svg></button>
+              </div>
+            </article>
+
+            <!-- 任务 2：运行中 -->
+            <article class="task-card is-running" data-task="2">
+              <div class="task-rail"></div>
+              <div class="task-main">
+                <div class="task-top">
+                  <div class="task-title-row">
+                    <span class="task-name">每日提交汇总</span>
+                    <span class="badge badge-agent"><svg class="icon"><use href="#i-bot"/></svg>Agent 任务</span>
+                  </div>
+                  <div class="toggle-wrap">
+                    <button class="switch checked" role="switch" aria-checked="true" aria-label="启用任务"></button>
+                  </div>
+                </div>
+                <div class="task-meta">
+                  <span class="meta-item"><svg class="icon"><use href="#i-folder"/></svg>TerminalBuddy</span>
+                  <span class="meta-dot"></span>
+                  <span class="meta-item"><code>Claude</code></span>
+                  <span class="meta-item"><code>DeepSeek</code></span>
+                  <span class="meta-item"><code>deepseek-chat</code></span>
+                </div>
+                <div class="task-schedule">
+                  <span class="schedule-main"><svg class="icon"><use href="#i-clock"/></svg>工作日 18:00</span>
+                  <span class="tz">Asia/Shanghai</span>
+                  <span class="next-run">下次 <b>今天 18:00</b></span>
+                </div>
+                <div class="task-last">
+                  <span class="status-pill running"><span class="pulse-dot"></span>运行中</span>
+                  <span class="last-text">今天 14:31 开始 · 已运行 00:42 · 正在读取 git 记录…</span>
+                </div>
+              </div>
+              <div class="task-actions">
+                <button class="btn btn-icon btn-danger" title="停止运行" data-stop><svg class="icon"><use href="#i-stop"/></svg></button>
+                <button class="btn btn-icon" title="查看会话"><svg class="icon"><use href="#i-bot"/></svg></button>
+                <button class="btn btn-icon" title="编辑" data-edit><svg class="icon"><use href="#i-pencil"/></svg></button>
+                <button class="btn btn-icon" title="运行记录" data-open="runs"><svg class="icon"><use href="#i-history"/></svg></button>
+              </div>
+            </article>
+
+            <!-- 任务 3：失败 -->
+            <article class="task-card is-failed" data-task="3">
+              <div class="task-rail"></div>
+              <div class="task-main">
+                <div class="task-top">
+                  <div class="task-title-row">
+                    <span class="task-name">依赖升级检查</span>
+                    <span class="badge badge-agent"><svg class="icon"><use href="#i-bot"/></svg>Agent 任务</span>
+                  </div>
+                  <div class="toggle-wrap">
+                    <button class="switch checked" role="switch" aria-checked="true" aria-label="启用任务"></button>
+                  </div>
+                </div>
+                <div class="task-meta">
+                  <span class="meta-item"><svg class="icon"><use href="#i-folder"/></svg>TerminalBuddy</span>
+                  <span class="meta-dot"></span>
+                  <span class="meta-item"><code>Claude</code></span>
+                  <span class="meta-item"><code>已删除的供应商</code></span>
+                </div>
+                <div class="task-schedule">
+                  <span class="schedule-main"><svg class="icon"><use href="#i-clock"/></svg>每周五 19:00</span>
+                  <span class="tz">Asia/Shanghai</span>
+                  <span class="next-run is-muted">下次 <b>任务需修复</b></span>
+                </div>
+                <div class="task-last">
+                  <span class="status-pill danger"><svg class="icon"><use href="#i-alert"/></svg>失败</span>
+                  <span class="last-text">上周五 19:00 · 所选供应商或模型不可用，请编辑任务</span>
+                </div>
+              </div>
+              <div class="task-actions">
+                <button class="btn btn-icon" title="立即运行" data-run><svg class="icon"><use href="#i-play"/></svg></button>
+                <button class="btn btn-icon" title="修复任务" data-edit><svg class="icon"><use href="#i-pencil"/></svg></button>
+                <button class="btn btn-icon" title="运行记录" data-open="runs"><svg class="icon"><use href="#i-history"/></svg></button>
+                <button class="btn btn-icon" title="更多"><svg class="icon"><use href="#i-more"/></svg></button>
+              </div>
+            </article>
+
+            <!-- 任务 4：暂停 -->
+            <article class="task-card is-off" data-task="4">
+              <div class="task-rail"></div>
+              <div class="task-main">
+                <div class="task-top">
+                  <div class="task-title-row">
+                    <span class="task-name">每周数据库备份</span>
+                    <span class="badge badge-project"><svg class="icon"><use href="#i-terminal"/></svg>项目配置</span>
+                    <span class="badge badge-off">已暂停</span>
+                  </div>
+                  <div class="toggle-wrap">
+                    <button class="switch" role="switch" aria-checked="false" aria-label="启用任务"></button>
+                  </div>
+                </div>
+                <div class="task-meta">
+                  <span class="meta-item"><svg class="icon"><use href="#i-folder"/></svg>ops-server</span>
+                  <span class="meta-dot"></span>
+                  <span class="meta-item"><code>备份脚本</code></span>
+                  <span class="meta-dot"></span>
+                  <span class="meta-item">SSH · 不自动关闭</span>
+                </div>
+                <div class="task-schedule">
+                  <span class="schedule-main"><svg class="icon"><use href="#i-clock"/></svg>每周日 03:00</span>
+                  <span class="tz">Asia/Shanghai</span>
+                  <span class="next-run is-muted">下次 <b>已暂停</b></span>
+                </div>
+                <div class="task-last">
+                  <span class="status-pill idle"><svg class="icon"><use href="#i-pause"/></svg>已暂停</span>
+                  <span class="last-text">11-10 03:00 · 用时 1m 12s · 终端已启动</span>
+                </div>
+              </div>
+              <div class="task-actions">
+                <button class="btn btn-icon" title="立即运行" data-run><svg class="icon"><use href="#i-play"/></svg></button>
+                <button class="btn btn-icon" title="编辑" data-edit><svg class="icon"><use href="#i-pencil"/></svg></button>
+                <button class="btn btn-icon" title="运行记录" data-open="runs"><svg class="icon"><use href="#i-history"/></svg></button>
+                <button class="btn btn-icon" title="更多"><svg class="icon"><use href="#i-more"/></svg></button>
+              </div>
+            </article>
+          </div>
+          </div>
+
+          <div id="emptyContent" hidden>
+            <div class="empty-state">
+              <div class="empty-illustration"><svg class="icon"><use href="#i-calendar"/></svg></div>
+              <h4>还没有定时任务</h4>
+              <p>把每天重复的启动和 Agent 任务交给计划，让 TerminalBuddy 到点自动执行。</p>
+              <div class="empty-samples">
+                <button class="btn btn-primary" data-open="editor"><svg class="icon icon-sm"><use href="#i-plus"/></svg>新建任务</button>
+                <button class="btn" data-sample="morning"><svg class="icon icon-sm"><use href="#i-terminal"/></svg>每天 09:30 启动开发环境</button>
+                <button class="btn" data-sample="summary"><svg class="icon icon-sm"><use href="#i-bot"/></svg>工作日 18:00 汇总提交</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="statusbar" role="group" aria-label="应用状态栏">
+      <div class="statusbar-left">
+        <span class="statusbar-item"><span class="statusbar-dot idle"></span>无活动会话</span>
+        <span class="statusbar-divider"></span>
+        <span class="statusbar-item"><svg class="statusbar-icon"><use href="#i-folder"/></svg>C:\code\terminal-buddy</span>
+        <span class="statusbar-item"><svg class="statusbar-icon"><use href="#i-history"/></svg><span class="statusbar-mono">master</span><span class="statusbar-badge">2</span></span>
+      </div>
+      <div class="statusbar-right">
+        <span class="statusbar-item"><svg class="statusbar-icon"><use href="#i-globe"/></svg>Web<span class="statusbar-mono">:9600</span><span class="statusbar-dot"></span></span>
+        <button class="statusbar-item clickable active" type="button" title="定时任务 · 3 个启用 · 下次今天 18:00 · 当前页面">
+          <svg class="statusbar-icon"><use href="#i-calendar"/></svg>
+          <span>定时</span>
+          <span class="statusbar-badge" id="sbEntryBadge">3</span>
+          <span class="statusbar-mono" id="sbEntryTime">18:00</span>
+        </button>
+        <span class="statusbar-item statusbar-hide-narrow"><svg class="statusbar-icon"><use href="#i-cpu"/></svg><span class="statusbar-mono">18%</span></span>
+        <span class="statusbar-item statusbar-hide-narrow"><svg class="statusbar-icon"><use href="#i-memory"/></svg><span class="statusbar-mono">42%</span></span>
+        <span class="statusbar-item"><svg class="statusbar-icon"><use href="#i-clock"/></svg><span class="statusbar-mono">14:32</span></span>
+        <span class="statusbar-item"><span class="statusbar-mono">v1.9.0</span></span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ============ 新建 / 编辑任务 ============ -->
+<div class="overlay" id="editorOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
+    <header class="modal-header">
+      <div class="modal-title" id="editorTitle">
+        <svg class="icon"><use href="#i-calendar"/></svg>
+        <span>新建定时任务</span>
+        <span class="modal-sub">保存后按计划自动执行</span>
+      </div>
+      <button class="dialog-close" data-close="editor" aria-label="关闭"><svg class="icon"><use href="#i-x"/></svg></button>
+    </header>
+
+    <div class="modal-body editor-body">
+      <!-- 基本信息 -->
+      <div class="form-section">
+        <div class="section-label"><svg class="icon"><use href="#i-pencil"/></svg>基本信息</div>
+        <div class="field-row">
+          <div class="field" style="flex:2">
+            <div class="field-label"><span>任务名称<span class="req">*</span></span><span class="char-count">0 / 40</span></div>
+            <input class="input" id="taskName" placeholder="例如：工作日晨间开发环境" value="每日提交汇总">
+          </div>
+          <div class="field" style="flex:0 0 150px">
+            <div class="field-label"><span>启用</span></div>
+            <div class="inline-switch">
+              <span>立即生效</span>
+              <button class="switch checked" role="switch" aria-checked="true" aria-label="启用任务"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 执行内容 -->
+      <div class="form-section">
+        <div class="section-label"><svg class="icon"><use href="#i-play"/></svg>执行内容</div>
+        <div class="seg seg-wide" role="tablist" aria-label="执行内容类型" style="margin-bottom:12px">
+          <button class="seg-btn" data-target-tab="profile" role="tab" aria-selected="false"><svg class="icon"><use href="#i-terminal"/></svg>项目配置</button>
+          <button class="seg-btn active" data-target-tab="agent" role="tab" aria-selected="true"><svg class="icon"><use href="#i-bot"/></svg>Agent 任务</button>
+        </div>
+
+        <!-- 项目配置 -->
+        <div class="target-panel" id="targetProfile" hidden>
+          <div class="field-row">
+            <div class="field">
+              <div class="field-label"><span>项目<span class="req">*</span></span></div>
+              <select class="select"><option>TerminalBuddy</option><option>ops-server</option><option>mobile-app</option></select>
+            </div>
+            <div class="field">
+              <div class="field-label"><span>配置<span class="req">*</span></span></div>
+              <select class="select"><option>开发环境 · PowerShell</option><option>前端 Dev Server · PowerShell</option><option>后端服务 · CMD</option></select>
+            </div>
+          </div>
+          <div class="field-row" style="margin-top:11px">
+            <div class="field">
+              <div class="field-label"><span>启动后自动关闭</span></div>
+              <select class="select"><option>不自动关闭（保持运行）</option><option>30 分钟后</option><option selected>120 分钟后</option></select>
+            </div>
+            <div class="field"></div>
+          </div>
+          <div class="hint-box">
+            <svg class="icon"><use href="#i-info"/></svg>
+            <div>将复用该配置的启动路径、环境变量与启动命令。终端会在后台标签中创建，<strong>不会抢走当前焦点</strong>。</div>
+          </div>
+        </div>
+
+        <!-- Agent 任务 -->
+        <div class="target-panel" id="targetAgent">
+          <div class="field-row">
+            <div class="field">
+              <div class="field-label"><span>项目<span class="req">*</span></span></div>
+              <select class="select"><option>TerminalBuddy</option><option>ops-server</option><option>mobile-app</option></select>
+            </div>
+            <div class="field">
+              <div class="field-label"><span>Agent<span class="req">*</span></span></div>
+              <div class="seg" style="width:100%">
+                <button class="seg-btn active" style="flex:1;justify-content:center"><svg class="icon"><use href="#i-bot"/></svg>Claude Code</button>
+                <button class="seg-btn" style="flex:1;justify-content:center"><svg class="icon"><use href="#i-code"/></svg>Codex</button>
+              </div>
+            </div>
+          </div>
+          <div class="field-row" style="margin-top:11px">
+            <div class="field">
+              <div class="field-label"><span>供应商<span class="req">*</span></span></div>
+              <select class="select"><option>DeepSeek</option><option>Anthropic 官方</option><option>服务端默认配置</option></select>
+            </div>
+            <div class="field">
+              <div class="field-label"><span>模型<span class="req">*</span></span></div>
+              <select class="select"><option>deepseek-chat</option><option>deepseek-reasoner</option></select>
+            </div>
+          </div>
+          <div class="field" style="margin-top:11px">
+            <div class="field-label"><span>任务描述<span class="req">*</span></span><span class="char-count">68 / 8000</span></div>
+            <textarea class="textarea" placeholder="描述希望 Agent 完成的事情…">汇总今天本项目的 git 提交，按模块列出改动要点，并指出可能遗漏的测试；不要修改任何文件。</textarea>
+            <div class="field-hint">任务描述会作为用户消息发送给 Agent，不会经过 Shell 解析。</div>
+          </div>
+          <div class="field-row" style="margin-top:11px">
+            <div class="field" style="flex:0 0 150px">
+              <div class="field-label"><span>超时</span></div>
+              <div class="input-with-suffix"><input class="input" type="number" value="20"><span class="input-suffix">分钟</span></div>
+            </div>
+            <div class="field">
+              <div class="field-label"><span>完成通知</span></div>
+              <div class="switch-row" style="justify-content:space-between">
+                <span style="font-size:12px;color:var(--text-secondary)">完成 / 失败时提醒</span>
+                <button class="switch checked" role="switch" aria-checked="true" aria-label="完成通知"></button>
+              </div>
+            </div>
+          </div>
+          <div class="field-note-warn">
+            <svg class="icon"><use href="#i-alert"/></svg>
+            <div>任务沿用「Agent 管理」中的基础启动命令。若该命令需要权限确认，任务会停在「等待确认」并通知你，不会自动批准。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 触发时间 -->
+      <div class="form-section">
+        <div class="section-label"><svg class="icon"><use href="#i-clock"/></svg>触发时间</div>
+        <div class="chips" id="schedulePresets" style="margin-bottom:11px">
+          <button class="chip" data-preset="daily"><svg class="icon"><use href="#i-calendar"/></svg>每天</button>
+          <button class="chip active" data-preset="weekday"><svg class="icon"><use href="#i-calendar"/></svg>工作日</button>
+          <button class="chip" data-preset="weekly"><svg class="icon"><use href="#i-calendar"/></svg>每周</button>
+          <button class="chip" data-preset="hourly"><svg class="icon"><use href="#i-clock"/></svg>每小时</button>
+          <button class="chip" data-preset="cron"><svg class="icon"><use href="#i-code"/></svg>自定义 Cron</button>
+          <button class="chip" data-preset="once"><svg class="icon"><use href="#i-play"/></svg>仅一次</button>
+        </div>
+
+        <div class="schedule-row">
+          <div class="field field-time" id="fieldTime">
+            <div class="field-label"><span>时间</span></div>
+            <input class="input" type="time" value="18:00">
+          </div>
+          <div class="field field-time" id="fieldOnce" hidden>
+            <div class="field-label"><span>执行于</span></div>
+            <input class="input" type="datetime-local" value="2026-11-20T09:00">
+          </div>
+          <div class="field field-grow" id="fieldCron" hidden>
+            <div class="field-label"><span>Cron 表达式（分 时 日 月 周）</span></div>
+            <input class="input" id="cronInput" value="0 18 * * 1-5" style="font-family:var(--font-mono)">
+          </div>
+          <div class="field field-tz">
+            <div class="field-label"><span>时区</span></div>
+            <select class="select">
+              <option selected>Asia/Shanghai (UTC+8)</option>
+              <option>Asia/Tokyo (UTC+9)</option>
+              <option>UTC</option>
+              <option>Europe/London</option>
+              <option>America/New_York</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="weeklyRow" hidden style="margin-top:11px">
+          <div class="field-label"><span>重复日</span></div>
+          <div class="weekdays">
+            <button class="weekday active">一</button>
+            <button class="weekday active">二</button>
+            <button class="weekday active">三</button>
+            <button class="weekday active">四</button>
+            <button class="weekday active">五</button>
+            <button class="weekday">六</button>
+            <button class="weekday">日</button>
+          </div>
+        </div>
+
+        <div class="preview-box">
+          <div class="preview-box-title"><svg class="icon"><use href="#i-clock"/></svg>执行时间预览</div>
+          <div class="preview-times" id="previewTimes"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="modal-footer">
+      <div class="footer-hint"><svg class="icon icon-sm"><use href="#i-info"/></svg>保存后由后端计算下次运行时间</div>
+      <div class="footer-actions">
+        <button class="btn" data-close="editor">取消</button>
+        <button class="btn" data-save="later">保存</button>
+        <button class="btn btn-primary" data-save="now">保存并立即运行</button>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 运行记录 ============ -->
+<div class="overlay" id="runsOverlay" hidden>
+  <div class="modal modal-runs" role="dialog" aria-modal="true" aria-labelledby="runsTitle">
+    <header class="modal-header">
+      <div class="modal-title" id="runsTitle">
+        <svg class="icon"><use href="#i-history"/></svg>
+        <span>运行记录</span>
+        <span class="modal-sub">每日提交汇总 · 最近 100 条</span>
+      </div>
+      <button class="dialog-close" data-close="runs" aria-label="关闭"><svg class="icon"><use href="#i-x"/></svg></button>
+    </header>
+    <div class="modal-body runs-body">
+      <div class="runs-summary">
+        <span class="runs-summary-item"><b>24</b> 次执行</span>
+        <span class="runs-summary-item" style="color:var(--success)"><svg class="icon icon-sm"><use href="#i-check"/></svg><b>22</b> 成功</span>
+        <span class="runs-summary-item" style="color:var(--danger)"><svg class="icon icon-sm"><use href="#i-alert"/></svg><b>2</b> 失败</span>
+        <span class="runs-summary-item">平均用时 <b>46s</b></span>
+        <span class="runs-summary-item">累计 Token <b>1.24M</b></span>
+      </div>
+      <table class="run-table">
+        <thead>
+          <tr><th>开始时间</th><th>触发</th><th>状态</th><th>耗时</th><th>摘要 / 错误</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="run-time">11-17 14:31</td><td class="run-trigger">手动</td>
+            <td><span class="status-pill running"><span class="pulse-dot"></span>运行中</span></td>
+            <td class="run-duration">00:42</td><td class="run-message">正在读取 git 记录…</td>
+            <td class="run-action"><button class="run-link" data-toast="已打开会话">打开会话</button></td>
+          </tr>
+          <tr>
+            <td class="run-time">11-16 18:00</td><td class="run-trigger">计划</td>
+            <td><span class="status-pill success"><svg class="icon"><use href="#i-check"/></svg>已完成</span></td>
+            <td class="run-duration">41s</td><td class="run-message">已汇总 6 个提交，标记 1 处缺少测试</td>
+            <td class="run-action"><button class="run-link" data-toast="已打开会话">打开会话</button></td>
+          </tr>
+          <tr>
+            <td class="run-time">11-15 18:00</td><td class="run-trigger">计划</td>
+            <td><span class="status-pill success"><svg class="icon"><use href="#i-check"/></svg>已完成</span></td>
+            <td class="run-duration">38s</td><td class="run-message">已汇总 4 个提交</td>
+            <td class="run-action"><button class="run-link" data-toast="已打开会话">打开会话</button></td>
+          </tr>
+          <tr>
+            <td class="run-time">11-14 18:00</td><td class="run-trigger">计划</td>
+            <td><span class="status-pill danger"><svg class="icon"><use href="#i-alert"/></svg>失败</span></td>
+            <td class="run-duration">3s</td><td class="run-message fail">所选供应商或模型不可用，请编辑任务</td>
+            <td class="run-action"><button class="run-link" data-edit>编辑任务</button></td>
+          </tr>
+          <tr>
+            <td class="run-time">11-13 18:00</td><td class="run-trigger">计划</td>
+            <td><span class="status-pill warn"><svg class="icon"><use href="#i-clock"/></svg>等待确认</span></td>
+            <td class="run-duration">2m 10s</td><td class="run-message">等待批准执行 <code>git log</code></td>
+            <td class="run-action"><button class="run-link" data-toast="已打开会话">去处理</button></td>
+          </tr>
+          <tr>
+            <td class="run-time">11-12 18:00</td><td class="run-trigger">计划</td>
+            <td><span class="status-pill success"><svg class="icon"><use href="#i-check"/></svg>已完成</span></td>
+            <td class="run-duration">44s</td><td class="run-message">已汇总 7 个提交</td>
+            <td class="run-action"><button class="run-link" data-toast="已打开会话">打开会话</button></td>
+          </tr>
+          <tr>
+            <td class="run-time">11-11 18:00</td><td class="run-trigger">计划</td>
+            <td><span class="status-pill idle"><svg class="icon"><use href="#i-stop"/></svg>已停止</span></td>
+            <td class="run-duration">12s</td><td class="run-message">用户手动停止</td>
+            <td class="run-action"><button class="run-link" data-toast="已打开会话">打开会话</button></td>
+          </tr>
+          <tr>
+            <td class="run-time">11-10 18:00</td><td class="run-trigger">计划</td>
+            <td><span class="status-pill success"><svg class="icon"><use href="#i-check"/></svg>已完成</span></td>
+            <td class="run-duration">39s</td><td class="run-message">已汇总 3 个提交</td>
+            <td class="run-action"><button class="run-link" data-toast="已打开会话">打开会话</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <footer class="modal-footer">
+      <div class="footer-hint"><svg class="icon icon-sm"><use href="#i-info"/></svg>每个任务保留最近 100 条记录</div>
+      <div class="footer-actions">
+        <button class="btn" data-close="runs">关闭</button>
+        <button class="btn btn-primary" data-open="editor"><svg class="icon icon-sm"><use href="#i-pencil"/></svg>编辑任务</button>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<div class="toast" id="toast"><svg class="icon"><use href="#i-check"/></svg><span id="toastText">操作完成</span></div>
+
+<script>
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+  /* ---------- 主题 ---------- */
+  const themeToggle = $('#themeToggle');
+  themeToggle.addEventListener('click', () => {
+    const light = document.documentElement.getAttribute('data-theme') === 'light';
+    document.documentElement.setAttribute('data-theme', light ? 'dark' : 'light');
+    themeToggle.querySelector('span').textContent = light ? '浅色主题' : '深色主题';
+  });
+
+  /* ---------- Toast ---------- */
+  let toastTimer;
+  function toast(message, error = false) {
+    const el = $('#toast');
+    $('#toastText').textContent = message;
+    el.classList.toggle('error', error);
+    el.querySelector('use').setAttribute('href', error ? '#i-alert' : '#i-check');
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+  }
+
+  /* ---------- 遮罩开关 ---------- */
+  function openOverlay(id) {
+    const overlay = $(`#${id}Overlay`);
+    if (!overlay) return;
+    overlay.hidden = false;
+    updatePreview();
+  }
+  function closeOverlay(id) {
+    const overlay = $(`#${id}Overlay`);
+    if (overlay) overlay.hidden = true;
+  }
+  $$('[data-open]').forEach(btn => btn.addEventListener('click', () => openOverlay(btn.dataset.open)));
+  $$('[data-close]').forEach(btn => btn.addEventListener('click', () => closeOverlay(btn.dataset.close)));
+  $$('.overlay').forEach(overlay => overlay.addEventListener('mousedown', event => {
+    if (event.target === overlay) overlay.hidden = true;
+  }));
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    const open = $$('.overlay').filter(item => !item.hidden).pop();
+    if (open) open.hidden = true;
+  });
+  $$('[data-toast]').forEach(btn => btn.addEventListener('click', () => toast(btn.dataset.toast)));
+
+  /* ---------- 列表交互 ---------- */
+  $$('.switch[role="switch"]').forEach(sw => {
+    sw.addEventListener('click', () => {
+      const checked = sw.classList.toggle('checked');
+      sw.setAttribute('aria-checked', String(checked));
+      const card = sw.closest('.task-card');
+      if (card) {
+        card.classList.toggle('is-off', !checked);
+        toast(checked ? '任务已启用' : '任务已暂停');
+      }
+    });
+  });
+
+  $$('[data-run]').forEach(btn => btn.addEventListener('click', () => {
+    const card = btn.closest('.task-card');
+    const name = card?.querySelector('.task-name')?.textContent ?? '任务';
+    const pill = card?.querySelector('.status-pill');
+    if (pill) {
+      pill.className = 'status-pill running';
+      pill.innerHTML = '<span class="pulse-dot"></span>运行中';
+      card.classList.add('is-running');
+      card.classList.remove('is-failed');
+      const text = card.querySelector('.last-text');
+      if (text) text.textContent = '刚刚开始 · 正在创建执行环境…';
+    }
+    toast(`已开始执行：${name}`);
+    setTimeout(() => {
+      if (!pill) return;
+      pill.className = 'status-pill success';
+      pill.innerHTML = '<svg class="icon"><use href="#i-check"/></svg>已完成';
+      card.classList.remove('is-running');
+      const text = card.querySelector('.last-text');
+      if (text) text.textContent = '刚刚 · 用时 6s · 执行完成';
+    }, 2600);
+  }));
+
+  $$('[data-stop]').forEach(btn => btn.addEventListener('click', () => {
+    const card = btn.closest('.task-card');
+    const pill = card?.querySelector('.status-pill');
+    if (pill) {
+      pill.className = 'status-pill idle';
+      pill.innerHTML = '<svg class="icon"><use href="#i-stop"/></svg>已停止';
+    }
+    card?.classList.remove('is-running');
+    const text = card?.querySelector('.last-text');
+    if (text) text.textContent = '刚刚 · 用户手动停止';
+    toast('已停止运行');
+  }));
+
+  $$('[data-edit]').forEach(btn => btn.addEventListener('click', () => openOverlay('editor')));
+  $('#pauseAll').addEventListener('click', () => toast('已暂停全部定时任务'));
+  $$('[data-close-page]').forEach(btn => btn.addEventListener('click', () => toast('已关闭定时任务页面（预览）')));
+  $$('.workspace-tab-close').forEach(btn => btn.addEventListener('click', event => {
+    event.stopPropagation();
+    toast('已关闭定时任务页面（预览）');
+  }));
+  $$('.statusbar-item.clickable').forEach(btn => btn.addEventListener('click', () => toast('当前已在定时任务页面')));
+  $$('.filter-btn').forEach(btn => btn.addEventListener('click', () => {
+    $$('.filter-btn').forEach(item => item.classList.remove('active'));
+    btn.classList.add('active');
+  }));
+
+  /* ---------- 空状态 ---------- */
+  let emptyMode = false;
+  function applyEmptyMode(next) {
+    emptyMode = next;
+    $('#listContent').hidden = next;
+    $('#emptyContent').hidden = !next;
+    const badge = $('#sbEntryBadge');
+    const time = $('#sbEntryTime');
+    if (badge) badge.hidden = next;
+    if (time) time.hidden = next;
+  }
+  $('[data-toggle-empty]').addEventListener('click', () => applyEmptyMode(!emptyMode));
+  $$('[data-sample]').forEach(btn => btn.addEventListener('click', () => {
+    const sample = btn.dataset.sample;
+    openOverlay('editor');
+    if (sample === 'morning') {
+      selectTarget('profile');
+    } else {
+      selectTarget('agent');
+    }
+    toast('已套用示例，可继续修改');
+  }));
+
+  /* ---------- 编辑器：执行内容切换 ---------- */
+  function selectTarget(kind) {
+    $$('[data-target-tab]').forEach(btn => {
+      const active = btn.dataset.targetTab === kind;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', String(active));
+    });
+    $('#targetProfile').hidden = kind !== 'profile';
+    $('#targetAgent').hidden = kind !== 'agent';
+  }
+  $$('[data-target-tab]').forEach(btn => btn.addEventListener('click', () => selectTarget(btn.dataset.targetTab)));
+
+  /* ---------- 编辑器：调度预设 ---------- */
+  let preset = 'weekday';
+  function selectPreset(next) {
+    preset = next;
+    $$('#schedulePresets .chip').forEach(chip => chip.classList.toggle('active', chip.dataset.preset === next));
+    $('#fieldTime').hidden = !['daily', 'weekday', 'weekly', 'hourly'].includes(next);
+    $('#fieldOnce').hidden = next !== 'once';
+    $('#fieldCron').hidden = next !== 'cron';
+    $('#weeklyRow').hidden = next !== 'weekly';
+    updatePreview();
+  }
+  $$('#schedulePresets .chip').forEach(chip => chip.addEventListener('click', () => selectPreset(chip.dataset.preset)));
+  $('#cronInput')?.addEventListener('input', updatePreview);
+  $$('.weekday').forEach(btn => btn.addEventListener('click', () => {
+    btn.classList.toggle('active');
+    updatePreview();
+  }));
+  $$('input[type="time"], input[type="datetime-local"]').forEach(input => input.addEventListener('input', updatePreview));
+
+  /* ---------- 下次执行预览（演示用近似计算） ---------- */
+  const pad = value => String(value).padStart(2, '0');
+  function formatDate(date) {
+    const weekday = '日一二三四五六'[date.getDay()];
+    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} 周${weekday} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+  function updatePreview() {
+    const box = $('#previewTimes');
+    if (!box) return;
+    const results = [];
+    const now = new Date();
+    const timeValue = $('input[type="time"]')?.value || '18:00';
+    const [hour, minute] = timeValue.split(':').map(Number);
+
+    if (preset === 'once') {
+      const value = $('input[type="datetime-local"]')?.value;
+      if (value) {
+        const date = new Date(value);
+        results.push(formatDate(date));
+      }
+    } else if (preset === 'hourly') {
+      for (let index = 1; index <= 5; index += 1) {
+        const date = new Date(now.getTime() + index * 3600 * 1000);
+        date.setMinutes(0, 0, 0);
+        results.push(formatDate(date));
+      }
+    } else if (preset === 'cron') {
+      const expr = ($('#cronInput')?.value || '').trim();
+      const parts = expr.split(/\s+/);
+      const parseNumber = value => /^\d+$/.test(value) ? Number(value) : null;
+      const parseWeekdays = value => {
+        if (value === '*') return [1, 2, 3, 4, 5, 6, 7];
+        const days = [];
+        for (const chunk of value.split(',')) {
+          const range = chunk.match(/^(\d)-(\d)$/);
+          if (range) {
+            for (let day = Number(range[1]); day <= Number(range[2]); day += 1) {
+              days.push(day === 0 ? 7 : day);
+            }
+          } else if (/^\d$/.test(chunk)) {
+            days.push(Number(chunk) === 0 ? 7 : Number(chunk));
+          }
+        }
+        return days;
+      };
+      const minute = parts.length === 5 ? parseNumber(parts[0]) : null;
+      const hour = parts.length === 5 ? parseNumber(parts[1]) : null;
+      const weekdays = parts.length === 5 ? parseWeekdays(parts[4]) : [];
+      if (minute !== null && hour !== null && weekdays.length) {
+        let cursor = new Date(now);
+        cursor.setHours(hour, minute, 0, 0);
+        let guard = 0;
+        while (results.length < 5 && guard < 90) {
+          guard += 1;
+          if (cursor > now) {
+            const day = cursor.getDay() === 0 ? 7 : cursor.getDay();
+            if (weekdays.includes(day)) results.push(formatDate(cursor));
+          }
+          cursor = new Date(cursor.getTime() + 24 * 3600 * 1000);
+        }
+      }
+    } else {
+      const weekdays = new Set(
+        $$('.weekday.active').map((btn, index) => index + 1)
+      );
+      let cursor = new Date(now);
+      cursor.setHours(hour, minute, 0, 0);
+      let guard = 0;
+      while (results.length < 5 && guard < 60) {
+        guard += 1;
+        if (cursor > now) {
+          const day = cursor.getDay() === 0 ? 7 : cursor.getDay();
+          const allowed =
+            preset === 'daily' ||
+            preset === 'weekday' && day <= 5 ||
+            preset === 'weekly' && weekdays.has(day);
+          if (allowed) results.push(formatDate(cursor));
+        }
+        cursor = new Date(cursor.getTime() + 24 * 3600 * 1000);
+      }
+    }
+    box.innerHTML = results.length
+      ? results.map((item, index) => `<span${index === 0 ? ' style="color:var(--accent)"' : ''}>${item}</span>`).join('')
+      : `<span style="color:var(--text-tertiary)">${preset === 'cron' ? '表达式无效或暂不支持预览' : '暂无可执行时间'}</span>`;
+  }
+
+  /* ---------- 保存 ---------- */
+  $$('[data-save]').forEach(btn => btn.addEventListener('click', () => {
+    const name = $('#taskName')?.value.trim();
+    if (!name) {
+      toast('请填写任务名称', true);
+      $('#taskName')?.focus();
+      return;
+    }
+    closeOverlay('editor');
+    toast(btn.dataset.save === 'now' ? `已保存并开始执行：${name}` : `已保存：${name}`);
+  }));
+
+  updatePreview();
+
+  /* ---------- 便于截图 / 分享的锚点入口 ---------- */
+  if (new URLSearchParams(location.search).get('theme') === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+    themeToggle.querySelector('span').textContent = '深色主题';
+  }
+  if (location.hash === '#editor') openOverlay('editor');
+  if (location.hash === '#editor-profile') { openOverlay('editor'); selectTarget('profile'); }
+  if (location.hash === '#editor-cron') { openOverlay('editor'); selectPreset('cron'); }
+  if (location.hash === '#editor-once') { openOverlay('editor'); selectPreset('once'); }
+  if (location.hash === '#editor-weekly') { openOverlay('editor'); selectPreset('weekly'); }
+  if (location.hash === '#runs') openOverlay('runs');
+  if (location.hash === '#empty') applyEmptyMode(true);
+</script>
+</body>
+</html>
