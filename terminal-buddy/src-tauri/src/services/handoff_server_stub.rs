@@ -25,6 +25,9 @@ impl HandoffPty {
 
     pub fn kill_without_wait(&mut self) {}
 
+    /// stub 平台不会产生 handoff 会话，没有需要释放的 reference 句柄。
+    pub fn release_reference(&mut self) {}
+
     /// stub 平台不产生 handoff 会话，永远没有可用的共享写通道。
     pub(crate) fn writer_shared(
         &self,

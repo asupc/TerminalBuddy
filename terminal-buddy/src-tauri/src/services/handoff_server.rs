@@ -723,6 +723,20 @@ impl HandoffPty {
         self.writer.clone()
     }
 
+    /// 释放 `\Reference` 保活句柄（对应 winconpty 的 `ConptyReleasePseudoConsole`）。
+    ///
+    /// 这个句柄让 conhost 一直活着（ConDrv server pipe 不关）。会话搭好后必须
+    /// 立刻放掉，否则 conhost 在最后一个客户端断开（`.bat` 跑完、cmd.exe 退出）
+    /// 后也不会退出，输出管道永远不 EOF，页签就一直挂着。
+    /// 参考 microsoft/terminal `src/winconpty/winconpty.cpp`：
+    /// "release that handle, allowing conhost to shut down automatically once the
+    /// last client has disconnected. You'll know when this happens, because a
+    /// ReadFile() on the output pipe will return ERROR_BROKEN_PIPE."
+    /// 幂等：重复调用无副作用。
+    pub fn release_reference(&mut self) {
+        self.reference = None;
+    }
+
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String> {
         // 注意 cols/rows 顺序：信号包内是 [id, X=cols, Y=rows]。
         let packet = proto::encode_resize_signal(cols, rows);

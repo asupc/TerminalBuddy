@@ -643,6 +643,8 @@ pub enum TerminalCloseReason {
     NaturalExit,
     /// 创建事务失败回滚。
     StartupRollback,
+    /// 定时任务到点自动关闭。
+    ScheduledClose,
     /// 应用退出。
     AppShutdown,
 }
@@ -654,6 +656,7 @@ impl TerminalCloseReason {
             Self::WebClose => "web-close",
             Self::NaturalExit => "natural-exit",
             Self::StartupRollback => "startup-rollback",
+            Self::ScheduledClose => "scheduled-close",
             Self::AppShutdown => "app-shutdown",
         }
     }
@@ -1937,7 +1940,7 @@ impl TerminalService {
     #[cfg(feature = "desktop")]
     pub fn create_handoff_terminal(
         &self,
-        handoff: HandoffPty,
+        mut handoff: HandoffPty,
         reader: Box<dyn Read + Send>,
         display_name: &str,
         init_rows: u16,
@@ -1953,6 +1956,12 @@ impl TerminalService {
         crate::services::terminal_task_service::prepare_launch(
             &terminal_id, default_terminal_type(), None, &[], Vec::new(),
         );
+        // 会话管道已就绪，立刻放掉 reference 保活句柄（等价于 Windows Terminal
+        // 的 ConptyReleasePseudoConsole）：否则 conhost 在最后一个客户端断开后
+        // 仍不退出，输出管道不 EOF，`.bat` 末尾 `pause` 按任意键后页签会一直挂着。
+        // 客户端（cmd.exe 等）退出后 conhost 自行退出 → 读取线程 EOF → 走统一
+        // teardown，tab 随之关闭。
+        handoff.release_reference();
         self.insert_instance(TerminalInstance {
             id: terminal_id.clone(),
             profile_id: String::new(),
