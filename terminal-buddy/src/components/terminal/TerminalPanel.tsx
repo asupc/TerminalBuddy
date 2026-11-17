@@ -37,6 +37,7 @@ const GitHistoryPage = lazy(() => import('../git/GitHistoryPage').then(m => ({ d
 const GitChangesPage = lazy(() => import('../git/GitChangesPage').then(m => ({ default: m.GitChangesPage })));
 const ClaudeReplayPage = lazy(() => import('../claude-history/ReplayPage').then(m => ({ default: m.ReplayPage })));
 const AgentChatPage = lazy(() => import('../agent-chat/AgentChatPage').then(m => ({ default: m.AgentChatPage })));
+const ScheduledTasksPage = lazy(() => import('../scheduled-tasks/ScheduledTasksPage').then(m => ({ default: m.ScheduledTasksPage })));
 
 export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
@@ -47,6 +48,8 @@ export const TerminalPanel: FC = () => {
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
   const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
+  const scheduledTasksTabOpen = useAppStore(s => s.scheduledTasksTabOpen);
+  const closeScheduledTasksPage = useAppStore(s => s.closeScheduledTasksPage);
   const agentTabs = useAppStore(s => s.agentTabs);
   const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
   const updateSession = useAppStore(s => s.updateSession);
@@ -246,7 +249,7 @@ export const TerminalPanel: FC = () => {
   };
 
   const renderTerminalContent = () => {
-    if (splitMode === 'off' && sessions.length === 0 && !gitHistoryTab && !gitChangesTab && !claudeReplayTab && agentTabs.length === 0) {
+    if (splitMode === 'off' && sessions.length === 0 && !gitHistoryTab && !gitChangesTab && !claudeReplayTab && agentTabs.length === 0 && !scheduledTasksTabOpen) {
       return (
         <div className="terminal-empty">
           <SquareTerminal className="empty-icon" aria-hidden="true" />
@@ -294,7 +297,7 @@ export const TerminalPanel: FC = () => {
 
   return (
     <div className="terminal-panel">
-      {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab || gitChangesTab || claudeReplayTab || agentTabs.length > 0) && (
+      {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab || gitChangesTab || claudeReplayTab || agentTabs.length > 0 || scheduledTasksTabOpen) && (
         <TerminalTabBar />
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
@@ -328,6 +331,13 @@ export const TerminalPanel: FC = () => {
                 tab={claudeReplayTab}
                 onClose={() => closeClaudeReplayTab(claudeReplayTab.sessionId, claudeReplayTab.provider)}
               />
+            </Suspense>
+          </div>
+        )}
+        {scheduledTasksTabOpen && activeSpecialTab === 'scheduled-tasks' && (
+          <div className="git-history-tab-content scheduled-tasks-tab-content">
+            <Suspense fallback={<div className="lazy-panel-loading">加载定时任务…</div>}>
+              <ScheduledTasksPage onClose={closeScheduledTasksPage} />
             </Suspense>
           </div>
         )}

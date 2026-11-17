@@ -1,0 +1,46 @@
+/* 状态栏「定时」入口：复用 app-statusbar-* 基础样式，仅补充状态色与响应式。 */
+.scheduled-status-entry {
+  flex: none;
+}
+
+.scheduled-status-entry.is-empty .scheduled-status-label {
+  color: var(--text-tertiary);
+}
+
+.scheduled-status-entry .scheduled-status-next {
+  color: var(--text-secondary);
+}
+
+.scheduled-status-entry.active .scheduled-status-next {
+  color: var(--text-primary);
+}
+
+/* 运行中用强调色脉冲点；等待确认用警示色常亮点，两者优先级：运行中 > 等待确认。 */
+.app-statusbar-dot.scheduled-status-dot.running {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  animation: scheduled-status-pulse 2.4s ease-in-out infinite;
+}
+
+.app-statusbar-dot.scheduled-status-dot.approval {
+  background: var(--warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 18%, transparent);
+}
+
+.app-statusbar-dot.scheduled-status-dot.failed {
+  background: var(--danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+@keyframes scheduled-status-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
+  50% { box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent) 8%, transparent); }
+}
+
+@media (max-width: 720px) {
+  /* 窄屏只保留图标、状态点与数量 badge，时间与文字让位给目录 / Git。 */
+  .scheduled-status-entry .scheduled-status-label,
+  .scheduled-status-entry .scheduled-status-next {
+    display: none;
+  }
+}

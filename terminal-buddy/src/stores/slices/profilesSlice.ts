@@ -81,6 +81,7 @@ export const createProfilesSlice = (
 	claudeReplayTab: null,
 	claudeReplayTabs: [],
 	activeSpecialTab: null,
+	scheduledTasksTabOpen: false,
 	openSettingsDialog: (section) => set({ settingsDialogOpen: true, settingsDialogSection: section ?? null }),
 	closeSettingsDialog: () => set({ settingsDialogOpen: false, settingsDialogSection: null }),
 	openGitHistoryTab: (tab) => set({ gitHistoryTab: tab, activeSpecialTab: "git-history" }),
@@ -115,6 +116,12 @@ export const createProfilesSlice = (
 		};
 	}),
 	setActiveSpecialTab: (tab) => set({ activeSpecialTab: tab }),
+	// 定时任务页面：打开时激活；切到其他标签时保持打开状态，关闭时才消失。
+	openScheduledTasksPage: () => set({ scheduledTasksTabOpen: true, activeSpecialTab: "scheduled-tasks" }),
+	closeScheduledTasksPage: () => set((state) => ({
+		scheduledTasksTabOpen: false,
+		activeSpecialTab: state.activeSpecialTab === "scheduled-tasks" ? null : state.activeSpecialTab,
+	})),
 
 	exclusionPatterns: ["node_modules", ".git"],
 	setExclusionPatterns: (patterns) => {

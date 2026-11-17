@@ -94,7 +94,7 @@ export const relayAgentTabKey = (terminalId: string) => `relay:${terminalId}`;
 
 export { sessionReplayTabKey } from '../utils/sessionHistory';
 
-export type WorkspaceSpecialTab = "git-history" | "git-changes" | "claude-replay" | "agent-chat" | null;
+export type WorkspaceSpecialTab = "git-history" | "git-changes" | "claude-replay" | "agent-chat" | "scheduled-tasks" | null;
 
 export type TerminalRuntimeKind = "shell" | "claude" | "codex";
 export type TerminalActivityPhase = "idle" | "running" | "attention" | "completed" | "failed";
@@ -369,6 +369,10 @@ export interface AppState {
 	closeClaudeReplayTab: (sessionId?: string, provider?: SessionHistoryProvider) => void;
 	activeSpecialTab: WorkspaceSpecialTab;
 	setActiveSpecialTab: (tab: WorkspaceSpecialTab) => void;
+	/** 定时任务独立工作区页面是否已打开：关闭后消失，切换终端时保留。不持久化。 */
+	scheduledTasksTabOpen: boolean;
+	openScheduledTasksPage: () => void;
+	closeScheduledTasksPage: () => void;
 
 	// 会话式聊天标签（原生会话 / 终端接力）
 	agentTabs: AgentTab[];

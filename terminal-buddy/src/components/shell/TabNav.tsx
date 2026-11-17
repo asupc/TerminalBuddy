@@ -1,7 +1,7 @@
 import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
-import { FileText, X } from 'lucide-react';
+import { CalendarClock, FileText, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore, sessionReplayTabKey, type GitChangesTab, type GitHistoryTab, type NativeAgentTab } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWidth, getBackendAppSettings, writeFileContent, readFileContent } from '../../services/tauri';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
@@ -57,6 +57,9 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
   const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
+  const scheduledTasksTabOpen = useAppStore(s => s.scheduledTasksTabOpen);
+  const openScheduledTasksPage = useAppStore(s => s.openScheduledTasksPage);
+  const closeScheduledTasksPage = useAppStore(s => s.closeScheduledTasksPage);
   const agentTabs = useAppStore(s => s.agentTabs);
   const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
   const setActiveAgentTab = useAppStore(s => s.setActiveAgentTab);
@@ -619,7 +622,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlightedIndex]);
 
-  if (sessions.length === 0 && !gitHistoryTab && !gitChangesTab && claudeReplayTabs.length === 0 && agentTabs.length === 0) return null;
+  if (sessions.length === 0 && !gitHistoryTab && !gitChangesTab && claudeReplayTabs.length === 0 && agentTabs.length === 0 && !scheduledTasksTabOpen) return null;
 
   // 终端接力标签是终端的对话视图，终端本身已在项目分组里；这里只保留接力标签的独立入口。
   const relayAgentTabs = agentTabs.filter(tab => tab.shape === 'relay');
@@ -658,6 +661,30 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           setDragProfileId(null);
         }}
       >
+        {scheduledTasksTabOpen && (
+          <div className="tab-nav-group">
+            <div className="tab-nav-group-header">
+              <span className="tab-nav-group-name">工具</span>
+            </div>
+            <div
+              className={`tab-nav-settings-btn tab-nav-replay-item${activeSpecialTab === "scheduled-tasks" ? " active" : ""}`}
+              onClick={openScheduledTasksPage}
+              onAuxClick={(event) => {
+                if (event.button === 1) {
+                  event.preventDefault();
+                  closeScheduledTasksPage();
+                }
+              }}
+              onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
+              title="定时任务 · 按计划启动项目环境或执行 Agent 任务"
+            >
+              <CalendarClock aria-hidden="true" style={{ width: 12, height: 12, flex: "none" }} />
+              <span className="tab-nav-name">定时任务</span>
+              <button type="button" className="tree-item-close" onClick={event => { event.stopPropagation(); closeScheduledTasksPage(); }}
+                title="关闭" aria-label="关闭定时任务"><X aria-hidden="true" /></button>
+            </div>
+          </div>
+        )}
         {relayAgentTabs.length > 0 && (
           <div className="tab-nav-group">
             <div className="tab-nav-group-header" onClick={() => setCollapsedGroups(prev => {

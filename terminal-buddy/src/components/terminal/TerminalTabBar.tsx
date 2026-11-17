@@ -1,6 +1,6 @@
 import { terminalTabTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
-import { FileDiff, FileText, GitBranch, History, SquareTerminal, X } from 'lucide-react';
+import { CalendarClock, FileDiff, FileText, GitBranch, History, SquareTerminal, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
@@ -34,6 +34,9 @@ export const TerminalTabBar: FC = () => {
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
   const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
+  const scheduledTasksTabOpen = useAppStore(s => s.scheduledTasksTabOpen);
+  const openScheduledTasksPage = useAppStore(s => s.openScheduledTasksPage);
+  const closeScheduledTasksPage = useAppStore(s => s.closeScheduledTasksPage);
   const agentTabs = useAppStore(s => s.agentTabs);
   const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
   const closeAgentTab = useAppStore(s => s.closeAgentTab);
@@ -385,6 +388,32 @@ export const TerminalTabBar: FC = () => {
             title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>
         </div>
       ))}
+      {scheduledTasksTabOpen && (
+        <div
+          className={`terminal-tab ${activeSpecialTab === 'scheduled-tasks' ? 'active' : ''}`}
+          onClick={openScheduledTasksPage}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              closeScheduledTasksPage();
+            }
+          }}
+          onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+          title="定时任务 · 按计划启动项目环境或执行 Agent 任务"
+        >
+          <CalendarClock className="terminal-tab-history-icon" aria-hidden="true" />
+          <span className="terminal-tab-name">定时任务</span>
+          <button
+            className="terminal-tab-close"
+            onClick={(e) => {
+              e.stopPropagation();
+              closeScheduledTasksPage();
+            }}
+            title="关闭"
+            aria-label="关闭定时任务"
+          ><X aria-hidden="true" /></button>
+        </div>
+      )}
       {gitChangesTab && (
         <div
           className={`terminal-tab ${activeSpecialTab === 'git-changes' ? 'active' : ''}`}

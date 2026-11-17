@@ -17,6 +17,7 @@ import { GitNavBar } from '../git/GitNavBar';
 import { AgentIcon } from '../agent-chat/AgentIcon';
 import { AgentHistoryPopover } from './AgentHistoryPopover';
 import { ResourceTrendPopover } from './ResourceTrendPopover';
+import { ScheduledTasksStatusEntry } from './ScheduledTasksStatusEntry';
 import { StatusBarAgent } from './StatusBarAgent';
 import type { AgentStatusView } from './agentStatusView';
 import { getWebApiStatus } from '../../services/tauri';
@@ -247,6 +248,9 @@ const StatusBarResources = memo(function StatusBarResources() {
   const gitDirectory = session && isTerminal && LOCAL_SHELL_TYPES.has(session.terminalType)
     ? directory
     : null;
+  // 终端每次回车都会刷新活动时间戳：交给状态栏 Git 条目在校对时使用，
+  // 这样在终端里执行 git checkout / switch 后分支能尽快跟上。
+  const terminalActivityAt = session ? terminalActivities[session.id]?.updatedAt : undefined;
   // 只有本地 Shell 的目录属于本机文件系统；远程会话路径在远端，点击仍复制路径。
   const canBrowseLocal = Boolean(
     session && directory && isTerminal && LOCAL_SHELL_TYPES.has(session.terminalType),
@@ -500,7 +504,11 @@ const StatusBarResources = memo(function StatusBarResources() {
           </button>
 
           {gitDirectory && (
-            <GitNavBar variant="statusbar" currentDirectory={gitDirectory} />
+            <GitNavBar
+              variant="statusbar"
+              currentDirectory={gitDirectory}
+              terminalActivityAt={terminalActivityAt}
+            />
           )}
         </>
       )}
@@ -530,6 +538,8 @@ const StatusBarResources = memo(function StatusBarResources() {
             )}
           </button>
         ) : null}
+
+        <ScheduledTasksStatusEntry />
 
         <StatusBarResources />
 

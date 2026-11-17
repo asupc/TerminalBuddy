@@ -18,6 +18,7 @@ export * from './events';
 export * from './fs';
 export * from './git';
 export * from './profiles';
+export * from './scheduledTasks';
 export * from './settings';
 export * from './ssh';
 export * from './system';
