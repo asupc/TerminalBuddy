@@ -43,6 +43,11 @@ export interface GitNavBarProps {
   onRepositoryChanged?: () => void | Promise<void>;
   /** statusbar：底部状态栏的紧凑平铺布局，分支浮层从状态栏向上弹出。 */
   variant?: 'panel' | 'statusbar';
+  /**
+   * statusbar：终端输入活动时间戳（每次回车更新）。
+   * 变化后延迟校对一次 Git 状态，用来捕捉终端里执行的 git checkout / switch。
+   */
+  terminalActivityAt?: number;
 }
 /** 工具栏图标统一走 Lucide：拉取向下、推送向上、提交用 Git 提交节点。 */
 const GIT_TOOLBAR_ICONS: Record<GitToolbarIconName, LucideIcon> = {

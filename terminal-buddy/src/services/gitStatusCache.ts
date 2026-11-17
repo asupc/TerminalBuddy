@@ -133,12 +133,20 @@ export async function loadGitRepositoryStatus(
 
   const request = getGitRepositoryStatus(path)
     .then((status) => {
-      const currentStatus = getCachedGitRepositoryStatus(path)?.status;
+      const currentEntry = getCachedGitRepositoryStatus(path, { exact: true });
+      // 已检测过的目录（包括“不是仓库”）以精确缓存为准，不能用父仓库的旧状态冒充。
+      const currentStatus = currentEntry
+        ? currentEntry.status
+        : getCachedGitRepositoryStatus(path)?.status;
       const nextStatus = areStatusesEqual(currentStatus, status) ? currentStatus ?? null : status;
-      const entry = { status: nextStatus, updatedAt: Date.now() };
+      // 状态栏会定期校对：状态没变时复用缓存对象，不通知订阅者重渲染，
+      // 也让调用方的 setState 因引用相同而跳过更新。
+      const unchanged = currentEntry !== undefined && currentEntry.status === nextStatus;
+      const entry = unchanged && currentEntry ? currentEntry : { status: nextStatus, updatedAt: 0 };
+      entry.updatedAt = Date.now();
       cacheEntry(path, entry);
       if (nextStatus) cacheEntry(nextStatus.repoRoot, entry);
-      notifyStatusListeners();
+      if (!unchanged) notifyStatusListeners();
       return nextStatus;
     })
     .finally(() => {

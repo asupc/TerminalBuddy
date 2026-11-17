@@ -26,6 +26,11 @@ import { GitPopover, GitAction, PullDialogState, PushDialogState, GitNavBarProps
 import { CommitDialog, PullDialog, PushDialog } from "./GitDialogs";
 import { finishGitOperation, getGitOperation, gitRepositoryKey, subscribeGitOperations, tryBeginGitOperation } from '../../services/gitOperationState';
 
+/** 状态栏兜底校对间隔：终端外部（其他工具、另一台机器）切换分支时也能跟上。 */
+const STATUS_BAR_REFRESH_MS = 10_000;
+/** 终端里回车后等命令执行完再校对，避免读到 git checkout 执行中的旧分支。 */
+const STATUS_BAR_ACTIVITY_REFRESH_MS = 1_200;
+
 export interface GitNavBarHandle {
   refreshStatus: () => Promise<GitRepositoryStatus | null>;
   loadBranches: () => Promise<void>;
@@ -37,7 +42,7 @@ export interface GitNavBarHandle {
 }
 
 export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
-  ({ currentDirectory, showToolbar = true, onRepositoryChanged, variant = 'panel' }, ref) => {
+  ({ currentDirectory, showToolbar = true, onRepositoryChanged, variant = 'panel', terminalActivityAt }, ref) => {
   const isStatusBar = variant === 'statusbar';
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const openGitChangesTab = useAppStore(s => s.openGitChangesTab);
@@ -167,6 +172,43 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
       return null;
     }
   }, [currentDirectory]);
+
+  // 终端里直接敲 git checkout / git switch 不会经过本组件，状态栏分支会停在旧值。
+  // 页面可见时定期校对一次，窗口重新获得焦点时立即补一次；操作进行中交给操作结束后的刷新。
+  useEffect(() => {
+    if (!isStatusBar) return;
+    let stopped = false;
+
+    const refreshIfIdle = () => {
+      if (stopped || action !== null) return;
+      if (document.visibilityState === 'hidden') return;
+      void refreshStatus();
+    };
+
+    const timer = window.setInterval(refreshIfIdle, STATUS_BAR_REFRESH_MS);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'hidden') refreshIfIdle();
+    };
+    window.addEventListener('focus', handleVisibilityChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', handleVisibilityChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [action, isStatusBar, refreshStatus]);
+
+  // 终端里敲回车后延迟校对一次：git checkout / switch 通常几百毫秒内结束，
+  // 不必等下一轮轮询。连续回车只会保留最后一次。
+  useEffect(() => {
+    if (!isStatusBar || terminalActivityAt === undefined) return;
+    const timer = window.setTimeout(() => {
+      if (action !== null || document.visibilityState === 'hidden') return;
+      void refreshStatus();
+    }, STATUS_BAR_ACTIVITY_REFRESH_MS);
+    return () => window.clearTimeout(timer);
+  }, [action, isStatusBar, refreshStatus, terminalActivityAt]);
 
   const runAction = useCallback(async (
     nextAction: Exclude<GitAction, null>,
