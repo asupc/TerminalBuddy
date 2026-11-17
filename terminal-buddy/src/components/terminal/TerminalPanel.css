@@ -307,11 +307,8 @@
   50% { opacity: 0.4; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .pane-working-dot.on {
-    animation: none;
-  }
-}
+/* 分屏标题灯属于状态提示：减少动画时由 global.css 统一换成慢速低幅呼吸，
+   不再单独停掉。 */
 .pane-close {
   background: none;
   border: none;

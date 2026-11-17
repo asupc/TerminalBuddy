@@ -299,9 +299,10 @@ textarea:focus-visible,
   to { opacity: 0.45; }
 }
 
+/* 呼吸灯是状态提示而不是装饰：系统开启「减少动画」时也保留低幅慢速的呼吸，
+   只把默认的 1.2s / 1→0.4 换成 2.4s / 1→0.55。完全停掉会让「执行中」和
+   「空闲」只剩颜色差别，用户会以为指示灯坏了（见文件末尾的 !important 兜底）。 */
 @media (prefers-reduced-motion: reduce) {
-  .tab-nav-dot.led-running, .terminal-tab-dot.led-running,
-  .tab-nav-dot.led-attention, .terminal-tab-dot.led-attention,
   .tab-nav-dot.led-completed, .terminal-tab-dot.led-completed {
     animation: none;
   }
@@ -410,5 +411,26 @@ textarea:focus-visible,
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* 状态指示灯例外：上面把动画压到 0.01ms，会让「执行中」的呼吸灯变成静态点。
+   这类灯传达的是状态而非装饰，减少动画时改为更慢、幅度更小的透明度呼吸。
+   选择器带 !important + 更高特异性，才能压过上面的全局兜底。 */
+@keyframes led-reduced-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-nav-dot.led-running,
+  .terminal-tab-dot.led-running,
+  .tab-nav-dot.led-attention,
+  .terminal-tab-dot.led-attention,
+  .claude-panel-led.led-running,
+  .claude-panel-led.led-attention,
+  .pane-working-dot.on,
+  .app-statusbar-dot.running {
+    animation: led-reduced-pulse 2.4s ease-in-out infinite !important;
   }
 }

@@ -283,6 +283,4 @@
   .app-statusbar-agent-history-label { display: none; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .app-statusbar-dot.running { animation: none; }
-}
+/* 运行指示点属于状态提示：减少动画时由 global.css 统一换成慢速低幅呼吸。 */
