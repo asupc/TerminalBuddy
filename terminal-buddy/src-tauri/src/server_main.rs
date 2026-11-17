@@ -51,6 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = AppHandle::new();
     // 原生 AI 会话的实时推送走统一事件通道（浏览器 / WS 事件订阅）。
     terminal_buddy_lib::services::ai_chat_service::set_app_handle(app.clone());
+    // 定时任务调度器：服务端进程常驻，可 7×24 执行；时区按任务自身的 IANA 时区计算。
+    terminal_buddy_lib::services::scheduled_task_service::start(app.clone());
     terminal_buddy_lib::services::codex_activity_service::start(app.clone());
     // Agent 历史会话自动归档：启动后延时执行，之后每 6 小时按设置检查一次。
     terminal_buddy_lib::services::session_auto_archive_service::start(app.clone());

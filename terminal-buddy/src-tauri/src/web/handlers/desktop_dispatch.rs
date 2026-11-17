@@ -79,6 +79,41 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
             run(move || crate::services::ai_chat_service::flush(&id, &owner, request_id.as_deref())).await
         }
         "ai_catalog" => run(crate::services::ai_catalog_service::catalog).await,
+        // 定时任务：桌面端与浏览器共用同一服务层，项目范围在保存时校验。
+        "scheduled_task_list" => run(crate::services::scheduled_task_service::list).await,
+        "scheduled_task_save" => {
+            let input: crate::models::scheduled_task::ScheduledTaskInput = argument(&args, "input")?;
+            let app = app.clone();
+            run(move || crate::services::scheduled_task_service::save(&app, input)).await
+        }
+        "scheduled_task_delete" => {
+            let (id, app2) = (argument::<String>(&args, "id")?, app.clone());
+            run(move || crate::services::scheduled_task_service::delete(&app2, &id)).await
+        }
+        "scheduled_task_set_enabled" => {
+            let (id, enabled, app2) = (argument::<String>(&args, "id")?, argument::<bool>(&args, "enabled")?, app.clone());
+            run(move || crate::services::scheduled_task_service::set_enabled(&app2, &id, enabled)).await
+        }
+        "scheduled_task_run_now" => {
+            let (id, app2) = (argument::<String>(&args, "id")?, app.clone());
+            run(move || crate::services::scheduled_task_service::run_now(&app2, &id)).await
+        }
+        "scheduled_task_stop" => {
+            let id: String = argument(&args, "id")?;
+            run(move || crate::services::scheduled_task_service::stop(&id)).await
+        }
+        "scheduled_task_runs" => {
+            let id: String = argument(&args, "id")?;
+            let limit = args.get("limit").and_then(Value::as_u64).map(|value| value as usize);
+            run(move || crate::services::scheduled_task_service::runs(&id, limit)).await
+        }
+        "scheduled_task_options" => run(crate::services::scheduled_task_service::options).await,
+        "scheduled_task_preview" => {
+            let expression: String = argument(&args, "expression")?;
+            let timezone: String = argument(&args, "timezone")?;
+            let count = args.get("count").and_then(Value::as_u64).map(|value| value as usize);
+            data(crate::services::scheduled_task_service::preview(&expression, &timezone, count.unwrap_or(5)))
+        }
         "ai_session_history" => {
             let agent: String = argument(&args, "agent")?;
             let include_archived: bool = argument(&args, "includeArchived")?;

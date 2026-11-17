@@ -1,0 +1,1399 @@
+//! 定时任务：存储、Cron / 时区计算、调度循环与执行器。
+//!
+//! 调度器随 TerminalBuddy 进程运行：桌面端退出即停止，Docker 服务端可 7×24 执行。
+//! 任务只能启动已登记项目的 Profile，或向 Agent 发送 Prompt，不执行任意 Shell 命令。
+use crate::commands::terminal::{teardown_terminal, TerminalCloseReason};
+use crate::commands::TerminalService;
+use crate::models::ai_chat::{AiSession, CreateAiSession, SendAiMessage};
+use crate::models::scheduled_task::*;
+use crate::models::{TerminalCreator, TerminalOwner};
+use crate::runtime::{AppHandle, Emitter, Manager};
+use crate::services::{ai_catalog_service, ai_chat_service, AppNotificationService, PathService, ProfileService};
+use chrono::{DateTime, Duration, TimeZone, Utc};
+use chrono_tz::Tz;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use uuid::Uuid;
+
+/// 错过超过该宽限期就不补跑，避免停机后一次补跑几十次。
+const GRACE_MINUTES: i64 = 5;
+/// 全局同时执行的定时任务上限。
+const MAX_CONCURRENT_RUNS: usize = 3;
+/// 手动运行同一任务的去重窗口。
+const MANUAL_DEDUP_MS: i64 = 5_000;
+const TICK_SECONDS: u64 = 30;
+const POLL_SECONDS: u64 = 5;
+
+type Result<T> = std::result::Result<T, String>;
+
+// ---------------------------------------------------------------------------
+// 事件
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskRunEvent {
+    task_id: String,
+    run: ScheduledRun,
+    task: ScheduledTask,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TasksChangedEvent {
+    task_id: Option<String>,
+    action: String,
+}
+
+fn emit_run(app: &AppHandle, task: &ScheduledTask, run: &ScheduledRun) {
+    let _ = app.emit(
+        "scheduled-task-run",
+        TaskRunEvent { task_id: task.id.clone(), run: run.clone(), task: task.clone() },
+    );
+}
+
+fn emit_changed(app: &AppHandle, task_id: Option<String>, action: &str) {
+    let _ = app.emit(
+        "scheduled-tasks-changed",
+        TasksChangedEvent { task_id, action: action.to_string() },
+    );
+}
+
+/// 广播定时任务创建的终端。
+///
+/// 桌面端创建的终端属于 `Pc`：浏览器在「会话不共享」时不能看到它，因此桌面模式下
+/// 只推给 Tauri 窗口，只有开启共享才同时进入 EventBus（浏览器事件通道）。
+/// 服务端创建的终端属于 `Web`，正常广播给所有已登录客户端。
+fn emit_terminal_created(app: &AppHandle, payload: serde_json::Value) {
+    #[cfg(feature = "desktop")]
+    {
+        let _ = tauri::Emitter::emit(app, "terminal-created", payload.clone());
+        if crate::services::SettingsService::share_sessions_enabled() {
+            let message = crate::runtime::RuntimeEvent {
+                event: "terminal-created".to_string(),
+                payload,
+            };
+            let _ = app.state::<crate::runtime::EventBus>().0.send(message);
+        }
+    }
+    #[cfg(not(feature = "desktop"))]
+    {
+        let _ = app.emit("terminal-created", payload);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 存储
+// ---------------------------------------------------------------------------
+
+fn store_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn storage_dir() -> Result<PathBuf> {
+    let dir = PathService::require_data_dir()?.join("ScheduledTasks");
+    fs::create_dir_all(&dir).map_err(|e| format!("创建定时任务目录失败：{e}"))?;
+    Ok(dir)
+}
+
+fn tasks_path() -> Result<PathBuf> {
+    Ok(storage_dir()?.join("tasks.json"))
+}
+
+fn runs_dir() -> Result<PathBuf> {
+    let dir = storage_dir()?.join("runs");
+    fs::create_dir_all(&dir).map_err(|e| format!("创建定时任务运行记录目录失败：{e}"))?;
+    Ok(dir)
+}
+
+fn run_path(task_id: &str) -> Result<PathBuf> {
+    // 任务 id 一律为 UUID；借用户输入的 id 拼路径前先校验，杜绝路径穿越。
+    let id = Uuid::parse_str(task_id).map_err(|_| "定时任务标识无效".to_string())?;
+    Ok(runs_dir()?.join(format!("{id}.json")))
+}
+
+#[derive(Serialize, Deserialize)]
+struct TasksFile {
+    version: u32,
+    tasks: Vec<ScheduledTask>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TasksFileCompat {
+    Versioned(TasksFile),
+    Legacy(Vec<ScheduledTask>),
+}
+
+pub(crate) fn load_defs() -> Result<Vec<ScheduledTask>> {
+    let path = tasks_path()?;
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let bytes = fs::read(&path).map_err(|e| format!("读取定时任务失败：{e}"))?;
+    match serde_json::from_slice::<TasksFileCompat>(&bytes) {
+        Ok(TasksFileCompat::Versioned(file)) => Ok(file.tasks),
+        Ok(TasksFileCompat::Legacy(tasks)) => Ok(tasks),
+        Err(error) => Err(format!("定时任务文件格式无效：{error}")),
+    }
+}
+
+fn save_defs(tasks: &[ScheduledTask]) -> Result<()> {
+    let content = serde_json::to_vec_pretty(&TasksFile { version: 1, tasks: tasks.to_vec() })
+        .map_err(|e| format!("编码定时任务失败：{e}"))?;
+    crate::services::atomic_file::atomic_write(&tasks_path()?, &content)
+        .map_err(|e| format!("保存定时任务失败：{e}"))
+}
+
+fn read_runs_unlocked(task_id: &str) -> Vec<ScheduledRun> {
+    let Ok(path) = run_path(task_id) else { return Vec::new() };
+    fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Vec<ScheduledRun>>(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn write_runs_unlocked(task_id: &str, runs: &[ScheduledRun]) -> Result<()> {
+    let content = serde_json::to_vec(runs).map_err(|e| format!("编码运行记录失败：{e}"))?;
+    crate::services::atomic_file::atomic_write(&run_path(task_id)?, &content)
+        .map_err(|e| format!("保存运行记录失败：{e}"))
+}
+
+fn append_run(run: &ScheduledRun) {
+    let Ok(_guard) = store_lock().lock() else { return };
+    let mut runs = read_runs_unlocked(&run.task_id);
+    runs.push(run.clone());
+    if runs.len() > MAX_RUNS_PER_TASK {
+        let excess = runs.len() - MAX_RUNS_PER_TASK;
+        runs.drain(0..excess);
+    }
+    let _ = write_runs_unlocked(&run.task_id, &runs);
+}
+
+fn update_run(run: &ScheduledRun) {
+    let Ok(_guard) = store_lock().lock() else { return };
+    let mut runs = read_runs_unlocked(&run.task_id);
+    match runs.iter_mut().find(|item| item.id == run.id) {
+        Some(existing) => *existing = run.clone(),
+        None => runs.push(run.clone()),
+    }
+    if runs.len() > MAX_RUNS_PER_TASK {
+        let excess = runs.len() - MAX_RUNS_PER_TASK;
+        runs.drain(0..excess);
+    }
+    let _ = write_runs_unlocked(&run.task_id, &runs);
+}
+
+pub fn read_runs(task_id: &str) -> Vec<ScheduledRun> {
+    read_runs_unlocked(task_id)
+}
+
+fn touch_task(task_id: &str, last_run_at: i64) {
+    let Ok(_guard) = store_lock().lock() else { return };
+    let Ok(mut tasks) = load_defs() else { return };
+    if let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) {
+        task.last_run_at = Some(last_run_at);
+        let _ = save_defs(&tasks);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 运行态（内存）
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+struct ActiveRun {
+    run_id: String,
+    session_id: Option<String>,
+    terminal_id: Option<String>,
+    stop_requested: bool,
+}
+
+fn active() -> &'static Mutex<HashMap<String, ActiveRun>> {
+    static ACTIVE: OnceLock<Mutex<HashMap<String, ActiveRun>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn lock_active() -> std::sync::MutexGuard<'static, HashMap<String, ActiveRun>> {
+    active().lock().unwrap_or_else(|error| error.into_inner())
+}
+
+fn active_run_id(task_id: &str) -> Option<String> {
+    lock_active().get(task_id).map(|entry| entry.run_id.clone())
+}
+
+fn set_active_session(task_id: &str, run_id: &str, session_id: Option<String>, terminal_id: Option<String>) {
+    if let Some(entry) = lock_active().get_mut(task_id) {
+        if entry.run_id == run_id {
+            entry.session_id = session_id;
+            entry.terminal_id = terminal_id;
+        }
+    }
+}
+
+fn stop_requested(task_id: &str, run_id: &str) -> bool {
+    lock_active()
+        .get(task_id)
+        .is_some_and(|entry| entry.run_id == run_id && entry.stop_requested)
+}
+
+fn remove_active(task_id: &str, run_id: &str) {
+    let mut map = lock_active();
+    if map.get(task_id).is_some_and(|entry| entry.run_id == run_id) {
+        map.remove(task_id);
+    }
+}
+
+fn last_manual() -> &'static Mutex<HashMap<String, i64>> {
+    static LAST: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
+    LAST.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn manual_run_allowed(last: Option<i64>, now_ms: i64) -> bool {
+    last.map_or(true, |last| now_ms - last >= MANUAL_DEDUP_MS)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RunAdmission {
+    Allowed,
+    TaskRunning,
+    GlobalLimit,
+}
+
+fn run_admission(active_same_task: bool, active_total: usize) -> RunAdmission {
+    if active_same_task {
+        RunAdmission::TaskRunning
+    } else if active_total >= MAX_CONCURRENT_RUNS {
+        RunAdmission::GlobalLimit
+    } else {
+        RunAdmission::Allowed
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 时间计算
+// ---------------------------------------------------------------------------
+
+/// 返回严格晚于 `after` 的下一次计划时刻。
+pub(crate) fn next_after(schedule: &TaskSchedule, after: DateTime<Utc>, tz: Tz) -> Option<DateTime<Utc>> {
+    match schedule {
+        TaskSchedule::Cron { expression } => {
+            let schedule = crate::models::scheduled_task::parse_cron_schedule(expression).ok()?;
+            schedule
+                .after(&after.with_timezone(&tz))
+                .next()
+                .map(|value| value.with_timezone(&Utc))
+        }
+        TaskSchedule::Once { run_at } => {
+            let utc = once_as_utc(run_at, tz)?;
+            (utc > after).then_some(utc)
+        }
+    }
+}
+
+/// 返回 (最近一次已到期的计划时刻, 是否在宽限期内、应当执行)。
+pub(crate) fn due_occurrence(task: &ScheduledTask, now: DateTime<Utc>) -> Option<(DateTime<Utc>, bool)> {
+    let tz = parse_timezone(&task.timezone).ok()?;
+    let anchor_ms = task.last_scheduled_at.unwrap_or(task.created_at);
+    let anchor = Utc.timestamp_millis_opt(anchor_ms).single().unwrap_or(now);
+    match &task.schedule {
+        TaskSchedule::Once { run_at } => {
+            let at = once_as_utc(run_at, tz)?;
+            if at <= anchor || at > now {
+                return None;
+            }
+            Some((at, now - at <= Duration::minutes(GRACE_MINUTES)))
+        }
+        TaskSchedule::Cron { .. } => {
+            let first = next_after(&task.schedule, anchor, tz)?;
+            if first > now {
+                return None;
+            }
+            // 长时间停机后逐条迭代可能有几十万次。先检查宽限窗口内是否还有计划时刻：
+            // 有（如每分钟任务）就只处理最近一次；宽限窗口内没有则可直接跳过本次补跑。
+            let window_start = now - Duration::minutes(GRACE_MINUTES) - Duration::seconds(1);
+            let mut latest = if first >= window_start {
+                first
+            } else {
+                match next_after(&task.schedule, window_start, tz) {
+                    Some(candidate) if candidate <= now => candidate,
+                    _ => {
+                        // 宽限窗口内没有计划时刻：本次不执行。锚点推进到 now 即可，
+                        // 下一轮从当前时刻起算，不会把停机期间的时刻逐个补跑。
+                        return Some((now, false));
+                    }
+                }
+            };
+            while let Some(next) = next_after(&task.schedule, latest, tz) {
+                if next > now {
+                    break;
+                }
+                latest = next;
+            }
+            Some((latest, now - latest <= Duration::minutes(GRACE_MINUTES)))
+        }
+    }
+}
+
+/// 未来最近一次运行时间（毫秒）；禁用任务由调用方决定是否展示。
+pub(crate) fn next_run_at(task: &ScheduledTask, now: DateTime<Utc>) -> Option<i64> {
+    let tz = parse_timezone(&task.timezone).ok()?;
+    let anchor_ms = task
+        .last_scheduled_at
+        .unwrap_or(task.created_at)
+        .max(now.timestamp_millis());
+    let anchor = Utc.timestamp_millis_opt(anchor_ms).single()?;
+    next_after(&task.schedule, anchor, tz).map(|value| value.timestamp_millis())
+}
+
+pub fn preview(expression: &str, timezone: &str, count: usize) -> Result<Vec<i64>> {
+    let tz = parse_timezone(timezone)?;
+    let schedule = crate::models::scheduled_task::parse_cron_schedule(expression)?;
+    let count = count.clamp(1, 20);
+    let mut cursor = Utc::now().with_timezone(&tz);
+    let mut result = Vec::with_capacity(count);
+    while result.len() < count {
+        let Some(next) = schedule.after(&cursor).next() else { break };
+        result.push(next.timestamp_millis());
+        cursor = next;
+    }
+    if result.is_empty() {
+        return Err("Cron 表达式在未来没有可执行时间，请检查".into());
+    }
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// 视图与 CRUD
+// ---------------------------------------------------------------------------
+
+/// 进程重启后运行记录里可能残留 running / waitingApproval：内存中的活动表已经清空，
+/// 这些记录不应继续显示为执行中。只在读取视图时修正，不改写历史文件。
+fn reconcile_run(mut run: ScheduledRun) -> ScheduledRun {
+    if matches!(run.status.as_str(), "running" | "waitingApproval")
+        && active_run_id(&run.task_id).as_deref() != Some(run.id.as_str())
+    {
+        run.status = "stopped".into();
+        run.message = Some("执行已中断（应用已重启）".into());
+        // 不伪造结束时间：真实收尾时刻未知，界面显示「—」比编造耗时要诚实。
+    }
+    run
+}
+
+fn view_for(task: ScheduledTask, now: DateTime<Utc>) -> ScheduledTaskView {
+    let next_run_at = if task.enabled { next_run_at(&task, now) } else { None };
+    let running_run_id = active_run_id(&task.id);
+    let last_run = {
+        let mut runs = read_runs_unlocked(&task.id);
+        runs.pop().map(reconcile_run)
+    };
+    ScheduledTaskView { task, next_run_at, running_run_id, last_run }
+}
+
+pub fn list() -> Result<Vec<ScheduledTaskView>> {
+    let tasks = load_defs()?;
+    let now = Utc::now();
+    Ok(tasks.into_iter().map(|task| view_for(task, now)).collect())
+}
+
+fn schedule_key(schedule: &TaskSchedule) -> String {
+    match schedule {
+        TaskSchedule::Cron { expression } => format!("cron:{}", expression.trim()),
+        TaskSchedule::Once { run_at } => format!("once:{}", run_at.trim()),
+    }
+}
+
+/// 在已校验输入上执行存储层的「读-改-写」。调用方负责传入当前项目 / Profile 列表。
+fn persist_save(
+    input: ScheduledTaskInput,
+    projects: &[crate::commands::profile::Project],
+    profiles: &[crate::models::Profile],
+    now_ms: i64,
+) -> Result<(ScheduledTask, bool)> {
+    let mut task = validate_input(input, projects, profiles)?;
+    let _guard = store_lock().lock().unwrap_or_else(|error| error.into_inner());
+    let mut tasks = load_defs()?;
+    let existing_index = if task.id.is_empty() {
+        None
+    } else {
+        tasks.iter().position(|existing| existing.id == task.id)
+    };
+    let created = existing_index.is_none();
+    match existing_index {
+        Some(index) => {
+            let old = &tasks[index];
+            task.created_at = old.created_at;
+            task.last_run_at = old.last_run_at;
+            // 只有调度方式 / 时区变化才重置锚点：改名、改 Prompt 不应导致立刻触发。
+            let schedule_changed =
+                schedule_key(&task.schedule) != schedule_key(&old.schedule) || task.timezone != old.timezone;
+            task.last_scheduled_at = if schedule_changed { Some(now_ms) } else { old.last_scheduled_at };
+            task.updated_at = now_ms;
+            tasks[index] = task.clone();
+        }
+        None => {
+            if !task.id.is_empty() {
+                return Err("定时任务不存在，可能已被删除".into());
+            }
+            if tasks.len() >= MAX_TASKS {
+                return Err(format!("定时任务数量已达上限（{} 个）", MAX_TASKS));
+            }
+            task.id = Uuid::new_v4().to_string();
+            task.created_at = now_ms;
+            task.updated_at = now_ms;
+            // 保存后不应立刻补跑创建之前的计划时刻。
+            task.last_scheduled_at = Some(now_ms);
+            tasks.push(task.clone());
+        }
+    }
+    save_defs(&tasks)?;
+    Ok((task, created))
+}
+
+pub fn save(app: &AppHandle, input: ScheduledTaskInput) -> Result<ScheduledTaskView> {
+    let projects = crate::commands::profile::get_projects()?;
+    let profiles = ProfileService::get_all_profiles()?;
+    let (task, created) = persist_save(input, &projects, &profiles, Utc::now().timestamp_millis())?;
+    emit_changed(
+        app,
+        Some(task.id.clone()),
+        if created { "created" } else { "updated" },
+    );
+    Ok(view_for(task, Utc::now()))
+}
+
+pub fn delete(app: &AppHandle, id: &str) -> Result<()> {
+    let _guard = store_lock().lock().unwrap_or_else(|error| error.into_inner());
+    let mut tasks = load_defs()?;
+    let Some(index) = tasks.iter().position(|task| task.id == id) else {
+        return Err("定时任务不存在，可能已被删除".into());
+    };
+    tasks.remove(index);
+    save_defs(&tasks)?;
+    if let Ok(path) = run_path(id) {
+        let _ = fs::remove_file(path);
+    }
+    drop(_guard);
+    emit_changed(app, Some(id.to_string()), "deleted");
+    Ok(())
+}
+
+pub fn set_enabled(app: &AppHandle, id: &str, enabled: bool) -> Result<ScheduledTaskView> {
+    let task = {
+        let _guard = store_lock().lock().unwrap_or_else(|error| error.into_inner());
+        let mut tasks = load_defs()?;
+        let index = tasks
+            .iter()
+            .position(|task| task.id == id)
+            .ok_or_else(|| "定时任务不存在，可能已被删除".to_string())?;
+        let task = &mut tasks[index];
+        task.enabled = enabled;
+        // 重新启用时从当前时刻起算，避免停机期间错过的时间立即补跑。
+        if enabled {
+            task.last_scheduled_at = Some(Utc::now().timestamp_millis());
+        }
+        task.updated_at = Utc::now().timestamp_millis();
+        let task = task.clone();
+        save_defs(&tasks)?;
+        task
+    };
+    emit_changed(app, Some(id.to_string()), if enabled { "enabled" } else { "disabled" });
+    Ok(view_for(task, Utc::now()))
+}
+
+pub fn runs(id: &str, limit: Option<usize>) -> Result<Vec<ScheduledRun>> {
+    let mut runs = read_runs(id);
+    runs.reverse();
+    if let Some(limit) = limit {
+        runs.truncate(limit);
+    }
+    Ok(runs.into_iter().map(reconcile_run).collect())
+}
+
+pub fn options() -> Result<ScheduledTaskOptions> {
+    Ok(ScheduledTaskOptions {
+        projects: crate::commands::profile::get_projects()?,
+        profiles: ProfileService::get_all_profiles()?,
+        catalog: ai_catalog_service::catalog()?,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// 调度循环
+// ---------------------------------------------------------------------------
+
+static STARTED: AtomicBool = AtomicBool::new(false);
+
+pub fn start(app: AppHandle) {
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    crate::runtime::async_runtime::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(TICK_SECONDS));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            let tick_app = app.clone();
+            match crate::runtime::async_runtime::spawn_blocking(move || tick(&tick_app)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => eprintln!("定时任务调度失败：{error}"),
+                Err(error) => eprintln!("定时任务调度任务失败：{error}"),
+            }
+        }
+    });
+}
+
+enum TickAction {
+    Run(ScheduledTask),
+    Skip(ScheduledTask, String),
+}
+
+fn tick(app: &AppHandle) -> Result<()> {
+    let now = Utc::now();
+    let (actions, changed) = {
+        let _guard = store_lock().lock().unwrap_or_else(|error| error.into_inner());
+        let mut tasks = load_defs()?;
+        let mut actions = Vec::new();
+        let mut changed = false;
+        for task in tasks.iter_mut().filter(|task| task.enabled) {
+            let Some((latest, should_run)) = due_occurrence(task, now) else { continue };
+            let latest_ms = latest.timestamp_millis();
+            task.last_scheduled_at = Some(latest_ms);
+            let once = task.schedule.is_once();
+            if once {
+                // 仅一次任务消费后自动停止，无论是否在宽限期内。
+                task.enabled = false;
+            }
+            changed = true;
+            if should_run {
+                actions.push(TickAction::Run(task.clone()));
+            } else if once {
+                actions.push(TickAction::Skip(task.clone(), "已错过计划时间".into()));
+            }
+        }
+        if changed {
+            save_defs(&tasks)?;
+        }
+        (actions, changed)
+    };
+    if changed {
+        emit_changed(app, None, "scheduled");
+    }
+    for action in actions {
+        match action {
+            TickAction::Run(task) => match dispatch(app, task.clone(), "scheduled") {
+                Ok(_) => {}
+                Err(RunAdmission::TaskRunning) => {
+                    record_skipped(app, &task, "任务正在运行，本次已跳过");
+                }
+                Err(RunAdmission::GlobalLimit) => {
+                    record_skipped(app, &task, "同时执行的定时任务已达上限，本次已跳过");
+                }
+                Err(RunAdmission::Allowed) => {}
+            },
+            TickAction::Skip(task, message) => record_skipped(app, &task, &message),
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 执行
+// ---------------------------------------------------------------------------
+
+fn new_run(task: &ScheduledTask, trigger: &str) -> ScheduledRun {
+    let (agent, model) = match &task.target {
+        TaskTarget::AgentPrompt { agent, model, .. } => (Some(agent.clone()), model.clone()),
+        TaskTarget::ProjectProfile { .. } => (None, None),
+    };
+    ScheduledRun {
+        id: Uuid::new_v4().to_string(),
+        task_id: task.id.clone(),
+        task_name: task.name.clone(),
+        trigger: trigger.to_string(),
+        status: "running".to_string(),
+        started_at: Utc::now().timestamp_millis(),
+        finished_at: None,
+        message: None,
+        terminal_id: None,
+        session_id: None,
+        agent,
+        provider_name: None,
+        model,
+        input_tokens: None,
+        output_tokens: None,
+    }
+}
+
+fn record_skipped(app: &AppHandle, task: &ScheduledTask, message: &str) {
+    let mut run = new_run(task, "scheduled");
+    run.status = "skipped".to_string();
+    run.finished_at = Some(run.started_at);
+    run.message = Some(message.to_string());
+    append_run(&run);
+    emit_run(app, task, &run);
+}
+
+/// 原子地占用运行名额：单任务串行 + 全局并发上限在同一把锁内判定，
+/// 避免调度 tick 与手动运行同时通过检查而超限。
+fn try_admit(task_id: &str, run_id: &str) -> std::result::Result<(), RunAdmission> {
+    let mut map = lock_active();
+    match run_admission(map.contains_key(task_id), map.len()) {
+        RunAdmission::Allowed => {
+            map.insert(
+                task_id.to_string(),
+                ActiveRun {
+                    run_id: run_id.to_string(),
+                    session_id: None,
+                    terminal_id: None,
+                    stop_requested: false,
+                },
+            );
+            Ok(())
+        }
+        other => Err(other),
+    }
+}
+
+fn dispatch(app: &AppHandle, task: ScheduledTask, trigger: &str) -> std::result::Result<ScheduledRun, RunAdmission> {
+    let run = new_run(&task, trigger);
+    // 先登记活动运行，再写运行记录：其它客户端在两次写之间读取列表时，
+    // 不会把刚创建、马上就要执行的记录误判为「应用重启导致的中断」。
+    try_admit(&task.id, &run.id)?;
+    append_run(&run);
+    emit_run(app, &task, &run);
+
+    let task_for_run = task.clone();
+    let run_for_run = run.clone();
+    let app_for_run = app.clone();
+    crate::runtime::async_runtime::spawn(async move {
+        let outcome = match &task_for_run.target {
+            TaskTarget::ProjectProfile { .. } => {
+                run_profile(app_for_run.clone(), &task_for_run, &run_for_run).await
+            }
+            TaskTarget::AgentPrompt { .. } => {
+                run_agent(app_for_run.clone(), &task_for_run, &run_for_run).await
+            }
+        };
+        finish_run(app_for_run, task_for_run, run_for_run, outcome).await;
+    });
+    Ok(run)
+}
+
+pub fn run_now(app: &AppHandle, id: &str) -> Result<ScheduledRun> {
+    let task = load_defs()?
+        .into_iter()
+        .find(|task| task.id == id)
+        .ok_or_else(|| "定时任务不存在，可能已被删除".to_string())?;
+    let now = Utc::now().timestamp_millis();
+    {
+        let mut last = last_manual().lock().unwrap_or_else(|error| error.into_inner());
+        if !manual_run_allowed(last.get(id).copied(), now) {
+            return Err("任务刚刚已启动，请稍后再试".into());
+        }
+        last.insert(id.to_string(), now);
+    }
+    match dispatch(app, task.clone(), "manual") {
+        Ok(run) => Ok(run),
+        Err(RunAdmission::TaskRunning) => {
+            Ok(skipped_run(app, &task, "manual", "任务正在运行，本次已跳过"))
+        }
+        Err(RunAdmission::GlobalLimit) => {
+            Ok(skipped_run(app, &task, "manual", "同时执行的定时任务已达上限，本次已跳过"))
+        }
+        Err(RunAdmission::Allowed) => Ok(skipped_run(app, &task, "manual", "本次已跳过")),
+    }
+}
+
+fn skipped_run(app: &AppHandle, task: &ScheduledTask, trigger: &str, message: &str) -> ScheduledRun {
+    let mut run = new_run(task, trigger);
+    run.status = "skipped".to_string();
+    run.finished_at = Some(run.started_at);
+    run.message = Some(message.to_string());
+    append_run(&run);
+    emit_run(app, task, &run);
+    run
+}
+
+pub fn stop(id: &str) -> Result<()> {
+    // Agent 任务在创建会话前也会占用运行名额；此时没有 session_id 可停止。
+    let is_agent = load_defs()
+        .ok()
+        .and_then(|tasks| tasks.into_iter().find(|task| task.id == id))
+        .map(|task| matches!(task.target, TaskTarget::AgentPrompt { .. }))
+        .unwrap_or(true);
+    let session = {
+        let mut map = lock_active();
+        let entry = map
+            .get_mut(id)
+            .ok_or_else(|| "任务当前没有运行中的执行".to_string())?;
+        let Some(session) = entry.session_id.clone() else {
+            return Err(if is_agent {
+                "会话正在创建，请稍后再试".to_string()
+            } else {
+                "项目配置任务请在终端标签中关闭".to_string()
+            });
+        };
+        entry.stop_requested = true;
+        session
+    };
+    let owner = crate::commands::ai_chat::desktop_owner();
+    // 会话可能刚好自然结束：停止失败不应把用户操作变成报错。
+    let _ = ai_chat_service::stop(&session, &owner);
+    Ok(())
+}
+
+#[derive(Default)]
+struct RunOutcome {
+    status: String,
+    message: Option<String>,
+    session_id: Option<String>,
+    terminal_id: Option<String>,
+    agent: Option<String>,
+    provider_name: Option<String>,
+    model: Option<String>,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+}
+
+fn failed(message: impl Into<String>) -> RunOutcome {
+    RunOutcome { status: "failed".into(), message: Some(message.into()), ..Default::default() }
+}
+
+async fn finish_run(app: AppHandle, task: ScheduledTask, mut run: ScheduledRun, outcome: RunOutcome) {
+    let finished_at = Utc::now().timestamp_millis();
+    run.status = if outcome.status.is_empty() { "failed".to_string() } else { outcome.status };
+    run.finished_at = Some(finished_at);
+    run.message = outcome.message;
+    run.session_id = outcome.session_id.or(run.session_id);
+    run.terminal_id = outcome.terminal_id.or(run.terminal_id);
+    run.agent = outcome.agent.or(run.agent);
+    run.provider_name = outcome.provider_name.or(run.provider_name);
+    run.model = outcome.model.or(run.model);
+    run.input_tokens = outcome.input_tokens.or(run.input_tokens);
+    run.output_tokens = outcome.output_tokens.or(run.output_tokens);
+
+    let run_for_write = run.clone();
+    let _ = crate::runtime::async_runtime::spawn_blocking(move || update_run(&run_for_write)).await;
+    remove_active(&task.id, &run.id);
+    let task_id = task.id.clone();
+    let _ = crate::runtime::async_runtime::spawn_blocking(move || touch_task(&task_id, finished_at)).await;
+    emit_run(&app, &task, &run);
+    emit_changed(&app, Some(task.id.clone()), "run");
+    notify_result(&app, &task, &run);
+}
+
+fn notify_result(_app: &AppHandle, task: &ScheduledTask, run: &ScheduledRun) {
+    if !task.notify {
+        return;
+    }
+    let summary = run.message.as_deref().unwrap_or("");
+    match run.status.as_str() {
+        "completed" => AppNotificationService::publish_scheduled(
+            "completed", &task.name, summary, &task.id, &run.id, run.session_id.as_deref(),
+        ),
+        "failed" | "timeout" => AppNotificationService::publish_scheduled(
+            "failed", &task.name, summary, &task.id, &run.id, run.session_id.as_deref(),
+        ),
+        "waitingApproval" => AppNotificationService::publish_scheduled(
+            "approval", &task.name, summary, &task.id, &run.id, run.session_id.as_deref(),
+        ),
+        _ => {}
+    }
+}
+
+async fn blocking<T, F>(task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    crate::runtime::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| format!("定时任务后台操作失败：{error}"))?
+}
+
+fn find_project(name: &str) -> Result<crate::commands::profile::Project> {
+    crate::commands::profile::get_projects()?
+        .into_iter()
+        .find(|project| project.name == name)
+        .ok_or_else(|| "项目已删除或不存在，请编辑任务".to_string())
+}
+
+fn project_path(project: &crate::commands::profile::Project) -> Result<String> {
+    if !Path::new(&project.path).is_dir() {
+        return Err("项目路径不可用，请编辑任务".into());
+    }
+    Ok(project.path.clone())
+}
+
+fn summarize(session: &AiSession) -> Option<String> {
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "assistant" && !message.text.trim().is_empty())
+        .map(|message| truncate_chars(message.text.trim(), 500))
+}
+
+fn truncate_chars(value: &str, limit: usize) -> String {
+    if value.chars().count() <= limit {
+        return value.to_string();
+    }
+    let mut result: String = value.chars().take(limit).collect();
+    result.push('…');
+    result
+}
+
+fn usage_tokens(session: &AiSession) -> (Option<u64>, Option<u64>) {
+    session
+        .usage
+        .as_ref()
+        .and_then(|usage| usage.last_turn.as_ref())
+        .map(|turn| (turn.tokens.input_tokens, turn.tokens.output_tokens))
+        .unwrap_or((None, None))
+}
+
+async fn run_agent(app: AppHandle, task: &ScheduledTask, run: &ScheduledRun) -> RunOutcome {
+    let TaskTarget::AgentPrompt { project_name, agent, provider_id, model, prompt } = &task.target else {
+        return failed("任务类型不匹配");
+    };
+    let (project_name, agent, provider_id, model, prompt) =
+        (project_name.clone(), agent.clone(), provider_id.clone(), model.clone(), prompt.clone());
+
+    let project = match blocking(move || find_project(&project_name)).await {
+        Ok(project) => project,
+        Err(error) => return failed(error),
+    };
+    let project_path = match project_path(&project) {
+        Ok(path) => path,
+        Err(error) => return failed(error),
+    };
+
+    let selection_agent = agent.clone();
+    let selection_model = model.clone();
+    let selection = match blocking(move || {
+        ai_catalog_service::selection(&selection_agent, provider_id.as_deref(), selection_model.as_deref())
+    })
+    .await
+    {
+        Ok(selection) => selection,
+        Err(error) => return failed(error),
+    };
+    let (resolved_provider_id, provider_name) = match selection {
+        Some((id, name)) => (Some(id), Some(name)),
+        None => (None, None),
+    };
+
+    let owner = crate::commands::ai_chat::desktop_owner();
+    let create_owner = owner.clone();
+    let create_agent = agent.clone();
+    let create_model = model.clone();
+    let create_input = CreateAiSession {
+        provider: create_agent,
+        provider_id: resolved_provider_id,
+        project_path,
+        model: create_model,
+        resume_session_id: None,
+    };
+    let session = match blocking(move || ai_chat_service::create(&create_owner, create_input)).await {
+        Ok(session) => session,
+        Err(error) => return failed(format!("创建会话失败：{error}")),
+    };
+
+    set_active_session(&task.id, &run.id, Some(session.id.clone()), None);
+    let mut live_run = run.clone();
+    live_run.session_id = Some(session.id.clone());
+    live_run.agent = Some(agent.clone());
+    live_run.provider_name = provider_name.clone().or(session.provider_name.clone());
+    live_run.model = model.clone().or(session.model.clone());
+    let live_run_for_write = live_run.clone();
+    let _ = crate::runtime::async_runtime::spawn_blocking(move || update_run(&live_run_for_write)).await;
+    emit_run(&app, task, &live_run);
+
+    let session_id = session.id.clone();
+    let send_owner = owner.clone();
+    let send_session = session_id.clone();
+    let send_input = SendAiMessage {
+        text: prompt,
+        request_id: Uuid::new_v4().to_string(),
+        steer: false,
+        images: Vec::new(),
+    };
+    if let Err(error) = blocking(move || ai_chat_service::send(&send_session, &send_owner, send_input)).await {
+        let _ = release_session(&session_id, &owner).await;
+        return RunOutcome {
+            status: "failed".into(),
+            message: Some(format!("发送任务失败：{error}")),
+            session_id: Some(session_id),
+            agent: Some(agent),
+            provider_name,
+            model,
+            ..Default::default()
+        };
+    }
+
+    let timeout = std::time::Duration::from_secs(task.timeout_minutes.max(1) as u64 * 60);
+    let started = std::time::Instant::now();
+    let mut approval_notified = false;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(POLL_SECONDS)).await;
+        if started.elapsed() > timeout {
+            let stop_owner = owner.clone();
+            let stop_session = session_id.clone();
+            let _ = blocking(move || ai_chat_service::stop(&stop_session, &stop_owner)).await;
+            let _ = release_session(&session_id, &owner).await;
+            return RunOutcome {
+                status: "timeout".into(),
+                message: Some(format!("执行超时（{} 分钟），已停止", task.timeout_minutes)),
+                session_id: Some(session_id),
+                agent: Some(agent),
+                provider_name,
+                model,
+                ..Default::default()
+            };
+        }
+        let get_owner = owner.clone();
+        let get_session = session_id.clone();
+        let snapshot = match blocking(move || ai_chat_service::get(&get_session, &get_owner)).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => return failed(format!("读取会话状态失败：{error}")),
+        };
+
+        // 权限询问可能先出现在 approvals 里、状态随后才切到 approval：
+        // 两个信号任一存在都按「等待确认」处理，避免误判为已完成。
+        if snapshot.status == "approval" || !snapshot.approvals.is_empty() {
+            if !approval_notified {
+                approval_notified = true;
+                let mut waiting = live_run.clone();
+                waiting.status = "waitingApproval".into();
+                waiting.message = Some("等待处理权限询问，请打开会话回答".into());
+                let waiting_for_write = waiting.clone();
+                let _ = crate::runtime::async_runtime::spawn_blocking(move || update_run(&waiting_for_write)).await;
+                emit_run(&app, task, &waiting);
+                if task.notify {
+                    AppNotificationService::publish_scheduled(
+                        "approval",
+                        &task.name,
+                        "等待处理权限询问，请打开会话回答",
+                        &task.id,
+                        &run.id,
+                        Some(&session_id),
+                    );
+                }
+            }
+            continue;
+        }
+
+        match snapshot.status.as_str() {
+            "running" | "background" | "stopping" => {
+                // 用户回答权限询问后回合继续：把运行记录从「等待确认」恢复为运行中，
+                // 并允许下一次询问重新发布通知。
+                if approval_notified {
+                    approval_notified = false;
+                    let mut resumed = live_run.clone();
+                    resumed.status = "running".into();
+                    resumed.message = Some("继续执行中".into());
+                    let resumed_for_write = resumed.clone();
+                    let _ = crate::runtime::async_runtime::spawn_blocking(move || update_run(&resumed_for_write)).await;
+                    emit_run(&app, task, &resumed);
+                }
+                continue;
+            }
+            "idle" | "interrupted" | "error" => {
+                let user_stopped = stop_requested(&task.id, &run.id);
+                let (status, message) = match snapshot.status.as_str() {
+                    "idle" if user_stopped => ("stopped", Some("已手动停止".to_string())),
+                    "idle" => (
+                        "completed",
+                        Some(summarize(&snapshot).unwrap_or_else(|| "执行完成".to_string())),
+                    ),
+                    "interrupted" if user_stopped => ("stopped", Some("已手动停止".to_string())),
+                    "interrupted" => (
+                        "failed",
+                        Some(snapshot.error.clone().unwrap_or_else(|| "执行被中断".to_string())),
+                    ),
+                    _ => (
+                        "failed",
+                        Some(snapshot.error.clone().unwrap_or_else(|| "Agent 执行失败".to_string())),
+                    ),
+                };
+                let (input_tokens, output_tokens) = usage_tokens(&snapshot);
+                let _ = release_session(&session_id, &owner).await;
+                return RunOutcome {
+                    status: status.into(),
+                    message,
+                    session_id: Some(session_id),
+                    agent: Some(agent),
+                    provider_name,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    ..Default::default()
+                };
+            }
+            _ => continue,
+        }
+    }
+}
+
+async fn release_session(session_id: &str, owner: &str) -> Result<()> {
+    let session_id = session_id.to_string();
+    let owner = owner.to_string();
+    blocking(move || ai_chat_service::release_process(&session_id, &owner)).await
+}
+
+async fn run_profile(app: AppHandle, task: &ScheduledTask, _run: &ScheduledRun) -> RunOutcome {
+    let TaskTarget::ProjectProfile { project_name, profile_id, auto_close_minutes } = &task.target else {
+        return failed("任务类型不匹配");
+    };
+    let (project_name, profile_id, auto_close_minutes) =
+        (project_name.clone(), profile_id.clone(), *auto_close_minutes);
+
+    let profile = match blocking(move || ProfileService::get_profile(&profile_id)).await {
+        Ok(profile) => profile,
+        Err(_) => return failed("所选终端配置已删除，请编辑任务"),
+    };
+    let normalized_group = if profile.group.trim().is_empty() { "默认" } else { profile.group.as_str() };
+    if normalized_group != project_name {
+        return failed("终端配置不属于所选项目，请编辑任务");
+    }
+    let project = match blocking(move || find_project(&project_name)).await {
+        Ok(project) => project,
+        Err(error) => return failed(error),
+    };
+    let project_path = match project_path(&project) {
+        Ok(path) => path,
+        Err(error) => return failed(error),
+    };
+
+    let display_name = format!("定时 · {}", task.name);
+    let terminal_app = app.clone();
+    let terminal_profile = profile.id.clone();
+    let owner = if cfg!(feature = "desktop") { TerminalOwner::Pc } else { TerminalOwner::Web };
+    let terminal_id = match blocking(move || {
+        let service = terminal_app.state::<TerminalService>().inner().clone();
+        service.create_terminal(
+            &terminal_profile,
+            Some(&display_name),
+            None,
+            None,
+            0,
+            0,
+            Some(&project_path),
+            false,
+            terminal_app.clone(),
+            owner,
+            TerminalCreator::Desktop,
+        )
+    })
+    .await
+    {
+        Ok(id) => id,
+        Err(error) => return failed(format!("启动终端失败：{error}")),
+    };
+
+    set_active_session(&task.id, &_run.id, None, Some(terminal_id.clone()));
+    // 与 Web 端创建终端一致：广播 terminal-created，前端补开标签且不抢焦点。
+    // activate=false 明确表达「凌晨任务不切走用户当前页面」；groupName 让标签落入项目分组。
+    if let Some(info) = app
+        .state::<TerminalService>()
+        .list_terminals_info()
+        .into_iter()
+        .find(|info| info.id == terminal_id)
+    {
+        let group = info.group.clone();
+        emit_terminal_created(
+            &app,
+            serde_json::json!({
+                "id": info.id,
+                "profileId": info.profile_id,
+                "profileName": info.profile_name,
+                "terminalType": info.terminal_type,
+                "owner": info.owner,
+                "group": info.group,
+                "groupName": group,
+                "activate": false,
+            }),
+        );
+    }
+
+    if auto_close_minutes > 0 {
+        let close_app = app.clone();
+        let close_terminal = terminal_id.clone();
+        crate::runtime::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(auto_close_minutes as u64 * 60)).await;
+            let _ = crate::runtime::async_runtime::spawn_blocking(move || {
+                teardown_terminal(&close_app, &close_terminal, TerminalCloseReason::ScheduledClose)
+            })
+            .await;
+        });
+    }
+
+    RunOutcome {
+        status: "started".into(),
+        message: Some("终端已启动".into()),
+        terminal_id: Some(terminal_id),
+        ..Default::default()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 测试
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixed_task(schedule: TaskSchedule) -> ScheduledTask {
+        ScheduledTask {
+            id: Uuid::new_v4().to_string(),
+            name: "测试任务".into(),
+            enabled: true,
+            timezone: "Asia/Shanghai".into(),
+            schedule,
+            target: TaskTarget::ProjectProfile {
+                project_name: "TerminalBuddy".into(),
+                profile_id: "p1".into(),
+                auto_close_minutes: 0,
+            },
+            notify: true,
+            timeout_minutes: 30,
+            created_at: 0,
+            updated_at: 0,
+            last_scheduled_at: None,
+            last_run_at: None,
+        }
+    }
+
+    fn utc(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(year, month, day, hour, minute, 0).unwrap()
+    }
+
+    #[test]
+    fn cron_next_run_respects_task_timezone() {
+        let schedule = TaskSchedule::Cron { expression: "0 9 * * *".into() };
+        let after = utc(2026, 11, 17, 0, 0);
+        let shanghai = parse_timezone("Asia/Shanghai").unwrap();
+        let utc_zone = parse_timezone("UTC").unwrap();
+        let in_shanghai = next_after(&schedule, after, shanghai).unwrap();
+        let in_utc = next_after(&schedule, after, utc_zone).unwrap();
+        // 北京时间 09:00 = 01:00 UTC；UTC 09:00 = 09:00 UTC，相差 8 小时。
+        assert_eq!(in_shanghai, utc(2026, 11, 17, 1, 0));
+        assert_eq!(in_utc, utc(2026, 11, 17, 9, 0));
+        assert_eq!(in_utc - in_shanghai, Duration::hours(8));
+    }
+
+    #[test]
+    fn standard_crontab_weekdays_are_translated() {
+        let shanghai = parse_timezone("Asia/Shanghai").unwrap();
+        // 标准 crontab：1 = 周一 .. 5 = 周五。周五 18:00 之后下一工作日是周一 09:00。
+        let weekdays = TaskSchedule::Cron { expression: "0 9 * * 1-5".into() };
+        let next = next_after(&weekdays, utc(2026, 11, 13, 10, 0), shanghai).unwrap();
+        assert_eq!(next, utc(2026, 11, 16, 1, 0));
+
+        // 标准 crontab：7 = 周日。周六 18:00 之后下一次是周日 09:00。
+        let sunday = TaskSchedule::Cron { expression: "0 9 * * 7".into() };
+        let next = next_after(&sunday, utc(2026, 11, 14, 10, 0), shanghai).unwrap();
+        assert_eq!(next, utc(2026, 11, 15, 1, 0));
+    }
+
+    #[test]
+    fn missed_occurrence_outside_grace_is_skipped() {
+        let mut task = fixed_task(TaskSchedule::Cron { expression: "0 9 * * *".into() });
+        task.created_at = utc(2026, 11, 15, 0, 0).timestamp_millis();
+        task.last_scheduled_at = Some(task.created_at);
+        let now = utc(2026, 11, 17, 12, 0);
+        let (_, should_run) = due_occurrence(&task, now).unwrap();
+        // 最近一次是北京时间今天 09:00，已经过去 11 小时，超出 5 分钟宽限。
+        assert!(!should_run);
+        // 锚点推进后同一时刻不会重复触发。
+        task.last_scheduled_at = Some(now.timestamp_millis());
+        assert!(due_occurrence(&task, now).is_none());
+    }
+
+    #[test]
+    fn hourly_task_does_not_burst_after_downtime() {
+        let mut task = fixed_task(TaskSchedule::Cron { expression: "0 * * * *".into() });
+        task.created_at = utc(2026, 11, 17, 0, 30).timestamp_millis();
+        task.last_scheduled_at = Some(task.created_at);
+        // 停机 6 小时：只返回一次决策且不补跑，不会逐个补跑 06:00 之前的时刻。
+        let (_, should_run) = due_occurrence(&task, utc(2026, 11, 17, 6, 10)).unwrap();
+        assert!(!should_run);
+        // 宽限期内的最近一次仍然执行。
+        let (latest, should_run) = due_occurrence(&task, utc(2026, 11, 17, 6, 3)).unwrap();
+        assert_eq!(latest, utc(2026, 11, 17, 6, 0));
+        assert!(should_run);
+    }
+
+    #[test]
+    fn once_task_consumes_and_stops_repeating() {
+        let shanghai = parse_timezone("Asia/Shanghai").unwrap();
+        let run_at = "2026-11-20T09:30";
+        let at = once_as_utc(run_at, shanghai).unwrap();
+        let mut task = fixed_task(TaskSchedule::Once { run_at: run_at.into() });
+        task.created_at = (at - Duration::hours(1)).timestamp_millis();
+        let (latest, should_run) = due_occurrence(&task, at + Duration::minutes(1)).unwrap();
+        assert_eq!(latest, at);
+        assert!(should_run);
+
+        // 模拟 tick：锚点推进到计划时刻，并把仅一次任务停用。
+        task.last_scheduled_at = Some(latest.timestamp_millis());
+        task.enabled = false;
+        assert!(due_occurrence(&task, at + Duration::minutes(10)).is_none());
+    }
+
+    #[test]
+    fn manual_run_dedup_within_five_seconds() {
+        assert!(manual_run_allowed(None, 10_000));
+        assert!(!manual_run_allowed(Some(10_000), 14_999));
+        assert!(manual_run_allowed(Some(10_000), 15_000));
+    }
+
+    #[test]
+    fn concurrency_skip_policy() {
+        assert_eq!(run_admission(false, 0), RunAdmission::Allowed);
+        assert_eq!(run_admission(false, 2), RunAdmission::Allowed);
+        assert_eq!(run_admission(true, 0), RunAdmission::TaskRunning);
+        assert_eq!(run_admission(false, 3), RunAdmission::GlobalLimit);
+    }
+
+    fn test_data_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "terminal-buddy-scheduled-{name}-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        PathService::set_test_data_dir(Some(dir.clone()));
+        dir
+    }
+
+    fn cleanup(dir: &Path) {
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn versioned_tasks_file_reads_legacy_array() {
+        let dir = test_data_dir("legacy");
+        let tasks_dir = dir.join("ScheduledTasks");
+        fs::create_dir_all(&tasks_dir).unwrap();
+        let task = fixed_task(TaskSchedule::Cron { expression: "0 9 * * *".into() });
+        // 旧版本是无包装的数组。
+        fs::write(
+            tasks_dir.join("tasks.json"),
+            serde_json::to_vec(&vec![task.clone()]).unwrap(),
+        )
+        .unwrap();
+        let loaded = load_defs().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, task.id);
+
+        // 版本化包装同样可读。
+        let file = TasksFile { version: 1, tasks: vec![task.clone()] };
+        fs::write(tasks_dir.join("tasks.json"), serde_json::to_vec(&file).unwrap()).unwrap();
+        assert_eq!(load_defs().unwrap().len(), 1);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn runs_are_capped_at_100() {
+        let dir = test_data_dir("runs");
+        let task = fixed_task(TaskSchedule::Cron { expression: "0 9 * * *".into() });
+        for index in 0..105 {
+            let mut run = new_run(&task, "scheduled");
+            run.id = format!("run-{index}");
+            run.started_at = index;
+            append_run(&run);
+        }
+        let runs = read_runs(&task.id);
+        assert_eq!(runs.len(), MAX_RUNS_PER_TASK);
+        assert_eq!(runs.first().unwrap().id, "run-5");
+        assert_eq!(runs.last().unwrap().id, "run-104");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn next_run_resets_after_schedule_edit() {
+        let dir = test_data_dir("edit");
+        let projects = vec![crate::commands::profile::Project {
+            name: "TerminalBuddy".into(),
+            path: dir.to_string_lossy().to_string(),
+            startup_command: String::new(),
+            enabled_agents: Default::default(),
+        }];
+        let profiles = vec![crate::models::Profile {
+            id: "p1".into(),
+            name: "开发环境".into(),
+            group: "TerminalBuddy".into(),
+            terminal_type: "cmd".into(),
+            startup_path: String::new(),
+            startup_commands: Vec::new(),
+            environment_variables: Default::default(),
+            color_theme: "dark-default".into(),
+            tab_color: None,
+            window_size: None,
+            ssh_host: None,
+            ssh_port: None,
+            ssh_user: None,
+            ssh_auth_type: None,
+            ssh_key_path: None,
+            ssh_password: None,
+            docker_container_id: None,
+            docker_container_name: None,
+            k8s_namespace: None,
+            k8s_pod_name: None,
+            k8s_container_name: None,
+            mstsc_host: None,
+            mstsc_port: None,
+            mstsc_user: None,
+            mstsc_password: None,
+            mstsc_resolution: None,
+            created_at: String::new(),
+            last_used_at: None,
+            pinned: false,
+        }];
+        let target = TaskTarget::ProjectProfile {
+            project_name: "TerminalBuddy".into(),
+            profile_id: "p1".into(),
+            auto_close_minutes: 0,
+        };
+        let make_input = |id: Option<String>, expression: &str| ScheduledTaskInput {
+            id,
+            name: "测试任务".into(),
+            enabled: true,
+            timezone: "Asia/Shanghai".into(),
+            schedule: TaskSchedule::Cron { expression: expression.into() },
+            target: target.clone(),
+            notify: None,
+            timeout_minutes: None,
+        };
+        let (created, is_new) = persist_save(make_input(None, "0 9 * * *"), &projects, &profiles, 1_000).unwrap();
+        assert!(is_new);
+        // 把锚点改到很久以前，模拟历史任务。
+        {
+            let _guard = store_lock().lock().unwrap();
+            let mut tasks = load_defs().unwrap();
+            tasks[0].last_scheduled_at = Some(0);
+            save_defs(&tasks).unwrap();
+        }
+        let (updated, is_new) = persist_save(
+            make_input(Some(created.id.clone()), "30 10 * * *"),
+            &projects,
+            &profiles,
+            2_000_000_000_000,
+        )
+        .unwrap();
+        assert!(!is_new);
+        assert_eq!(updated.last_scheduled_at, Some(2_000_000_000_000));
+        // 修改调度后从当前时刻重新计算，下次执行一定在未来。
+        assert!(next_run_at(&updated, Utc.timestamp_millis_opt(2_000_000_000_000).unwrap())
+            .is_some_and(|next| next > 2_000_000_000_000));
+        cleanup(&dir);
+    }
+}

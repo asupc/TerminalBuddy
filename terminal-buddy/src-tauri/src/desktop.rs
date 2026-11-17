@@ -381,6 +381,8 @@ pub fn run() {
             // 原生 AI 会话的实时推送需要全局 AppHandle（桌面 webview + 浏览器事件通道）。
             crate::services::ai_chat_service::set_app_handle(app.handle().clone());
             crate::services::handoff_server::set_app_handle(app.handle().clone());
+            // 定时任务调度器：随应用进程运行，退出即停止；7×24 请使用 Docker 服务端。
+            crate::services::scheduled_task_service::start(app.handle().clone());
             match crate::services::handoff_server::bootstrap_com_server() {
                 Ok(()) => boot_log("default-terminal COM server registered"),
                 Err(error) => boot_log(format!("default-terminal COM server failed: {}", error)),
@@ -588,6 +590,10 @@ pub fn run() {
             save_server_monitor_interval,
             save_launch_at_login,
             sync_launch_at_login,
+            // 定时任务（桌面端与浏览器模式共用服务层）
+            scheduled_task_list, scheduled_task_save, scheduled_task_delete,
+            scheduled_task_set_enabled, scheduled_task_run_now, scheduled_task_stop,
+            scheduled_task_runs, scheduled_task_options, scheduled_task_preview,
             log_boot,
         ])
         .run(tauri::generate_context!())

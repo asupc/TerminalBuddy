@@ -486,6 +486,23 @@ pub fn stop(id: &str, owner: &str) -> Result<()> {
     Ok(())
 }
 
+/// 回收空闲会话的常驻 CLI 进程，保留会话记录以便继续打开 / 恢复。
+///
+/// 定时任务每轮执行结束后调用：否则按小时任务会留下一个常驻 Claude 进程，
+/// 很快就会堆积。语义与 `delete` 的进程回收部分一致，但不动会话文件。
+pub fn release_process(id: &str, owner: &str) -> Result<()> {
+    let cell = load(id, owner)?;
+    let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
+    let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    if data.status != "idle" || !data.approvals.is_empty() || !data.pending_inputs.is_empty() {
+        return Ok(());
+    }
+    if let Some(tx) = control.take() {
+        let _ = tx.send(Control::Retire);
+    }
+    Ok(())
+}
+
 /// 清掉被误记成子代理的后台命令（历史数据迁移）。
 ///
 /// 有 `task_type` 的记录直接按类型剔除；更早的会话没有该字段，则看它的

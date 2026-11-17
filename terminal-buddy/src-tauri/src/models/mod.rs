@@ -2,6 +2,7 @@ pub mod codex_provider;
 pub mod llm_provider;
 pub mod profile;
 pub mod profile_validation;
+pub mod scheduled_task;
 pub mod settings;
 pub mod session_history;
 pub mod ssh_types;

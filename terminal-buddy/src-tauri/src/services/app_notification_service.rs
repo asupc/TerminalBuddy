@@ -40,6 +40,13 @@ pub struct AppNotificationEvent {
     pub questions: Vec<ClaudeHookQuestion>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
+    /// 定时任务相关事件：任务 / 运行 / 原生会话标识，供 App 跳转。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub occurred_at: i64,
 }
 
@@ -84,6 +91,9 @@ impl AppNotificationService {
             decision_id: Some(event.decision_id.clone()),
             questions: event.questions.clone(),
             expires_at: Some(event.expires_at),
+            task_id: None,
+            run_id: None,
+            session_id: None,
             occurred_at: event.occurred_at,
         });
     }
@@ -130,6 +140,9 @@ impl AppNotificationService {
             decision_id: None,
             questions: Vec::new(),
             expires_at: None,
+            task_id: None,
+            run_id: None,
+            session_id: None,
             occurred_at: event.occurred_at,
         });
     }
@@ -148,6 +161,9 @@ impl AppNotificationService {
             decision_id: None,
             questions: Vec::new(),
             expires_at: None,
+            task_id: None,
+            run_id: None,
+            session_id: None,
             occurred_at: chrono::Utc::now().timestamp_millis(),
         });
     }
@@ -163,6 +179,52 @@ impl AppNotificationService {
             decision_id: Some(decision_id.to_string()),
             questions: Vec::new(),
             expires_at: None,
+            task_id: None,
+            run_id: None,
+            session_id: None,
+            occurred_at: chrono::Utc::now().timestamp_millis(),
+        });
+    }
+
+    /// 定时任务完成 / 失败 / 等待确认。`kind` 取 `completed` / `failed` / `approval`。
+    pub fn publish_scheduled(
+        kind: &str,
+        task_name: &str,
+        summary: &str,
+        task_id: &str,
+        run_id: &str,
+        session_id: Option<&str>,
+    ) {
+        let (kind, title) = match kind {
+            "completed" => ("scheduled_completed", format!("定时任务完成：{task_name}")),
+            "failed" => ("scheduled_failed", format!("定时任务失败：{task_name}")),
+            "approval" => ("scheduled_approval", format!("定时任务等待确认：{task_name}")),
+            _ => return,
+        };
+        let summary = summary.trim();
+        let summary = if summary.is_empty() {
+            match kind {
+                "scheduled_completed" => "定时任务已完成。".to_string(),
+                "scheduled_failed" => "定时任务执行失败。".to_string(),
+                _ => "请打开会话处理权限询问。".to_string(),
+            }
+        } else {
+            summary.chars().take(120).collect()
+        };
+        publish(AppNotificationEvent {
+            id: format!("scheduled:{run_id}:{kind}"),
+            kind: kind.to_string(),
+            terminal_id: session_id.unwrap_or(task_id).to_string(),
+            terminal_name: task_name.to_string(),
+            provider: None,
+            title,
+            summary,
+            decision_id: None,
+            questions: Vec::new(),
+            expires_at: None,
+            task_id: Some(task_id.to_string()),
+            run_id: Some(run_id.to_string()),
+            session_id: session_id.map(str::to_string),
             occurred_at: chrono::Utc::now().timestamp_millis(),
         });
     }
