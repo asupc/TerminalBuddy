@@ -2,13 +2,18 @@
 //!
 //! 调度器随 TerminalBuddy 进程运行：桌面端退出即停止，Docker 服务端可 7×24 执行。
 //! 任务只能启动已登记项目的 Profile，或向 Agent 发送 Prompt，不执行任意 Shell 命令。
-use crate::commands::terminal::{teardown_terminal, TerminalCloseReason};
+//! Agent 任务的执行形态跟随「新会话形态」设置：原生会话走 `ai_chat_service`，
+//! 终端接力则在项目目录启动 Agent 终端后把任务描述键入 REPL。
+use crate::commands::terminal::{default_terminal_type, teardown_terminal, TerminalCloseReason};
 use crate::commands::TerminalService;
 use crate::models::ai_chat::{AiSession, CreateAiSession, SendAiMessage};
 use crate::models::scheduled_task::*;
-use crate::models::{TerminalCreator, TerminalOwner};
+use crate::models::{TerminalActor, TerminalCreator, TerminalOwner};
 use crate::runtime::{AppHandle, Emitter, Manager};
-use crate::services::{ai_catalog_service, ai_chat_service, AppNotificationService, PathService, ProfileService};
+use crate::services::{
+    agent_usage_service, ai_catalog_service, ai_chat_service, ai_permission_service,
+    terminal_agent_relay, AppNotificationService, PathService, ProfileService, SettingsService,
+};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
@@ -83,6 +88,32 @@ fn emit_terminal_created(app: &AppHandle, payload: serde_json::Value) {
     #[cfg(not(feature = "desktop"))]
     {
         let _ = app.emit("terminal-created", payload);
+    }
+}
+
+/// 定时任务（项目配置 / Agent 终端）创建终端后统一补开标签：
+/// `activate=false` 不抢当前焦点，`groupName` 让标签落入项目分组。
+fn emit_created_terminal(app: &AppHandle, terminal_id: &str) {
+    if let Some(info) = app
+        .state::<TerminalService>()
+        .list_terminals_info()
+        .into_iter()
+        .find(|info| info.id == terminal_id)
+    {
+        let group = info.group.clone();
+        emit_terminal_created(
+            app,
+            serde_json::json!({
+                "id": info.id,
+                "profileId": info.profile_id,
+                "profileName": info.profile_name,
+                "terminalType": info.terminal_type,
+                "owner": info.owner,
+                "group": info.group,
+                "groupName": group,
+                "activate": false,
+            }),
+        );
     }
 }
 
@@ -206,9 +237,18 @@ fn touch_task(task_id: &str, last_run_at: i64) {
 // 运行态（内存）
 // ---------------------------------------------------------------------------
 
+/// Agent 任务的执行形态：派发时按「新会话形态」设置固化，运行期间不再变化，
+/// 停止入口据此决定是停原生会话还是关终端（不依赖运行中再去读设置）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentRunMode {
+    Native,
+    Terminal,
+}
+
 #[derive(Debug, Clone)]
 struct ActiveRun {
     run_id: String,
+    mode: Option<AgentRunMode>,
     session_id: Option<String>,
     terminal_id: Option<String>,
     stop_requested: bool,
@@ -641,7 +681,11 @@ fn record_skipped(app: &AppHandle, task: &ScheduledTask, message: &str) {
 
 /// 原子地占用运行名额：单任务串行 + 全局并发上限在同一把锁内判定，
 /// 避免调度 tick 与手动运行同时通过检查而超限。
-fn try_admit(task_id: &str, run_id: &str) -> std::result::Result<(), RunAdmission> {
+fn try_admit(
+    task_id: &str,
+    run_id: &str,
+    mode: Option<AgentRunMode>,
+) -> std::result::Result<(), RunAdmission> {
     let mut map = lock_active();
     match run_admission(map.contains_key(task_id), map.len()) {
         RunAdmission::Allowed => {
@@ -649,6 +693,7 @@ fn try_admit(task_id: &str, run_id: &str) -> std::result::Result<(), RunAdmissio
                 task_id.to_string(),
                 ActiveRun {
                     run_id: run_id.to_string(),
+                    mode,
                     session_id: None,
                     terminal_id: None,
                     stop_requested: false,
@@ -660,11 +705,23 @@ fn try_admit(task_id: &str, run_id: &str) -> std::result::Result<(), RunAdmissio
     }
 }
 
+fn agent_run_mode(task: &ScheduledTask) -> Option<AgentRunMode> {
+    match task.target {
+        TaskTarget::ProjectProfile { .. } => None,
+        TaskTarget::AgentPrompt { .. } => Some(if SettingsService::get_settings().native_chat_sessions {
+            AgentRunMode::Native
+        } else {
+            AgentRunMode::Terminal
+        }),
+    }
+}
+
 fn dispatch(app: &AppHandle, task: ScheduledTask, trigger: &str) -> std::result::Result<ScheduledRun, RunAdmission> {
     let run = new_run(&task, trigger);
     // 先登记活动运行，再写运行记录：其它客户端在两次写之间读取列表时，
     // 不会把刚创建、马上就要执行的记录误判为「应用重启导致的中断」。
-    try_admit(&task.id, &run.id)?;
+    let mode = agent_run_mode(&task);
+    try_admit(&task.id, &run.id, mode)?;
     append_run(&run);
     emit_run(app, &task, &run);
 
@@ -677,7 +734,7 @@ fn dispatch(app: &AppHandle, task: ScheduledTask, trigger: &str) -> std::result:
                 run_profile(app_for_run.clone(), &task_for_run, &run_for_run).await
             }
             TaskTarget::AgentPrompt { .. } => {
-                run_agent(app_for_run.clone(), &task_for_run, &run_for_run).await
+                run_agent(app_for_run.clone(), &task_for_run, &run_for_run, mode.unwrap_or(AgentRunMode::Native)).await
             }
         };
         finish_run(app_for_run, task_for_run, run_for_run, outcome).await;
@@ -720,28 +777,46 @@ fn skipped_run(app: &AppHandle, task: &ScheduledTask, trigger: &str, message: &s
     run
 }
 
-pub fn stop(id: &str) -> Result<()> {
-    // Agent 任务在创建会话前也会占用运行名额；此时没有 session_id 可停止。
-    let is_agent = load_defs()
-        .ok()
-        .and_then(|tasks| tasks.into_iter().find(|task| task.id == id))
-        .map(|task| matches!(task.target, TaskTarget::AgentPrompt { .. }))
-        .unwrap_or(true);
-    let session = {
-        let mut map = lock_active();
+pub fn stop(app: &AppHandle, id: &str) -> Result<()> {
+    // 先取快照再释放锁：teardown / ai_chat 调用都不允许在持锁期间执行。
+    // 带上 run_id，避免读取后被新一次运行顶替、误停到下一轮。
+    let (run_id, mode, session, terminal) = {
+        let map = lock_active();
         let entry = map
-            .get_mut(id)
+            .get(id)
             .ok_or_else(|| "任务当前没有运行中的执行".to_string())?;
-        let Some(session) = entry.session_id.clone() else {
-            return Err(if is_agent {
-                "会话正在创建，请稍后再试".to_string()
-            } else {
-                "项目配置任务请在终端标签中关闭".to_string()
-            });
-        };
-        entry.stop_requested = true;
-        session
+        (entry.run_id.clone(), entry.mode, entry.session_id.clone(), entry.terminal_id.clone())
     };
+    let request_stop = || {
+        let mut map = lock_active();
+        if let Some(entry) = map.get_mut(id) {
+            if entry.run_id == run_id {
+                entry.stop_requested = true;
+            }
+        }
+    };
+    if mode == Some(AgentRunMode::Terminal) {
+        request_stop();
+        if let Some(terminal) = terminal {
+            teardown_terminal(app, &terminal, TerminalCloseReason::ScheduledClose);
+        }
+        // 终端尚未创建完成时也返回成功：执行器建完终端会立即检查停止标志。
+        return Ok(());
+    }
+    let Some(session) = session else {
+        // Agent 任务在创建会话前也会占用运行名额；此时没有 session_id 可停止。
+        let is_agent = load_defs()
+            .ok()
+            .and_then(|tasks| tasks.into_iter().find(|task| task.id == id))
+            .map(|task| matches!(task.target, TaskTarget::AgentPrompt { .. }))
+            .unwrap_or(true);
+        return Err(if is_agent {
+            "会话正在创建，请稍后再试".to_string()
+        } else {
+            "项目配置任务请在终端标签中关闭".to_string()
+        });
+    };
+    request_stop();
     let owner = crate::commands::ai_chat::desktop_owner();
     // 会话可能刚好自然结束：停止失败不应把用户操作变成报错。
     let _ = ai_chat_service::stop(&session, &owner);
@@ -858,7 +933,21 @@ fn usage_tokens(session: &AiSession) -> (Option<u64>, Option<u64>) {
         .unwrap_or((None, None))
 }
 
-async fn run_agent(app: AppHandle, task: &ScheduledTask, run: &ScheduledRun) -> RunOutcome {
+/// Agent 任务按派发时固化的形态执行：原生会话保持原有结构化链路；
+/// 终端接力（设置 `nativeChatSessions=false`）改为在项目目录启动 Agent 终端。
+async fn run_agent(
+    app: AppHandle,
+    task: &ScheduledTask,
+    run: &ScheduledRun,
+    mode: AgentRunMode,
+) -> RunOutcome {
+    match mode {
+        AgentRunMode::Native => run_agent_native(app, task, run).await,
+        AgentRunMode::Terminal => run_agent_terminal(app, task, run).await,
+    }
+}
+
+async fn run_agent_native(app: AppHandle, task: &ScheduledTask, run: &ScheduledRun) -> RunOutcome {
     let TaskTarget::AgentPrompt { project_name, agent, provider_id, model, prompt } = &task.target else {
         return failed("任务类型不匹配");
     };
@@ -1047,6 +1136,532 @@ async fn release_session(session_id: &str, owner: &str) -> Result<()> {
     blocking(move || ai_chat_service::release_process(&session_id, &owner)).await
 }
 
+// ---------------------------------------------------------------------------
+// 终端接力执行器
+// ---------------------------------------------------------------------------
+
+/// 终端 Agent 的轮询分类结果（纯函数，便于单测）。
+#[derive(Debug, PartialEq, Eq)]
+enum TerminalRunAction {
+    Continue,
+    WaitingApproval,
+    Completed { message: Option<String> },
+    Failed { message: String },
+    Stopped { message: String },
+}
+
+fn classify_terminal_snapshot(
+    saw_running: &mut bool,
+    idle_streak: &mut u32,
+    provider: Option<&str>,
+    phase: &str,
+    turn_end: Option<&str>,
+    pending: usize,
+    stop_requested: bool,
+) -> TerminalRunAction {
+    if stop_requested {
+        return TerminalRunAction::Stopped { message: "已手动停止".into() };
+    }
+    // 待决策卡片与 attention 两个信号任一存在都按「等待确认」处理。
+    if pending > 0 || phase == "attention" {
+        return TerminalRunAction::WaitingApproval;
+    }
+    match phase {
+        "running" | "background" => {
+            *saw_running = true;
+            *idle_streak = 0;
+            TerminalRunAction::Continue
+        }
+        "failed" => TerminalRunAction::Failed { message: "Agent 执行失败".into() },
+        "completed" => {
+            if turn_end == Some("interrupted") {
+                TerminalRunAction::Failed { message: "Agent 回合已被中断".into() }
+            } else {
+                TerminalRunAction::Completed { message: None }
+            }
+        }
+        "ended" => {
+            if turn_end == Some("completed") || *saw_running {
+                // Stop→completed 可能在一个轮询间隔内被 SessionEnd→ended 覆盖；
+                // 进程在完成回合后正常退出不算失败。
+                TerminalRunAction::Completed { message: None }
+            } else {
+                TerminalRunAction::Failed { message: "Agent 会话已结束，未报告完成".into() }
+            }
+        }
+        "idle" => {
+            if !*saw_running {
+                // 启动期 SessionStart 就是 idle，等任务描述被接受。
+                return TerminalRunAction::Continue;
+            }
+            *idle_streak += 1;
+            if *idle_streak < 2 { return TerminalRunAction::Continue; }
+            if provider == Some("codex") {
+                // Codex 正常完成会写 completed（task_complete）；idle 表示回合被中止。
+                TerminalRunAction::Stopped { message: "Agent 回合已中止".into() }
+            } else if turn_end == Some("interrupted") {
+                TerminalRunAction::Failed { message: "Agent 回合已被中断".into() }
+            } else {
+                TerminalRunAction::Completed { message: None }
+            }
+        }
+        // unknown 等：绑定可能仍在刷新，继续等（外层有 60 秒无响应兜底）。
+        _ => TerminalRunAction::Continue,
+    }
+}
+
+fn shell_quote(token: &str, terminal_type: &str) -> Result<String> {
+    match terminal_type {
+        "powershell" | "pwsh" => Ok(format!("'{}'", token.replace('\'', "''"))),
+        "bash" | "sh" | "zsh" => Ok(format!("'{}'", token.replace('\'', "'\\''"))),
+        other => Err(format!("终端接力暂不支持 {} 终端", other)),
+    }
+}
+
+fn agent_binary(agent: &str) -> Result<&'static str> {
+    match agent {
+        "claude" => Ok("claude"),
+        "codex" => Ok("codex"),
+        _ => Err("请选择 Claude 或 Codex".into()),
+    }
+}
+
+/// 组装终端里的 Agent 启动命令：供应商引用/裸命令 + 权限参数。
+/// 任务描述不进入命令字符串（见 `run_agent_terminal` 的 PTY 注入）。
+fn build_terminal_agent_command(
+    agent: &str,
+    catalog_id: Option<&str>,
+    model: Option<&str>,
+    terminal_type: &str,
+) -> Result<String> {
+    let head = terminal_command_head(agent, catalog_id, model)?;
+    let permissions = ai_permission_service::for_agent(agent)?;
+    let args = if agent == "claude" { permissions.claude_args } else { permissions.codex_args };
+    let mut parts = vec![head];
+    for arg in args {
+        parts.push(shell_quote(&arg, terminal_type)?);
+    }
+    Ok(parts.join(" "))
+}
+
+/// 供应商标识 → 终端命令头（不含权限参数）。`llm:` / `codex:` 目录 id 必须剥掉
+/// 来源前缀，因为终端 ref 只接受原始供应商主键；`claude:` 走独立 ref。
+fn terminal_command_head(
+    agent: &str,
+    catalog_id: Option<&str>,
+    model: Option<&str>,
+) -> Result<String> {
+    let binary = agent_binary(agent)?;
+    let model = model.unwrap_or_default().trim();
+    let head = match catalog_id {
+        None => binary.to_string(),
+        Some(id) if id == format!("default:{agent}") => binary.to_string(),
+        Some(id) => {
+            let (source, raw) = id
+                .split_once(':')
+                .ok_or_else(|| "供应商配置无效，请重新选择".to_string())?;
+            match (source, agent) {
+                ("llm", "claude") => {
+                    if model.is_empty() { return Err("所选供应商没有可用模型，请重新选择".into()); }
+                    format!(
+                        "{}{}:{}",
+                        crate::models::llm_provider::CLAUDE_REF_PREFIX,
+                        raw,
+                        model
+                    )
+                }
+                ("claude", "claude") => {
+                    if model.is_empty() {
+                        format!(
+                            "{}{}",
+                            crate::models::llm_provider::CLAUDE_PROVIDER_REF_PREFIX,
+                            raw
+                        )
+                    } else {
+                        format!(
+                            "{}{}:{}",
+                            crate::models::llm_provider::CLAUDE_PROVIDER_REF_PREFIX,
+                            raw,
+                            model
+                        )
+                    }
+                }
+                ("codex", "codex") => {
+                    if model.is_empty() { return Err("所选供应商没有可用模型，请重新选择".into()); }
+                    format!(
+                        "{}{}:{}",
+                        crate::services::codex_provider_service::CODEX_REF_PREFIX,
+                        raw,
+                        model
+                    )
+                }
+                _ => return Err("供应商与 Agent 类型不匹配，请重新选择".into()),
+            }
+        }
+    };
+    Ok(head)
+}
+
+/// 任务描述的注入前校验：允许斜杠命令与换行，拒绝其余控制字符（Tab/Ctrl/Escape）。
+fn normalize_task_prompt(prompt: &str) -> Result<String> {
+    let prompt = prompt.replace("\r\n", "\n").replace('\r', "\n");
+    if prompt.trim().is_empty() {
+        return Err("任务描述不能为空".into());
+    }
+    if let Some(bad) = prompt.chars().find(|character| *character != '\n' && character.is_control()) {
+        return Err(format!(
+            "任务描述不能包含换行以外的控制字符（检测到 U+{:04X}），请删除后重试",
+            bad as u32
+        ));
+    }
+    Ok(prompt)
+}
+
+/// 终端接力：在项目目录启动真实 Agent 终端，就绪后把任务描述键入输入框。
+/// 状态按终端 Agent 阶段/待决策判定；完成或失败都保留终端，只有超时/手动停止才关闭。
+async fn run_agent_terminal(app: AppHandle, task: &ScheduledTask, run: &ScheduledRun) -> RunOutcome {
+    let TaskTarget::AgentPrompt { project_name, agent, provider_id, model, prompt } = &task.target else {
+        return failed("任务类型不匹配");
+    };
+    let (project_name, agent, provider_id, model, prompt) =
+        (project_name.clone(), agent.clone(), provider_id.clone(), model.clone(), prompt.clone());
+
+    let project_lookup = project_name.clone();
+    let project = match blocking(move || find_project(&project_lookup)).await {
+        Ok(project) => project,
+        Err(error) => return failed(error),
+    };
+    let project_path = match project_path(&project) {
+        Ok(path) => path,
+        Err(error) => return failed(error),
+    };
+    // 先校验描述再建终端，避免非法描述留下一个空跑的终端。
+    let prompt = match normalize_task_prompt(&prompt) {
+        Ok(prompt) => prompt,
+        Err(error) => return failed(error),
+    };
+
+    let selection_agent = agent.clone();
+    let selection_model = model.clone();
+    let selection = match blocking(move || {
+        ai_catalog_service::selection(&selection_agent, provider_id.as_deref(), selection_model.as_deref())
+    })
+    .await
+    {
+        Ok(selection) => selection,
+        Err(error) => return failed(error),
+    };
+    let (resolved_provider_id, provider_name) = match selection {
+        Some((id, name)) => (Some(id), Some(name)),
+        None => (None, None),
+    };
+
+    let terminal_type = default_terminal_type();
+    let command_agent = agent.clone();
+    let command_provider = resolved_provider_id.clone();
+    let command_model = model.clone();
+    let command_terminal_type = terminal_type.to_string();
+    let command = match blocking(move || {
+        build_terminal_agent_command(
+            &command_agent,
+            command_provider.as_deref(),
+            command_model.as_deref(),
+            &command_terminal_type,
+        )
+    })
+    .await
+    {
+        Ok(command) => command,
+        Err(error) => return failed(error),
+    };
+
+    let display_name = format!("定时 · {}", task.name);
+    let (owner, actor) = if cfg!(feature = "desktop") {
+        (TerminalOwner::Pc, TerminalActor::Pc)
+    } else {
+        (TerminalOwner::Web, TerminalActor::Web)
+    };
+    let terminal_app = app.clone();
+    let terminal_name = display_name.clone();
+    let terminal_group = project_name.clone();
+    let terminal_path = project_path.clone();
+    let terminal_command = command;
+    let terminal_id = match blocking(move || {
+        let service = terminal_app.state::<TerminalService>().inner().clone();
+        service.create_blank_terminal(
+            terminal_type,
+            Some(&terminal_name),
+            Some(&terminal_group),
+            0,
+            0,
+            Some(&terminal_path),
+            Some(&terminal_command),
+            true,
+            terminal_app.clone(),
+            owner,
+            TerminalCreator::Desktop,
+        )
+    })
+    .await
+    {
+        Ok(id) => id,
+        Err(error) => return failed(format!("启动终端失败：{error}")),
+    };
+
+    set_active_session(&task.id, &run.id, None, Some(terminal_id.clone()));
+    emit_created_terminal(&app, &terminal_id);
+
+    let mut live_run = run.clone();
+    live_run.terminal_id = Some(terminal_id.clone());
+    live_run.agent = Some(agent.clone());
+    live_run.provider_name = provider_name.clone();
+    live_run.model = model.clone();
+    let live_for_write = live_run.clone();
+    let _ = crate::runtime::async_runtime::spawn_blocking(move || update_run(&live_for_write)).await;
+    emit_run(&app, task, &live_run);
+
+    // 停止可能发生在终端创建之前；建完立刻补一次检查。
+    if stop_requested(&task.id, &run.id) {
+        teardown_terminal(&app, &terminal_id, TerminalCloseReason::ScheduledClose);
+        return RunOutcome {
+            status: "stopped".into(),
+            message: Some("已手动停止".into()),
+            terminal_id: Some(terminal_id),
+            agent: Some(agent),
+            provider_name,
+            model,
+            ..Default::default()
+        };
+    }
+
+    // 等待 Agent 就绪后注入任务描述。不能把描述塞进启动参数：
+    // 首条 argv 不经过 REPL 输入框，斜杠命令不会展开。
+    let inject_started = std::time::Instant::now();
+    let codex_fallback_at = inject_started + std::time::Duration::from_secs(8);
+    loop {
+        if stop_requested(&task.id, &run.id) {
+            teardown_terminal(&app, &terminal_id, TerminalCloseReason::ScheduledClose);
+            return RunOutcome {
+                status: "stopped".into(),
+                message: Some("已手动停止".into()),
+                terminal_id: Some(terminal_id),
+                agent: Some(agent),
+                provider_name,
+                model,
+                ..Default::default()
+            };
+        }
+        if inject_started.elapsed() > std::time::Duration::from_secs(60) {
+            return RunOutcome {
+                status: "failed".into(),
+                message: Some("Agent 未启动或未注册 Hook，请查看终端".into()),
+                terminal_id: Some(terminal_id),
+                agent: Some(agent),
+                provider_name,
+                model,
+                ..Default::default()
+            };
+        }
+        let Some(snapshot) = terminal_agent_relay::scheduled_snapshot(&app, actor, &terminal_id).await else {
+            // 停止先关终端、下一轮才回到循环顶部时，这里也要按停止收尾。
+            let stopped_by_user = stop_requested(&task.id, &run.id);
+            return RunOutcome {
+                status: if stopped_by_user { "stopped".into() } else { "failed".into() },
+                message: Some(if stopped_by_user { "已手动停止".into() } else { "终端已关闭".into() }),
+                terminal_id: Some(terminal_id),
+                agent: Some(agent),
+                provider_name,
+                model,
+                ..Default::default()
+            };
+        };
+        let ready = if agent == "codex" {
+            snapshot.provider.is_some() || std::time::Instant::now() >= codex_fallback_at
+        } else {
+            snapshot.provider.as_deref() == Some("claude") && snapshot.phase == "idle"
+        };
+        if ready {
+            // SessionStart 只代表会话已建立，输入框与 MCP/技能初始化可能还在跑；
+            // 留 1.5 秒再键入，过早写入会落进尚未挂载的输入框。
+            tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+            if let Err(error) =
+                terminal_agent_relay::submit_task_prompt(&app, actor, &terminal_id, &prompt).await
+            {
+                return RunOutcome {
+                    status: "failed".into(),
+                    message: Some(format!("提交任务描述失败：{}", error.message())),
+                    terminal_id: Some(terminal_id),
+                    agent: Some(agent),
+                    provider_name,
+                    model,
+                    ..Default::default()
+                };
+            }
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    let timeout = std::time::Duration::from_secs(task.timeout_minutes.max(1) as u64 * 60);
+    let started = std::time::Instant::now();
+    let injected_at = std::time::Instant::now();
+    let mut saw_running = false;
+    let mut idle_streak = 0u32;
+    let mut approval_notified = false;
+    let mut last_summary: Option<String> = None;
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(POLL_SECONDS)).await;
+        if started.elapsed() > timeout {
+            teardown_terminal(&app, &terminal_id, TerminalCloseReason::ScheduledClose);
+            return RunOutcome {
+                status: "timeout".into(),
+                message: Some(format!("执行超时（{} 分钟），已停止", task.timeout_minutes)),
+                terminal_id: Some(terminal_id),
+                agent: Some(agent),
+                provider_name,
+                model,
+                ..Default::default()
+            };
+        }
+        if stop_requested(&task.id, &run.id) {
+            teardown_terminal(&app, &terminal_id, TerminalCloseReason::ScheduledClose);
+            return RunOutcome {
+                status: "stopped".into(),
+                message: Some("已手动停止".into()),
+                terminal_id: Some(terminal_id),
+                agent: Some(agent),
+                provider_name,
+                model,
+                ..Default::default()
+            };
+        }
+        let Some(snapshot) = terminal_agent_relay::scheduled_snapshot(&app, actor, &terminal_id).await else {
+            return RunOutcome {
+                status: "stopped".into(),
+                message: Some("终端已关闭".into()),
+                terminal_id: Some(terminal_id),
+                agent: Some(agent),
+                provider_name,
+                model,
+                ..Default::default()
+            };
+        };
+        if let Some(text) = &snapshot.last_assistant_message {
+            last_summary = Some(text.clone());
+        }
+        let action = classify_terminal_snapshot(
+            &mut saw_running,
+            &mut idle_streak,
+            snapshot.provider.as_deref(),
+            &snapshot.phase,
+            snapshot.turn_end.as_deref(),
+            snapshot.pending_decision_count,
+            false,
+        );
+        // 注入后 60 秒还没进入 running：描述可能没被接受（Hook 失效/输入没落进
+        // 输入框），不能一直挂到 timeout_minutes。
+        if matches!(action, TerminalRunAction::Continue)
+            && !saw_running
+            && injected_at.elapsed() > std::time::Duration::from_secs(60)
+        {
+            return RunOutcome {
+                status: "failed".into(),
+                message: Some("Agent 未响应任务描述，请查看终端".into()),
+                terminal_id: Some(terminal_id),
+                agent: Some(agent),
+                provider_name,
+                model,
+                ..Default::default()
+            };
+        }
+        match action {
+            TerminalRunAction::Continue => {
+                if approval_notified && snapshot.phase == "running" {
+                    approval_notified = false;
+                    let mut resumed = live_run.clone();
+                    resumed.status = "running".into();
+                    resumed.message = Some("继续执行中".into());
+                    let resumed_for_write = resumed.clone();
+                    let _ = crate::runtime::async_runtime::spawn_blocking(move || update_run(&resumed_for_write)).await;
+                    emit_run(&app, task, &resumed);
+                }
+            }
+            TerminalRunAction::WaitingApproval => {
+                if !approval_notified {
+                    approval_notified = true;
+                    let mut waiting = live_run.clone();
+                    waiting.status = "waitingApproval".into();
+                    waiting.message = Some("等待处理权限询问，请在终端中回答".into());
+                    let waiting_for_write = waiting.clone();
+                    let _ = crate::runtime::async_runtime::spawn_blocking(move || update_run(&waiting_for_write)).await;
+                    emit_run(&app, task, &waiting);
+                    if task.notify {
+                        AppNotificationService::publish_scheduled(
+                            "approval",
+                            &task.name,
+                            "等待处理权限询问，请在终端中回答",
+                            &task.id,
+                            &run.id,
+                            None,
+                        );
+                    }
+                }
+            }
+            TerminalRunAction::Completed { message } => {
+                let (input_tokens, output_tokens) = terminal_usage(&terminal_id).await;
+                return RunOutcome {
+                    status: "completed".into(),
+                    message: Some(message.or(last_summary).unwrap_or_else(|| "执行完成".to_string())),
+                    terminal_id: Some(terminal_id),
+                    agent: Some(agent),
+                    provider_name,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    ..Default::default()
+                };
+            }
+            TerminalRunAction::Failed { message } => {
+                let (input_tokens, output_tokens) = terminal_usage(&terminal_id).await;
+                return RunOutcome {
+                    status: "failed".into(),
+                    message: Some(message),
+                    terminal_id: Some(terminal_id),
+                    agent: Some(agent),
+                    provider_name,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    ..Default::default()
+                };
+            }
+            TerminalRunAction::Stopped { message } => {
+                let (input_tokens, output_tokens) = terminal_usage(&terminal_id).await;
+                return RunOutcome {
+                    status: "stopped".into(),
+                    message: Some(message),
+                    terminal_id: Some(terminal_id),
+                    agent: Some(agent),
+                    provider_name,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+}
+
+async fn terminal_usage(terminal_id: &str) -> (Option<u64>, Option<u64>) {
+    let id = terminal_id.to_string();
+    match blocking(move || agent_usage_service::usage(&id)).await {
+        Ok(Some(usage)) => (usage.total.input_tokens, usage.total.output_tokens),
+        _ => (None, None),
+    }
+}
+
 async fn run_profile(app: AppHandle, task: &ScheduledTask, _run: &ScheduledRun) -> RunOutcome {
     let TaskTarget::ProjectProfile { project_name, profile_id, auto_close_minutes } = &task.target else {
         return failed("任务类型不匹配");
@@ -1098,29 +1713,7 @@ async fn run_profile(app: AppHandle, task: &ScheduledTask, _run: &ScheduledRun) 
     };
 
     set_active_session(&task.id, &_run.id, None, Some(terminal_id.clone()));
-    // 与 Web 端创建终端一致：广播 terminal-created，前端补开标签且不抢焦点。
-    // activate=false 明确表达「凌晨任务不切走用户当前页面」；groupName 让标签落入项目分组。
-    if let Some(info) = app
-        .state::<TerminalService>()
-        .list_terminals_info()
-        .into_iter()
-        .find(|info| info.id == terminal_id)
-    {
-        let group = info.group.clone();
-        emit_terminal_created(
-            &app,
-            serde_json::json!({
-                "id": info.id,
-                "profileId": info.profile_id,
-                "profileName": info.profile_name,
-                "terminalType": info.terminal_type,
-                "owner": info.owner,
-                "group": info.group,
-                "groupName": group,
-                "activate": false,
-            }),
-        );
-    }
+    emit_created_terminal(&app, &terminal_id);
 
     if auto_close_minutes > 0 {
         let close_app = app.clone();
@@ -1395,5 +1988,131 @@ mod tests {
         assert!(next_run_at(&updated, Utc.timestamp_millis_opt(2_000_000_000_000).unwrap())
             .is_some_and(|next| next > 2_000_000_000_000));
         cleanup(&dir);
+    }
+
+    #[test]
+    fn terminal_command_head_strips_catalog_source_prefix() {
+        assert_eq!(
+            terminal_command_head("claude", Some("llm:abc-123"), Some("deepseek-v4.1-flash")).unwrap(),
+            "__TB_CLAUDE_REF__:abc-123:deepseek-v4.1-flash"
+        );
+        assert_eq!(
+            terminal_command_head("codex", Some("codex:abc-123"), Some("gpt-5-codex")).unwrap(),
+            "__TB_CODEX_REF__:abc-123:gpt-5-codex"
+        );
+        assert_eq!(
+            terminal_command_head("claude", Some("claude:abc-123"), Some("opus")).unwrap(),
+            "__TB_CLAUDE_PROVIDER_REF__:abc-123:opus"
+        );
+        // Claude 订阅供应商允许空模型（目录里存在「服务端默认模型」）。
+        assert_eq!(
+            terminal_command_head("claude", Some("claude:abc-123"), None).unwrap(),
+            "__TB_CLAUDE_PROVIDER_REF__:abc-123"
+        );
+        assert_eq!(terminal_command_head("claude", Some("default:claude"), None).unwrap(), "claude");
+        assert_eq!(terminal_command_head("codex", Some("default:codex"), None).unwrap(), "codex");
+        assert_eq!(terminal_command_head("claude", None, None).unwrap(), "claude");
+        // 供应商与 Agent 不匹配、llm/codex 缺模型都必须明确报错。
+        assert!(terminal_command_head("codex", Some("llm:abc"), Some("m")).is_err());
+        assert!(terminal_command_head("claude", Some("llm:abc"), None).is_err());
+        assert!(terminal_command_head("claude", Some("codex:abc"), Some("m")).is_err());
+    }
+
+    #[test]
+    fn shell_quote_handles_both_shell_families() {
+        assert_eq!(shell_quote("a b", "powershell").unwrap(), "'a b'");
+        assert_eq!(shell_quote("it's", "pwsh").unwrap(), "'it''s'");
+        assert_eq!(shell_quote("it's", "bash").unwrap(), "'it'\\''s'");
+        assert!(shell_quote("x", "cmd").is_err());
+    }
+
+    #[test]
+    fn task_prompt_allows_slash_and_rejects_control_chars() {
+        assert_eq!(normalize_task_prompt("/git-commit-helper").unwrap(), "/git-commit-helper");
+        assert_eq!(normalize_task_prompt("!echo hi").unwrap(), "!echo hi");
+        assert_eq!(normalize_task_prompt("a\r\nb\rc").unwrap(), "a\nb\nc");
+        assert_eq!(normalize_task_prompt(&"x".repeat(8_000)).unwrap().len(), 8_000);
+        assert!(normalize_task_prompt("  ").is_err());
+        assert!(normalize_task_prompt("a\u{3}b").is_err());
+        assert!(normalize_task_prompt("a\tb").is_err());
+    }
+
+    #[test]
+    fn terminal_classifier_handles_completion_interruption_and_stop() {
+        // stop 优先于一切。
+        assert_eq!(
+            classify_terminal_snapshot(&mut true, &mut 0, Some("claude"), "running", None, 0, true),
+            TerminalRunAction::Stopped { message: "已手动停止".into() }
+        );
+        // 待决策 / attention 两种信号都算等待确认。
+        assert_eq!(
+            classify_terminal_snapshot(&mut true, &mut 0, Some("claude"), "running", None, 1, false),
+            TerminalRunAction::WaitingApproval
+        );
+        assert_eq!(
+            classify_terminal_snapshot(&mut true, &mut 0, Some("claude"), "attention", None, 0, false),
+            TerminalRunAction::WaitingApproval
+        );
+        // running 记住「已开始」，unknown 不应误判完成。
+        let mut saw_running = false;
+        let mut idle_streak = 0;
+        assert_eq!(
+            classify_terminal_snapshot(&mut saw_running, &mut idle_streak, Some("claude"), "running", None, 0, false),
+            TerminalRunAction::Continue
+        );
+        assert!(saw_running);
+        assert_eq!(
+            classify_terminal_snapshot(&mut saw_running, &mut idle_streak, Some("claude"), "unknown", None, 0, false),
+            TerminalRunAction::Continue
+        );
+        // completed：正常完成；带 interrupted 标记视为失败。
+        assert_eq!(
+            classify_terminal_snapshot(&mut saw_running, &mut idle_streak, Some("claude"), "completed", None, 0, false),
+            TerminalRunAction::Completed { message: None }
+        );
+        assert_eq!(
+            classify_terminal_snapshot(&mut saw_running, &mut idle_streak, Some("claude"), "completed", Some("interrupted"), 0, false),
+            TerminalRunAction::Failed { message: "Agent 回合已被中断".into() }
+        );
+        // ended：完成回合后进程退出算完成；从没 running 过才算失败。
+        assert_eq!(
+            classify_terminal_snapshot(&mut saw_running, &mut idle_streak, Some("claude"), "ended", None, 0, false),
+            TerminalRunAction::Completed { message: None }
+        );
+        assert_eq!(
+            classify_terminal_snapshot(&mut false, &mut 0, Some("claude"), "ended", None, 0, false),
+            TerminalRunAction::Failed { message: "Agent 会话已结束，未报告完成".into() }
+        );
+        // idle：启动期 idle 继续等；Claude 连续两轮才算完成。
+        let mut not_started = false;
+        let mut idle_zero = 0;
+        assert_eq!(
+            classify_terminal_snapshot(&mut not_started, &mut idle_zero, Some("claude"), "idle", None, 0, false),
+            TerminalRunAction::Continue
+        );
+        assert_eq!(
+            classify_terminal_snapshot(&mut saw_running, &mut idle_streak, Some("claude"), "idle", None, 0, false),
+            TerminalRunAction::Continue
+        );
+        assert_eq!(
+            classify_terminal_snapshot(&mut saw_running, &mut idle_streak, Some("claude"), "idle", None, 0, false),
+            TerminalRunAction::Completed { message: None }
+        );
+        // Codex 正常完成写 completed；idle 是回合中止。
+        let mut codex_running = true;
+        let mut codex_idle = 0;
+        assert_eq!(
+            classify_terminal_snapshot(&mut codex_running, &mut codex_idle, Some("codex"), "idle", None, 0, false),
+            TerminalRunAction::Continue
+        );
+        assert_eq!(
+            classify_terminal_snapshot(&mut codex_running, &mut codex_idle, Some("codex"), "idle", None, 0, false),
+            TerminalRunAction::Stopped { message: "Agent 回合已中止".into() }
+        );
+        // Claude 中断后落在 idle：不算成功。
+        assert_eq!(
+            classify_terminal_snapshot(&mut true, &mut 1, Some("claude"), "idle", Some("interrupted"), 0, false),
+            TerminalRunAction::Failed { message: "Agent 回合已被中断".into() }
+        );
     }
 }

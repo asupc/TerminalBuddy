@@ -99,8 +99,8 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
             run(move || crate::services::scheduled_task_service::run_now(&app2, &id)).await
         }
         "scheduled_task_stop" => {
-            let id: String = argument(&args, "id")?;
-            run(move || crate::services::scheduled_task_service::stop(&id)).await
+            let (id, app2) = (argument::<String>(&args, "id")?, app.clone());
+            run(move || crate::services::scheduled_task_service::stop(&app2, &id)).await
         }
         "scheduled_task_runs" => {
             let id: String = argument(&args, "id")?;

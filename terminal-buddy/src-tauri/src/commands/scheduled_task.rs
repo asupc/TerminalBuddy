@@ -41,9 +41,10 @@ pub async fn scheduled_task_run_now(app: AppHandle, id: String) -> Result<Schedu
 }
 
 /// 仅支持 Agent 运行；项目配置任务请关闭对应终端。
+/// 原生会话走 `ai_chat_service::stop`，终端接力则关闭定时任务创建的终端。
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn scheduled_task_stop(id: String) -> Result<(), String> {
-    claude_task(move || service::stop(&id)).await
+pub async fn scheduled_task_stop(app: AppHandle, id: String) -> Result<(), String> {
+    claude_task(move || service::stop(&app, &id)).await
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]

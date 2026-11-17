@@ -2083,6 +2083,113 @@ pub async fn reply(
     }
 }
 
+// ───────────────────────── 定时任务：终端 Agent 快照与任务描述注入 ─────────────────────────
+
+/// 定时任务用的单终端快照。与 relay 列表不同：未绑定时也返回（phase = "unknown"），
+/// 让调度器能区分「终端还活着、Agent 还没起来」和「终端已被关闭」。
+pub(crate) struct ScheduledAgentSnapshot {
+    pub provider: Option<String>,
+    pub phase: String,
+    pub pending_decision_count: usize,
+    pub last_assistant_message: Option<String>,
+    /// "completed" | "interrupted"；仅 Claude 转录可识别。
+    pub turn_end: Option<String>,
+}
+
+/// None = 终端已不存在。内部调用，不做 actor 可见性过滤（actor 只用于授权校验）。
+pub(crate) async fn scheduled_snapshot(
+    app: &AppHandle,
+    actor: TerminalActor,
+    terminal_id: &str,
+) -> Option<ScheduledAgentSnapshot> {
+    let app = app.clone();
+    let terminal_id = terminal_id.to_string();
+    crate::runtime::async_runtime::spawn_blocking(move || {
+        let scan = relay_scan(&app);
+        // 与 page_for 一致：快照请求顺带驱动镜像刷新，首轮不依赖 watcher。
+        let _ = poll_mirror(&terminal_id, &scan);
+        let info = find_terminal_info(&app, &terminal_id)?;
+        let Some((session, entry)) = build_session_meta(&app, &info, &scan, actor) else {
+            return Some(ScheduledAgentSnapshot {
+                provider: None,
+                phase: "unknown".to_string(),
+                pending_decision_count: pending_decision_ids(&terminal_id).len(),
+                last_assistant_message: None,
+                turn_end: None,
+            });
+        };
+        let last_assistant_message = entry.as_ref().and_then(|entry| {
+            entry
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.role == "assistant" && !message.text.trim().is_empty())
+                .map(|message| truncate_text(message.text.trim(), 500))
+        });
+        let turn_end = entry.as_ref().and_then(|entry| entry.turn_end).map(|end| match end {
+            ClaudeTurnEnd::Completed(_) => "completed".to_string(),
+            ClaudeTurnEnd::Interrupted(_) => "interrupted".to_string(),
+        });
+        Some(ScheduledAgentSnapshot {
+            provider: Some(session.provider),
+            phase: session.phase,
+            pending_decision_count: session.pending_decision_count,
+            last_assistant_message,
+            turn_end,
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+fn truncate_text(value: &str, limit: usize) -> String {
+    if value.chars().count() <= limit {
+        return value.to_string();
+    }
+    let mut result: String = value.chars().take(limit).collect();
+    result.push('…');
+    result
+}
+
+/// 调度器向自己创建的 Agent 终端提交任务描述。
+///
+/// 与受限回复不同：允许 `/`、`!`、`@`、`#` 开头（斜杠命令必须由 REPL 输入框展开），
+/// 也允许超过回复上限的长文本；仍拒绝除换行外的控制字符。不加绑定/阶段/限流闸门——
+/// 这是调度器自己的任务描述，不是用户 relay 回复；写入失败也不重试（避免重复提交）。
+pub(crate) async fn submit_task_prompt(
+    app: &AppHandle,
+    actor: TerminalActor,
+    terminal_id: &str,
+    text: &str,
+) -> Result<(), RelayError> {
+    if !valid_terminal_id(terminal_id) {
+        return Err(RelayError::BadRequest("终端标识符无效".to_string()));
+    }
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    if text.trim().is_empty() {
+        return Err(RelayError::BadRequest("任务描述不能为空".to_string()));
+    }
+    if let Some(control) = text.chars().find(|character| *character != '\n' && character.is_control()) {
+        return Err(RelayError::BadRequest(format!(
+            "任务描述不能包含换行以外的控制字符（U+{:04X}）",
+            control as u32
+        )));
+    }
+    app.state::<TerminalService>()
+        .authorize(terminal_id, actor, TerminalAction::Input)
+        .map_err(access_error)?;
+    // 先只写文本；回车在停顿后单独提交，避免被 Ink 输入框当成粘贴内容吞掉。
+    app.state::<TerminalService>()
+        .write_to_terminal(terminal_id, &reply_payload(&text), actor)
+        .map_err(|error| RelayError::Internal(format!("写入任务描述失败：{error}")))?;
+    tokio::time::sleep(REPLY_SUBMIT_DELAY).await;
+    app.state::<TerminalService>()
+        .write_to_terminal(terminal_id, "\r", actor)
+        .map_err(|error| RelayError::Internal(format!("提交任务描述失败：{error}")))?;
+    Ok(())
+}
+
 // ───────────────────────── 阶段上报与终端关闭 ─────────────────────────
 
 /// Hook 阶段上报（§4.7）：键 = (terminalId, provider, sessionId)。
