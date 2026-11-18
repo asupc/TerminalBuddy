@@ -182,6 +182,7 @@ impl RemoteWorkspaceService {
         }
         let bytes = serde_json::to_vec_pretty(&stored).map_err(|error| error.to_string())?;
         crate::services::atomic_file::atomic_write(&Self::storage_path()?, &bytes)
+            .map_err(|error| format!("保存远程工作区配置失败：{}", error))
     }
 
     fn snapshot(&self) -> Option<ActiveConnection> {
