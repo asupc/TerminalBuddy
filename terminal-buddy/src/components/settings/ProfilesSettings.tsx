@@ -1,5 +1,5 @@
 import { FC, useEffect, useMemo, useState } from 'react';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import {
   createProfile,
   deleteProfile as deleteProfileCmd,
@@ -93,14 +93,17 @@ export const ProfilesSettings: FC<ProfilesSettingsProps> = ({ askConfirm, dismis
   return (
     <div className="commands-panel">
       <div className="commands-toolbar">
-        <input
-          className="commands-search"
-          type="text"
-          placeholder="搜索连接..."
-          value={search}
-          onChange={event => setSearch(event.target.value)}
-        />
-        <button className="settings-add-btn" type="button" onClick={() => openEditor(null)}>
+        <div className="commands-search-wrap">
+          <Search size={13} aria-hidden="true" />
+          <input
+            className="tb-input commands-search"
+            type="text"
+            placeholder="搜索连接名 / 分组 / 类型…"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+          />
+        </div>
+        <button className="btn-primary" type="button" onClick={() => openEditor(null)}>
           <Plus size={15} aria-hidden="true" />
           新建连接
         </button>
@@ -122,41 +125,50 @@ export const ProfilesSettings: FC<ProfilesSettingsProps> = ({ askConfirm, dismis
         </div>
       )}
 
-      <div className="commands-list">
-        {filteredProfiles.map(profile => (
-          <div
-            key={profile.id}
-            className={`cmd-cat-item ${contextMenu?.profile.id === profile.id ? 'selected' : ''}`}
-            onContextMenu={event => {
-              event.preventDefault();
-              setContextMenu({ x: event.clientX, y: event.clientY, profile });
-            }}
-          >
-            <span className="profile-type-badge">
-              {{ powershell: 'PS', pwsh: 'PS7', cmd: 'CMD', bash: 'BASH', sh: 'SH', zsh: 'ZSH', ssh: 'SSH', docker: 'DK', k8s: 'K8S', editor: 'ED', mstsc: 'RDP' }[profile.terminalType]}
-            </span>
-            <code className="cmd-cat-cmd profile-name" style={{ color: profile.tabColor || undefined }}>{profile.name}</code>
-            <span className="cmd-cat-desc profile-target">
-              {profile.terminalType === 'ssh' ? (profile.sshHost || '未配置主机') :
-               profile.terminalType === 'docker' ? (profile.dockerContainerName || '未配置容器') :
-               profile.terminalType === 'k8s' ? (profile.k8sNamespace || '未配置命名空间') :
-               (effectiveProfilePath(profile, projects) || '未设置项目路径')}
-            </span>
-            <div className="cmd-cat-actions visible-actions">
-              <button className="cmd-action-btn" type="button" title="编辑" aria-label={`编辑连接 ${profile.name}`} onClick={() => openEditor(profile)}>
-                <Pencil size={14} aria-hidden="true" />
-              </button>
-              <button className="cmd-action-btn danger" type="button" title="删除" aria-label={`删除连接 ${profile.name}`} onClick={() => confirmDelete(profile)}>
-                <Trash2 size={14} aria-hidden="true" />
-              </button>
+      <div className="settings-card-group settings-list-card">
+        <div className="commands-list">
+          {filteredProfiles.map(profile => {
+            const badge = { powershell: 'PS', pwsh: 'PS7', cmd: 'CMD', bash: 'BASH', sh: 'SH', zsh: 'ZSH', ssh: 'SSH', docker: 'DK', k8s: 'K8S', editor: 'ED', mstsc: 'RDP' }[profile.terminalType];
+            const isRemote = profile.terminalType === 'ssh' || profile.terminalType === 'docker' || profile.terminalType === 'k8s';
+            const targetText = profile.terminalType === 'ssh' ? (profile.sshHost || '未配置主机')
+              : profile.terminalType === 'docker' ? (profile.dockerContainerName || '未配置容器')
+                : profile.terminalType === 'k8s' ? (profile.k8sNamespace || '未配置命名空间')
+                  : (effectiveProfilePath(profile, projects) || '未设置项目路径');
+            return (
+              <div
+                key={profile.id}
+                className={`cmd-cat-item settings-list-row ${contextMenu?.profile.id === profile.id ? 'selected' : ''}`}
+                onContextMenu={event => {
+                  event.preventDefault();
+                  setContextMenu({ x: event.clientX, y: event.clientY, profile });
+                }}
+              >
+                <span className={`profile-type-badge${isRemote ? ' is-remote' : ''}`}>
+                  {badge}
+                </span>
+                <div className="profile-row-main">
+                  <span className="profile-row-name" style={{ color: profile.tabColor || undefined }}>{profile.name}</span>
+                  <span className="profile-row-target mono" title={targetText}>{targetText}</span>
+                </div>
+                <div className="cmd-cat-actions visible-actions">
+                  <button className="btn-secondary btn-sm" type="button" title="编辑" aria-label={`编辑连接 ${profile.name}`} onClick={() => openEditor(profile)}>
+                    <Pencil size={13} aria-hidden="true" />
+                    编辑
+                  </button>
+                  <button className="btn-danger-outline btn-sm" type="button" title="删除" aria-label={`删除连接 ${profile.name}`} onClick={() => confirmDelete(profile)}>
+                    <Trash2 size={13} aria-hidden="true" />
+                    删除
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {filteredProfiles.length === 0 && (
+            <div className="settings-empty-state">
+              {search ? '没有找到匹配的连接' : '暂无连接'}
             </div>
-          </div>
-        ))}
-        {filteredProfiles.length === 0 && (
-          <div className="settings-empty-state">
-            {search ? '没有找到匹配的连接' : '暂无连接'}
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {contextMenu && <div className="context-menu-overlay" onClick={() => setContextMenu(null)} />}

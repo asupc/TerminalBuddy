@@ -141,7 +141,7 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'agent-cli', label: 'Agent 管理', icon: Container, description: 'Claude Code 与 Codex CLI 的安装、更新与基础启动命令', keywords: ['agent', 'claude', 'codex', 'cli', '安装', '环境', '版本', '更新', '启动命令'] },
       { id: 'llm-providers', label: '模型供应商', icon: Boxes, description: 'Claude 与 Codex 供应商的端点、密钥与模型配置', keywords: ['ai', 'provider', 'model', 'deepseek', 'anthropic', 'codex', 'api'] },
       { id: 'claude-settings', label: 'Claude 默认配置', icon: FileJson, description: '用户级 settings.json 图形化配置、官方说明与快照备份', keywords: ['claude', 'settings.json', 'effort', 'token', 'context'] },
-      { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit, description: '模型 Token 消耗量、调用会话折线与用量统计', keywords: ['usage', 'token', 'cost', 'stats'] },
+      { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit, description: '配置各厂商控制台 API Key 或 Cookie，用于顶部工具栏实时查询套餐余量', keywords: ['usage', 'token', 'cost', 'stats', 'apikey', 'cookie', '用量'] },
     ],
   },
   {
@@ -165,7 +165,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   );
   const visibleSections = useMemo(() => visibleGroups.flatMap(group => group.sections), [visibleGroups]);
   const [dataPath, setDataPath] = useState('');
-  const initialSection = useAppStore.getState().settingsDialogSection as SettingsSectionId | null;
+  const storeSection = useAppStore(state => state.settingsDialogSection) as SettingsSectionId | null;
+  const initialSection = storeSection;
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(
     () => (initialSection && visibleSections.some(section => section.id === initialSection) ? initialSection : 'behavior'),
   );
@@ -285,6 +286,17 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     });
     setActiveSection(sectionId);
   };
+
+  useEffect(() => {
+    if (!storeSection || !visibleSections.some(section => section.id === storeSection)) return;
+    setVisitedSections(previous => {
+      if (previous.has(storeSection)) return previous;
+      const next = new Set(previous);
+      next.add(storeSection);
+      return next;
+    });
+    setActiveSection(storeSection);
+  }, [storeSection, visibleSections]);
 
   const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, sectionId: SettingsSectionId) => {
     const list = flatVisibleSections;
@@ -416,13 +428,14 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
             <div className="settings-nav-footer">
               <span>TerminalBuddy</span>
-              <span style={{ opacity: 0.7 }}>设置</span>
+              <span>{visibleSections.length} 个设置区</span>
             </div>
           </nav>
 
           <div className="settings-body">
             <div className="settings-content">
               {visibleSections.filter(section => visitedSections.has(section.id)).map(section => {
+                const SectionIcon = section.icon;
                 return (
                   <section
                     key={section.id}
@@ -433,9 +446,14 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     hidden={activeSection !== section.id}
                   >
                     <div className="settings-page-header">
-                      <div className="settings-page-header-text">
-                        <h3>{section.label}</h3>
-                        {section.description && <p>{section.description}</p>}
+                      <div className="settings-page-title-wrap">
+                        <div className="settings-page-icon" aria-hidden="true">
+                          <SectionIcon size={18} />
+                        </div>
+                        <div className="settings-page-header-text">
+                          <h3>{section.label}</h3>
+                          {section.description && <p>{section.description}</p>}
+                        </div>
                       </div>
                     </div>
                     <Suspense fallback={<div className="settings-panel-loading" aria-live="polite">加载设置…</div>}>

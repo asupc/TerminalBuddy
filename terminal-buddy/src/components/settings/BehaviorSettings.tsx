@@ -94,6 +94,13 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
       <div className="settings-card-group">
         <div className="card-group-header">
           <span className="card-group-title">终端内核与加载</span>
+          {vsCodeSupport !== null && (
+            <span className={`s-status-chip ${vsCodeSupport.available ? 'ok' : 'muted'}`}>
+              {vsCodeSupport.available
+                ? (vsCodeSupport.nodeVersion ? `Node ${vsCodeSupport.nodeVersion} 可用` : 'Node 可用')
+                : 'VS Code 宿主不可用'}
+            </span>
+          )}
         </div>
         <div className="settings-row">
           <div className="settings-row-info">
@@ -142,7 +149,14 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
 
         <div className="settings-row">
           <div className="settings-row-info">
-            <div className="settings-row-title">默认终端（实验）</div>
+            <div className="settings-row-title">
+              默认终端（实验）
+              {defaultTerminal && (
+                <span className={`s-status-chip ${defaultTerminal.enabled ? 'ok' : 'muted'}`}>
+                  {defaultTerminal.enabled ? '已接管' : '未接管'}
+                </span>
+              )}
+            </div>
             <p className="settings-row-desc">
               开启后，双击 .bat、Win+R 运行 cmd 等新的控制台程序将在 TerminalBuddy 新标签页中打开。
               当前状态：{defaultTerminal?.description ?? '检测中…'}
@@ -218,6 +232,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           <div className="settings-row-ctrl">
             <div className="settings-number-row" style={{ gap: 10 }}>
               <input
+                className="tb-input"
                 type="number"
                 min={1}
                 max={3650}
@@ -228,7 +243,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                 onKeyDown={e => {
                   if (e.key === 'Enter') e.currentTarget.blur();
                 }}
-                style={{ width: 64, height: 28, padding: '0 6px' }}
+                style={{ width: 68, textAlign: 'center' }}
                 aria-label="自动归档天数"
               />
               <span className="settings-number-unit">天未使用</span>
@@ -255,6 +270,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           <div className="settings-row-ctrl">
             <div className="settings-number-row" style={{ gap: 10 }}>
               <input
+                className="tb-input"
                 type="number"
                 min={1}
                 max={24}
@@ -266,7 +282,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                 onKeyDown={e => {
                   if (e.key === 'Enter') e.currentTarget.blur();
                 }}
-                style={{ width: 64, height: 28, padding: '0 6px' }}
+                style={{ width: 68, textAlign: 'center' }}
                 aria-label="空闲会话进程回收小时数"
               />
               <span className="settings-number-unit">小时空闲</span>

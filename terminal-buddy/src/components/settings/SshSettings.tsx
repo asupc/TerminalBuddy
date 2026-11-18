@@ -1,6 +1,6 @@
 import { FC } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen, Server } from 'lucide-react';
 import { saveSshDownloadDir, saveServerMonitorInterval } from '../../services/tauri';
 import type { AppSettings } from '../../utils/settings';
 
@@ -12,53 +12,68 @@ interface SshSettingsProps {
 export const SshSettings: FC<SshSettingsProps> = ({ settings, updateSetting }) => {
   return (
     <div className="settings-general">
-      <div className="settings-section">
-        <label className="settings-label">下载目录</label>
-        <div className="data-path-row">
-          <input
-            className="data-path-input"
-            type="text"
-            value={settings.sshDownloadDir}
-            readOnly
-          />
-          <button
-            className="btn-secondary"
-            onClick={async () => {
-              try {
-                const selected = await open({ directory: true, title: '选择 SSH 下载目录' });
-                if (selected) {
-                  updateSetting('sshDownloadDir', selected as string);
-                  saveSshDownloadDir(selected as string).catch(console.error);
-                }
-              } catch {}
-            }}
-          >
-            <FolderOpen size={15} aria-hidden="true" />
-            浏览
-          </button>
+      <div className="settings-card-group">
+        <div className="card-group-header">
+          <span className="card-group-title">
+            <Server size={14} aria-hidden="true" />
+            SFTP 传输与监控
+          </span>
         </div>
-        <p className="settings-desc">SSH 远程文件下载的本地保存目录，默认为系统下载文件夹</p>
-      </div>
-      <div className="settings-section">
-        <label className="settings-label">监控刷新间隔</label>
-        <div className="data-path-row">
-          <select
-            className="data-path-input"
-            value={settings.serverMonitorInterval}
-            onChange={(e) => {
-              const val = parseInt(e.target.value);
-              updateSetting('serverMonitorInterval', val);
-              saveServerMonitorInterval(val).catch(console.error);
-            }}
-          >
-            <option value={1}>1 秒</option>
-            <option value={3}>3 秒</option>
-            <option value={5}>5 秒</option>
-            <option value={10}>10 秒</option>
-            <option value={0}>关闭</option>
-          </select>
+
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">远程文件下载目录</div>
+            <p className="settings-row-desc">
+              默认保存路径：<code className="tb-inline-code">{settings.sshDownloadDir || '系统下载文件夹'}</code>
+            </p>
+          </div>
+          <div className="settings-row-ctrl">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={async () => {
+                try {
+                  const selected = await open({ directory: true, title: '选择 SSH 下载目录' });
+                  if (selected) {
+                    updateSetting('sshDownloadDir', selected as string);
+                    saveSshDownloadDir(selected as string).catch(console.error);
+                  }
+                } catch {}
+              }}
+            >
+              <FolderOpen size={15} aria-hidden="true" />
+              更改目录
+            </button>
+          </div>
         </div>
-        <p className="settings-desc">SSH 远程服务器状态监控的自动刷新间隔，设为"关闭"可停止自动刷新</p>
+
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">服务器负载监控刷新间隔</div>
+            <p className="settings-row-desc">
+              CPU / 内存 / 磁盘实时探针轮询频率，设为「关闭」可停止自动刷新
+            </p>
+          </div>
+          <div className="settings-row-ctrl">
+            <select
+              className="tb-select"
+              style={{ width: 124 }}
+              aria-label="服务器负载监控刷新间隔"
+              value={settings.serverMonitorInterval}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                updateSetting('serverMonitorInterval', val);
+                saveServerMonitorInterval(val).catch(console.error);
+              }}
+            >
+              <option value={1}>1 秒</option>
+              <option value={3}>3 秒</option>
+              <option value={5}>5 秒</option>
+              <option value={10}>10 秒</option>
+              <option value={0}>关闭</option>
+            </select>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -249,7 +249,7 @@
 }
 
 /* ===== 基础启动命令：跟随各自的命令行工具卡片 ===== */
-.agent-management-settings { display: flex; flex-direction: column; gap: 14px; }
+.agent-management-settings { display: flex; flex-direction: column; gap: 16px; max-width: 980px; }
 .agent-command-field {
   display: flex;
   flex-direction: column;
@@ -258,24 +258,24 @@
   padding-top: 12px;
   border-top: 1px dashed var(--border-subtle);
 }
-.agent-command-label { flex-shrink: 0; white-space: nowrap; color: var(--text-primary); font-size: 13px; font-weight: 600; }
-.agent-command-editor { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.agent-command-label { flex-shrink: 0; white-space: nowrap; color: var(--text-secondary); font-size: 12px; font-weight: 500; }
+.agent-command-editor { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .agent-command-editor input {
   flex: 1;
   min-width: 0;
-  min-height: var(--control-height-md);
-  padding: 8px 12px;
-  background: var(--bg-tertiary);
+  height: var(--control-height-md);
+  padding: 0 10px;
+  background: var(--surface-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 12.5px;
   font-family: var(--font-mono, ui-monospace, monospace);
 }
 .agent-command-editor input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .agent-command-editor input:disabled { opacity: 0.6; }
 .agent-command-saved { color: var(--success, #56d364); font-size: 12.5px; }
@@ -288,11 +288,15 @@
 
 /* ===== Agent 管理页：每个工具独立成卡、品牌标与内联版本 ===== */
 .agent-cli-list .container-environment-tool {
-  margin: 0 12px 12px;
-  padding: 12px 14px;
+  margin: 0 14px 12px;
+  padding: 13px 15px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
+}
+
+[data-skin] .agent-cli-list .container-environment-tool {
+  background: var(--bg-elevated);
 }
 
 .agent-cli-list .container-environment-tool:first-of-type {

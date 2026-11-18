@@ -1,5 +1,5 @@
 import { FC, useState } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, KeyRound } from 'lucide-react';
 import type { AppSettings } from '../../utils/settings';
 import { openUrl } from '../../services/tauri';
 
@@ -8,12 +8,73 @@ interface AiUsageSettingsProps {
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
 }
 
+type UsageCredentialKey =
+  | 'zhipuApiKey'
+  | 'deepseekApiKey'
+  | 'qianfanCookie'
+  | 'minimaxApiKey'
+  | 'arkCookie';
+
+interface UsageCredentialItem {
+  key: UsageCredentialKey;
+  title: string;
+  placeholder: string;
+  prefixDesc: string;
+  linkLabel: string;
+  linkUrl: string;
+  suffixDesc: string;
+}
+
+const USAGE_CREDENTIALS: ReadonlyArray<UsageCredentialItem> = [
+  {
+    key: 'zhipuApiKey',
+    title: '智谱 GLM API Key',
+    placeholder: '请输入智谱 GLM API Key',
+    prefixDesc: '可在 ',
+    linkLabel: 'open.bigmodel.cn',
+    linkUrl: 'https://open.bigmodel.cn',
+    suffixDesc: ' 获取 API Key 用于查询套餐余量',
+  },
+  {
+    key: 'deepseekApiKey',
+    title: 'DeepSeek 认证 Token',
+    placeholder: '请输入 DeepSeek 认证 Token',
+    prefixDesc: '登录 ',
+    linkLabel: 'platform.deepseek.com/usage',
+    linkUrl: 'https://platform.deepseek.com/usage',
+    suffixDesc: ' 后从开发者工具网络请求复制 Authorization Bearer 值',
+  },
+  {
+    key: 'qianfanCookie',
+    title: '百度千帆 Cookie',
+    placeholder: '请输入百度千帆的 Cookie',
+    prefixDesc: '登录 ',
+    linkLabel: '百度千帆控制台',
+    linkUrl: 'https://console.bce.baidu.com/qianfan/resource/subscribe',
+    suffixDesc: ' 后从浏览器开发者工具复制完整 Cookie 值',
+  },
+  {
+    key: 'minimaxApiKey',
+    title: 'MiniMax API Key',
+    placeholder: '请输入 MiniMax API Key',
+    prefixDesc: '可在 ',
+    linkLabel: 'platform.minimax.chat',
+    linkUrl: 'https://platform.minimax.chat/api_keys',
+    suffixDesc: ' 获取密钥用于查询 AI 用量信息',
+  },
+  {
+    key: 'arkCookie',
+    title: '火山方舟 Cookie',
+    placeholder: '请输入火山方舟控制台的 Cookie',
+    prefixDesc: '登录 ',
+    linkLabel: '火山方舟控制台',
+    linkUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=subscribe',
+    suffixDesc: ' 后复制完整 Cookie 值（须包含 csrfToken）用于查询 Coding 套餐用量',
+  },
+];
+
 export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSetting }) => {
-  const [zhipuApiKeyVisible, setZhipuApiKeyVisible] = useState(false);
-  const [qianfanCookieVisible, setQianfanCookieVisible] = useState(false);
-  const [deepseekApiKeyVisible, setDeepseekApiKeyVisible] = useState(false);
-  const [minimaxApiKeyVisible, setMinimaxApiKeyVisible] = useState(false);
-  const [arkCookieVisible, setArkCookieVisible] = useState(false);
+  const [visibleMap, setVisibleMap] = useState<Partial<Record<UsageCredentialKey, boolean>>>({});
 
   // Tauri WebView 里 target="_blank" 不会拉起系统浏览器，统一走 openUrl 触发 ShellExecuteW。
   const handleOpenLink = (url: string) => (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -21,115 +82,61 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
     void openUrl(url);
   };
 
+  const configuredCount = USAGE_CREDENTIALS.filter(item => settings[item.key].trim().length > 0).length;
+
   return (
     <div className="settings-general">
-      <div className="settings-section">
-        <label className="settings-label">智谱 GLM API Key</label>
-        <div className="data-path-row">
-          <input
-            className="data-path-input"
-            type={zhipuApiKeyVisible ? 'text' : 'password'}
-            value={settings.zhipuApiKey}
-            onChange={(e) => updateSetting('zhipuApiKey', e.target.value)}
-            placeholder="请输入智谱 GLM API Key"
-            style={{ flex: 1 }}
-          />
-          <button
-            className="btn-secondary"
-            onClick={() => setZhipuApiKeyVisible(!zhipuApiKeyVisible)}
-          >
-            {zhipuApiKeyVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
-            {zhipuApiKeyVisible ? '隐藏' : '显示'}
-          </button>
+      <div className="settings-card-group">
+        <div className="card-group-header">
+          <span className="card-group-title">
+            <KeyRound size={14} aria-hidden="true" />
+            厂商用量查询凭据
+          </span>
+          <span className="card-group-extra">{configuredCount} / {USAGE_CREDENTIALS.length} 已配置</span>
         </div>
-        <p className="settings-desc">填入智谱 GLM 的 API Key 用于查询 AI 用量信息。可在 <a href="https://open.bigmodel.cn" onClick={handleOpenLink('https://open.bigmodel.cn')} rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>open.bigmodel.cn</a> 获取</p>
-      </div>
 
-      <div className="settings-section">
-        <label className="settings-label">百度千帆 Cookie</label>
-        <div className="data-path-row">
-          <input
-            className="data-path-input"
-            type={qianfanCookieVisible ? 'text' : 'password'}
-            value={settings.qianfanCookie}
-            onChange={(e) => updateSetting('qianfanCookie', e.target.value)}
-            placeholder="请输入百度千帆的 Cookie"
-            style={{ flex: 1 }}
-          />
-          <button
-            className="btn-secondary"
-            onClick={() => setQianfanCookieVisible(!qianfanCookieVisible)}
-          >
-            {qianfanCookieVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
-            {qianfanCookieVisible ? '隐藏' : '显示'}
-          </button>
-        </div>
-        <p className="settings-desc">填入百度千帆控制台的 Cookie 用于查询 AI 用量。登录 <a href="https://console.bce.baidu.com/qianfan/resource/subscribe" onClick={handleOpenLink('https://console.bce.baidu.com/qianfan/resource/subscribe')} rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>百度千帆控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值</p>
-      </div>
-
-      <div className="settings-section">
-        <label className="settings-label">DeepSeek 认证 Token</label>
-        <div className="data-path-row">
-          <input
-            className="data-path-input"
-            type={deepseekApiKeyVisible ? 'text' : 'password'}
-            value={settings.deepseekApiKey}
-            onChange={(e) => updateSetting('deepseekApiKey', e.target.value)}
-            placeholder="请输入 DeepSeek 认证Token"
-            style={{ flex: 1 }}
-          />
-          <button
-            className="btn-secondary"
-            onClick={() => setDeepseekApiKeyVisible(!deepseekApiKeyVisible)}
-          >
-            {deepseekApiKeyVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
-            {deepseekApiKeyVisible ? '隐藏' : '显示'}
-          </button>
-        </div>
-        <p className="settings-desc">填入 DeepSeek 的 认证Token 用于查询 AI 用量。可在 <a href="https://platform.deepseek.com/usage" onClick={handleOpenLink('https://platform.deepseek.com/usage')} rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.deepseek.com/usage</a> 登录后打开浏览器开发者工具，查看网络请求获取 Authorization Bearer 值</p>
-      </div>
-
-      <div className="settings-section">
-        <label className="settings-label">MiniMax API Key</label>
-        <div className="data-path-row">
-          <input
-            className="data-path-input"
-            type={minimaxApiKeyVisible ? 'text' : 'password'}
-            value={settings.minimaxApiKey}
-            onChange={(e) => updateSetting('minimaxApiKey', e.target.value)}
-            placeholder="请输入 MiniMax API Key"
-            style={{ flex: 1 }} />
-          <button
-            className="btn-secondary"
-            onClick={() => setMinimaxApiKeyVisible(!minimaxApiKeyVisible)}
-          >
-            {minimaxApiKeyVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
-            {minimaxApiKeyVisible ? '隐藏' : '显示'}
-          </button>
-        </div>
-        <p className="settings-desc">填入 MiniMax 的 API Key 用于查询 AI 用量。可在 <a href="https://platform.minimax.chat/api_keys" onClick={handleOpenLink('https://platform.minimax.chat/api_keys')} rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.minimax.chat</a> 获取</p>
-      </div>
-
-      <div className="settings-section">
-        <label className="settings-label">火山方舟 Cookie</label>
-        <div className="data-path-row">
-          <input
-            className="data-path-input"
-            type={arkCookieVisible ? 'text' : 'password'}
-            value={settings.arkCookie}
-            onChange={(e) => updateSetting('arkCookie', e.target.value)}
-            placeholder="请输入火山方舟控制台的 Cookie"
-            style={{ flex: 1 }}
-          />
-          <button
-            className="btn-secondary"
-            onClick={() => setArkCookieVisible(!arkCookieVisible)}
-          >
-            {arkCookieVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
-            {arkCookieVisible ? '隐藏' : '显示'}
-          </button>
-        </div>
-        <p className="settings-desc">填入火山方舟控制台的 Cookie 用于查询 Coding 套餐用量。登录 <a href="https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=subscribe" onClick={handleOpenLink('https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=subscribe')} rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>火山方舟控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值（须包含 csrfToken）</p>
+        {USAGE_CREDENTIALS.map(item => {
+          const value = settings[item.key];
+          const configured = value.trim().length > 0;
+          const visible = Boolean(visibleMap[item.key]);
+          return (
+            <div key={item.key} className="settings-row settings-row--wrap-ctrl">
+              <div className="settings-row-info">
+                <div className="settings-row-title">
+                  {item.title}
+                  <span className={`s-status-chip ${configured ? 'ok' : 'muted'}`}>
+                    {configured ? '已配置' : '未配置'}
+                  </span>
+                </div>
+                <p className="settings-row-desc">
+                  {item.prefixDesc}
+                  <a href={item.linkUrl} onClick={handleOpenLink(item.linkUrl)} rel="noopener noreferrer">
+                    {item.linkLabel}
+                  </a>
+                  {item.suffixDesc}
+                </p>
+              </div>
+              <div className="settings-row-ctrl ai-usage-ctrl">
+                <input
+                  className={`tb-input${configured ? ' mono' : ''}`}
+                  type={visible ? 'text' : 'password'}
+                  value={value}
+                  onChange={e => updateSetting(item.key, e.target.value)}
+                  placeholder={item.placeholder}
+                  aria-label={item.title}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => setVisibleMap(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
+                >
+                  {visible ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
+                  {visible ? '隐藏' : '显示'}
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

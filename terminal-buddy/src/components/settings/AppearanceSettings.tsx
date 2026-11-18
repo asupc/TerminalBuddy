@@ -188,17 +188,12 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
           <div className="settings-row-info">
             <div className="settings-row-title">列表选中样式</div>
             <p className="settings-row-desc">项目与命令、文件与 Git 面板中被选中列表条目的配色</p>
-            <div style={{ marginTop: 8 }}>
+            <div className="selection-preview-wrap">
               <div
+                className="selection-preview-pill"
                 style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '4px 10px',
-                  borderRadius: 3,
                   background: 'var(--list-active-bg)',
                   color: 'var(--list-active-fg)',
-                  fontSize: 12,
                   boxShadow: 'inset 0 0 0 var(--list-active-border-width) var(--list-active-border-color)',
                 }}
               >
@@ -314,7 +309,7 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
             </p>
           </div>
           <div className="settings-row-ctrl">
-            <div className="settings-grid-2col" style={{ gap: 8 }}>
+            <div className="settings-font-size-list">
               {(
                 [
                   { key: 'terminalFontSizeOff', label: '单屏', defaultValue: 14 },
@@ -325,14 +320,15 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
                 const value = settings[row.key];
                 return (
                   <div key={row.key} className="settings-number-row" style={{ gap: 6 }}>
-                    <span className="settings-number-label" style={{ flex: '0 0 60px' }}>{row.label}</span>
+                    <span className="settings-number-label" style={{ flex: '0 0 56px' }}>{row.label}</span>
                     <input
+                      className="tb-input"
                       type="number"
                       min={8}
                       max={32}
                       step={1}
                       value={value}
-                      style={{ width: 54, height: 28, padding: '0 6px' }}
+                      style={{ width: 58, textAlign: 'center' }}
                       onChange={(e) => {
                         const raw = e.target.value.trim();
                         if (raw === '' || raw === '-') {

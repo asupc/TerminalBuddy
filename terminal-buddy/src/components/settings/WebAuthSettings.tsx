@@ -1,4 +1,5 @@
 import { FC, useEffect, useState } from 'react';
+import { Globe2, ShieldCheck } from 'lucide-react';
 import { changeWebAdminPassword, getWebApiStatus, saveWebPageTitle } from '../../services/tauri';
 
 /** 主页标题长度上限（按字符数计），与后端 WEB_PAGE_TITLE_MAX_CHARS 保持一致。 */
@@ -89,82 +90,105 @@ export const WebAuthSettings: FC = () => {
 
   return (
     <div className="settings-general">
-      <div className="settings-section">
-        <label className="settings-label" htmlFor="web-auth-page-title">主页标题</label>
-        <div className="data-path-row">
-          <input
-            id="web-auth-page-title"
-            className="data-path-input"
-            type="text"
-            value={pageTitleDraft}
-            placeholder="终端伙伴"
-            maxLength={PAGE_TITLE_MAX_CHARS}
-            onChange={e => {
-              setPageTitleDraft(e.target.value);
-              if (titleError) setTitleError('');
-            }}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !titleBusy) void handleSaveTitle();
-            }}
-          />
-          <button
-            className="btn-secondary"
-            onClick={() => { void handleSaveTitle(); }}
-            disabled={titleBusy}
-          >
-            {titleBusy ? '保存中…' : '保存'}
-          </button>
+      <div className="settings-card-group">
+        <div className="card-group-header">
+          <span className="card-group-title">
+            <Globe2 size={14} aria-hidden="true" />
+            品牌展示
+          </span>
+          <span className="s-status-chip ok">Docker 服务端模式</span>
         </div>
-        {titleError && <p className="settings-desc" role="alert" style={{ color: 'var(--danger, #f14c4c)' }}>{titleError}</p>}
-        {titleSaved && <p className="settings-desc" role="status" style={{ color: '#3fb950' }}>已保存并生效</p>}
-        <p className="settings-desc">同时作用于登录页大标题与浏览器标签页标题，留空保存恢复默认「终端伙伴」</p>
+        <div className="settings-row settings-row--wrap-ctrl">
+          <div className="settings-row-info">
+            <label className="settings-row-title" htmlFor="web-auth-page-title">网页主页标题</label>
+            <p className="settings-row-desc">
+              同时作用于登录页大标题与浏览器标签页标题，留空保存恢复默认「终端伙伴」
+            </p>
+            {titleError && <p className="settings-inline-alert" role="alert">{titleError}</p>}
+            {titleSaved && <p className="settings-inline-success" role="status">已保存并生效</p>}
+          </div>
+          <div className="settings-row-ctrl" style={{ width: 'min(320px, 100%)' }}>
+            <input
+              id="web-auth-page-title"
+              className="tb-input"
+              type="text"
+              value={pageTitleDraft}
+              placeholder="终端伙伴"
+              maxLength={PAGE_TITLE_MAX_CHARS}
+              onChange={e => {
+                setPageTitleDraft(e.target.value);
+                if (titleError) setTitleError('');
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !titleBusy) void handleSaveTitle();
+              }}
+            />
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => { void handleSaveTitle(); }}
+              disabled={titleBusy}
+            >
+              {titleBusy ? '保存中…' : '保存'}
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="settings-section">
-        <label className="settings-label">修改登录密码</label>
-        <div className="data-path-row">
-          <input
-            className="data-path-input"
-            type="password"
-            autoComplete="current-password"
-            placeholder="旧密码"
-            value={oldPassword}
-            onChange={e => { setOldPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
-          />
+      <div className="settings-card-group">
+        <div className="card-group-header">
+          <span className="card-group-title">
+            <ShieldCheck size={14} aria-hidden="true" />
+            修改管理员登录密码
+          </span>
+          <span className="card-group-extra">最短 8 字符</span>
         </div>
-        <div className="data-path-row" style={{ marginTop: 8 }}>
-          <input
-            className="data-path-input"
-            type="password"
-            autoComplete="new-password"
-            placeholder="新密码（至少 8 个字符）"
-            value={newPassword}
-            onChange={e => { setNewPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
-          />
+        <div className="settings-card-block">
+          <div className="web-auth-password-grid">
+            <input
+              className="tb-input"
+              type="password"
+              autoComplete="current-password"
+              placeholder="旧密码"
+              value={oldPassword}
+              onChange={e => { setOldPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
+            />
+            <input
+              className="tb-input"
+              type="password"
+              autoComplete="new-password"
+              placeholder="新密码（≥ 8 字符）"
+              value={newPassword}
+              onChange={e => { setNewPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
+            />
+            <input
+              className="tb-input"
+              type="password"
+              autoComplete="new-password"
+              placeholder="确认新密码"
+              value={confirmPassword}
+              onChange={e => { setConfirmPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !passwordBusy) void handleChangePassword();
+              }}
+            />
+          </div>
+          {passwordError && <p className="settings-inline-alert" role="alert">{passwordError}</p>}
+          {passwordSuccess && <p className="settings-inline-success" role="status">{passwordSuccess}</p>}
+          <div className="settings-card-footer-inline">
+            <span className="settings-row-desc">
+              修改 Docker 网页登录的管理员密码，需先验证旧密码；已签发且未过期的 JWT 不受影响
+            </span>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => { void handleChangePassword(); }}
+              disabled={passwordBusy || !oldPassword || !newPassword || !confirmPassword}
+            >
+              {passwordBusy ? '提交中…' : '提交修改'}
+            </button>
+          </div>
         </div>
-        <div className="data-path-row" style={{ marginTop: 8 }}>
-          <input
-            className="data-path-input"
-            type="password"
-            autoComplete="new-password"
-            placeholder="确认新密码"
-            value={confirmPassword}
-            onChange={e => { setConfirmPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !passwordBusy) void handleChangePassword();
-            }}
-          />
-          <button
-            className="btn-secondary"
-            onClick={() => { void handleChangePassword(); }}
-            disabled={passwordBusy || !oldPassword || !newPassword || !confirmPassword}
-          >
-            {passwordBusy ? '提交中…' : '修改密码'}
-          </button>
-        </div>
-        {passwordError && <p className="settings-desc" role="alert" style={{ color: 'var(--danger, #f14c4c)' }}>{passwordError}</p>}
-        {passwordSuccess && <p className="settings-desc" role="status" style={{ color: '#3fb950' }}>{passwordSuccess}</p>}
-        <p className="settings-desc">修改 Docker 网页登录的管理员密码，需先验证旧密码</p>
       </div>
     </div>
   );

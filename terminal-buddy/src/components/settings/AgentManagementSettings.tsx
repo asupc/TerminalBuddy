@@ -224,29 +224,38 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
 
   return (
     <div className="agent-management-settings">
-      <div className="settings-card-group agent-download-settings">
-        <div className="agent-download-source-row">
-          <label htmlFor="agent-download-source">下载源</label>
-          <select
-            id="agent-download-source"
-            value={downloadSource ?? ''}
-            disabled={!downloadSource || savingSource || working || refreshing || tools.some(tool => actions[tool.id] !== null)}
-            onChange={event => { void changeDownloadSource(event.target.value as AgentDownloadSource); }}
-          >
-            {!downloadSource && <option value="">正在读取…</option>}
-            <option value="npmmirror">国内镜像（npmmirror，默认）</option>
-            <option value="official">官方源</option>
-          </select>
-          {savingSource && <LoaderCircle size={14} className="container-environment-spin" aria-label="保存中" />}
+      <div className="settings-card-group">
+        <div className="card-group-header">
+          <span className="card-group-title">npm 下载源配置</span>
         </div>
-        <p className="container-environment-hint">
-          {downloadSource === 'npmmirror'
-            ? 'registry.npmmirror.com · 检查、安装和更新均使用国内镜像。安装需要 Node.js，建议使用 22.19 或更高版本；镜像同步可能稍有延迟。'
-            : downloadSource === 'official'
-              ? 'registry.npmjs.org · 使用官方版本源和安装渠道，需要能访问国外下载站点。'
-              : '下载源用于版本检查、安装和更新，选择后自动保存。'}
-        </p>
-        {sourceError && <p className="container-environment-error" role="alert">{sourceError}</p>}
+        <div className="settings-row settings-row--wrap-ctrl">
+          <div className="settings-row-info">
+            <label className="settings-row-title" htmlFor="agent-download-source">版本检查与安装源</label>
+            <p className="settings-row-desc">
+              {downloadSource === 'npmmirror'
+                ? 'registry.npmmirror.com · 检查、安装和更新均使用国内镜像。安装需要 Node.js（建议 ≥ 22.19）；镜像同步可能稍有延迟。'
+                : downloadSource === 'official'
+                  ? 'registry.npmjs.org · 使用官方版本源和安装渠道，需要能访问国外下载站点。'
+                  : '下载源用于版本检查、安装和更新，选择后自动保存。'}
+            </p>
+            {sourceError && <p className="container-environment-error" role="alert">{sourceError}</p>}
+          </div>
+          <div className="settings-row-ctrl">
+            <select
+              id="agent-download-source"
+              className="tb-select"
+              style={{ width: 224 }}
+              value={downloadSource ?? ''}
+              disabled={!downloadSource || savingSource || working || refreshing || tools.some(tool => actions[tool.id] !== null)}
+              onChange={event => { void changeDownloadSource(event.target.value as AgentDownloadSource); }}
+            >
+              {!downloadSource && <option value="">正在读取…</option>}
+              <option value="npmmirror">国内镜像（npmmirror，默认）</option>
+              <option value="official">官方源</option>
+            </select>
+            {savingSource && <LoaderCircle size={14} className="container-environment-spin" aria-label="保存中" />}
+          </div>
+        </div>
       </div>
       <div className="settings-card-group container-environment-list agent-cli-list">
         <div className="card-group-header container-environment-toolbar">

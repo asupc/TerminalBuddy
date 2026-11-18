@@ -26,7 +26,7 @@ export const HotkeyRecorder: FC<HotkeyRecorderProps> = ({ value, onRecord }) => 
 
   return (
     <button
-      className={`btn-secondary hotkey-recorder ${recording ? 'recording' : ''}`}
+      className={`hotkey-recorder tb-kbd-cap ${recording ? 'recording' : ''} ${!value && !recording ? 'is-empty' : ''}`}
       type="button"
       onClick={() => setRecording(true)}
       onBlur={() => setRecording(false)}
