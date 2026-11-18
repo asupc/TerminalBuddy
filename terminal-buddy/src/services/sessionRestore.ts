@@ -19,7 +19,7 @@ import { currentCodexCommand } from '../utils/agentCommands';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
 import type { AgentSessionBinding, TerminalSession } from '../types';
-import { isBrowserClient, isWebBackend, clientTerminalOwner, defaultShellType } from './platform';
+import { isWebBackend, clientTerminalOwner, defaultShellType } from './platform';
 import { stripCodexResumeArgs, stripResumeArgs } from '../utils/commandParams';
 import {
   agentChatTabKey,

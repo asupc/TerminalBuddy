@@ -1,4 +1,4 @@
-import { defaultShellType, serverUsesWindowsPaths, isBrowserClient, isWebBackend } from '../../services/platform';
+import { defaultShellType, serverUsesWindowsPaths, isWebBackend } from '../../services/platform';
 import { FC, useState, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useForm } from 'react-hook-form';

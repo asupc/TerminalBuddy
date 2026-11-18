@@ -42,7 +42,8 @@ export function connectRemoteWorkspace(input: {
 }
 
 export function authenticateRemoteWorkspace(input: {
-  username: string;
+  /** 省略时 Rust 侧沿用已保存账号。 */
+  username?: string;
   password: string;
   setup?: boolean;
   confirmPassword?: string;
