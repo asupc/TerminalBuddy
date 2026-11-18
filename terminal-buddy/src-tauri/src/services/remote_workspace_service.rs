@@ -458,12 +458,15 @@ impl RemoteWorkspaceService {
         } else {
             return Err("远程服务地址协议无效".into());
         };
-        use axum::http::Request as HttpRequest;
-        let mut builder = HttpRequest::builder().uri(url);
+        // 不能用 http::Request 手工构造握手请求：tungstenite 对 Request 原样透传，
+        // 不会补 Sec-WebSocket-Key 等标准头，远端会以 1002 拒绝握手。
+        let uri = url.parse::<axum::http::Uri>().map_err(|error| error.to_string())?;
+        let mut builder = tokio_tungstenite::tungstenite::ClientRequestBuilder::new(uri);
         if let Some(agent) = headers.get(header::USER_AGENT) {
-            builder = builder.header(header::USER_AGENT, agent);
+            let agent = agent.to_str().map_err(|error| error.to_string())?;
+            builder = builder.with_header("User-Agent", agent);
         }
-        let remote = tokio_tungstenite::connect_async(builder.body(()).map_err(|error| error.to_string())?)
+        let remote = tokio_tungstenite::connect_async(builder)
             .await.map_err(|error| format!("远程 WebSocket 连接失败：{}", error));
         let (remote, _) = match remote {
             Ok(remote) => remote,
