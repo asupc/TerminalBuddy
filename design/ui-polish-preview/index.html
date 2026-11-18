@@ -1,0 +1,2566 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TerminalBuddy · 定时任务与设置页面美化预览</title>
+<style>
+  /* ================= 1. 统一设计令牌 (同步 global.css & cartoonAnime1.css) ================= */
+  :root {
+    color-scheme: dark;
+    --bg-primary: #181a1d;
+    --bg-secondary: #202226;
+    --bg-tertiary: #2a2d31;
+    --bg-elevated: #25282c;
+    --bg-overlay: rgba(10, 12, 14, 0.66);
+    --text-primary: #e3e5e8;
+    --text-secondary: #9aa0a8;
+    --text-tertiary: #6f767f;
+    --accent: #4b95e9;
+    --accent-hover: #62a4ed;
+    --accent-contrast: #ffffff;
+    --border: #34383d;
+    --border-subtle: #2b2f33;
+    --danger: #ef6b73;
+    --success: #55b988;
+    --warning: #d9a441;
+    --list-hover-bg: #292c30;
+    --list-active-bg: color-mix(in srgb, var(--accent) 17%, transparent);
+    --list-active-fg: #edf5ff;
+
+    /* 统一圆角 / 高度 / 阴影基准 */
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --control-height-sm: 28px;
+    --control-height-md: 32px;
+    --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.16);
+    --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+
+    /* 新增表面层级变量：使卡片组、悬停与状态微调在所有皮肤下和谐统一 */
+    --surface-card: var(--bg-primary);
+    --surface-card-header: color-mix(in srgb, var(--bg-primary) 55%, var(--bg-tertiary));
+    --surface-control: var(--bg-tertiary);
+    --surface-input: color-mix(in srgb, var(--bg-secondary) 75%, var(--bg-primary));
+    --page-backdrop: radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 48%), var(--bg-primary);
+  }
+
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg-primary: #f3f4f6;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #e9ebee;
+    --bg-elevated: #ffffff;
+    --bg-overlay: rgba(22, 26, 31, 0.46);
+    --text-primary: #24272c;
+    --text-secondary: #5f6670;
+    --text-tertiary: #878e98;
+    --accent: #176fbd;
+    --accent-hover: #0d62aa;
+    --accent-contrast: #ffffff;
+    --border: #d6d9de;
+    --border-subtle: #e4e6e9;
+    --danger: #c9434d;
+    --success: #23845b;
+    --warning: #9a6b12;
+    --list-hover-bg: #edf0f3;
+    --list-active-bg: color-mix(in srgb, var(--accent) 11%, #ffffff);
+    --list-active-fg: #125f9f;
+    --shadow-card: 0 2px 8px rgba(24, 30, 38, 0.06);
+    --shadow-dialog: 0 24px 64px rgba(24, 30, 38, 0.2), 0 0 0 1px rgba(24, 30, 38, 0.06);
+    --surface-card: #ffffff;
+    --surface-card-header: #f8f9fb;
+    --surface-control: #eef0f3;
+    --surface-input: #f8f9fb;
+  }
+
+  html[data-skin="cartoon"] {
+    color-scheme: light;
+    --bg-primary: #fff7fb;
+    --bg-secondary: #fffdfc;
+    --bg-tertiary: #ffedf5;
+    --bg-elevated: #fffdfc;
+    --text-primary: #573b4d;
+    --text-secondary: #805d71;
+    --text-tertiary: #9b778b;
+    --accent: #f174aa;
+    --accent-hover: #dc5d96;
+    --accent-contrast: #ffffff;
+    --border: #efb0c9;
+    --border-subtle: #f7d3e0;
+    --danger: #c93f69;
+    --success: #4f853f;
+    --warning: #96600d;
+    --list-hover-bg: rgba(255, 228, 240, 0.78);
+    --list-active-bg: rgba(239, 111, 155, 0.18);
+    --list-active-fg: #9f3f62;
+    --shadow-card: 0 3px 12px rgba(196, 91, 139, 0.08);
+    --shadow-dialog: 0 24px 64px rgba(137, 77, 108, 0.22);
+    --surface-card: #fffafc;
+    --surface-card-header: #fff0f6;
+    --surface-control: #ffe8f2;
+    --surface-input: #ffffff;
+  }
+
+  html[data-skin="starry"] {
+    color-scheme: dark;
+    --bg-primary: #17184d;
+    --bg-secondary: #1e215f;
+    --bg-tertiary: #2d3077;
+    --bg-elevated: #26296d;
+    --text-primary: #fff9ff;
+    --text-secondary: #d0c7f2;
+    --text-tertiary: #aaa0d4;
+    --accent: #c08aff;
+    --accent-hover: #d4adff;
+    --accent-contrast: #1d1647;
+    --border: #5c549d;
+    --border-subtle: #3d3977;
+    --danger: #ff829f;
+    --success: #9edd70;
+    --warning: #ffe08a;
+    --list-hover-bg: rgba(108, 89, 204, 0.3);
+    --list-active-bg: rgba(192, 138, 255, 0.24);
+    --list-active-fg: #fff9ff;
+    --shadow-card: 0 4px 16px rgba(6, 8, 43, 0.35);
+    --shadow-dialog: 0 24px 68px rgba(6, 8, 43, 0.58);
+    --surface-card: #1a1d56;
+    --surface-card-header: #23266a;
+    --surface-control: #2d3077;
+    --surface-input: #141646;
+  }
+
+  html[data-skin="cyber"] {
+    color-scheme: dark;
+    --bg-primary: #07091b;
+    --bg-secondary: #0d102a;
+    --bg-tertiary: #15193d;
+    --bg-elevated: #121536;
+    --text-primary: #f8e9ff;
+    --text-secondary: #cbb3d8;
+    --text-tertiary: #9e83ad;
+    --accent: #ff2dba;
+    --accent-hover: #ff68d1;
+    --accent-contrast: #160713;
+    --border: #5f2559;
+    --border-subtle: #331635;
+    --danger: #ff5b7f;
+    --success: #9ceb50;
+    --warning: #ffd95d;
+    --list-hover-bg: rgba(255, 28, 188, 0.14);
+    --list-active-bg: rgba(255, 45, 186, 0.22);
+    --list-active-fg: #f8e9ff;
+    --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.45);
+    --shadow-dialog: 0 24px 70px rgba(0, 0, 0, 0.68);
+    --surface-card: #0b0d24;
+    --surface-card-header: #131637;
+    --surface-control: #1a1e47;
+    --surface-input: #07091b;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    background: var(--page-backdrop);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  code, .mono { font-family: var(--font-mono); }
+
+  svg.ic {
+    width: 15px; height: 15px;
+    fill: none; stroke: currentColor; stroke-width: 1.85;
+    stroke-linecap: round; stroke-linejoin: round;
+    flex: none;
+  }
+  svg.ic-sm { width: 13px; height: 13px; }
+  svg.ic-lg { width: 18px; height: 18px; }
+
+  /* ================= 2. 顶部预览控制台 ================= */
+  .preview-bar {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+    padding: 10px 20px;
+    background: color-mix(in srgb, var(--bg-primary) 86%, transparent);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+  }
+  .preview-brand { display: flex; align-items: center; gap: 10px; }
+  .preview-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .preview-brand strong { font-size: 13.5px; font-weight: 600; }
+  .preview-brand span { font-size: 11.5px; color: var(--text-tertiary); }
+
+  .preview-tabs {
+    display: inline-flex; gap: 3px; padding: 3px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+  .preview-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 12px; border: none;
+    border-radius: var(--radius-sm);
+    background: transparent; color: var(--text-secondary);
+    font-size: 12px; font-weight: 500;
+    transition: all 140ms ease;
+  }
+  .preview-tab:hover { color: var(--text-primary); background: var(--list-hover-bg); }
+  .preview-tab.active {
+    background: var(--accent); color: var(--accent-contrast); font-weight: 600;
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+
+  .preview-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .theme-pills {
+    display: inline-flex; gap: 2px; padding: 2px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+  .theme-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 26px; padding: 0 9px; border: none;
+    border-radius: var(--radius-xs);
+    background: transparent; color: var(--text-secondary);
+    font-size: 11.5px; font-weight: 500;
+  }
+  .theme-pill:hover { color: var(--text-primary); }
+  .theme-pill.active { background: var(--surface-control); color: var(--text-primary); font-weight: 600; }
+  .theme-swatch { width: 8px; height: 8px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25); }
+
+  .notes-toggle {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 30px; padding: 0 10px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg-secondary); color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .notes-toggle:hover, .notes-toggle.active {
+    color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+  }
+
+  /* 美化改进说明条（可折叠） */
+  .changelog-drawer {
+    display: none;
+    padding: 12px 20px;
+    background: color-mix(in srgb, var(--accent) 6%, var(--bg-secondary));
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  }
+  .changelog-drawer.open { display: block; }
+  .changelog-grid {
+    max-width: 1320px; margin: 0 auto;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px;
+  }
+  .changelog-item {
+    padding: 9px 12px; border-radius: var(--radius-md);
+    background: var(--surface-card); border: 1px solid var(--border-subtle);
+  }
+  .changelog-item b { display: block; font-size: 12px; color: var(--accent); margin-bottom: 3px; }
+  .changelog-item p { font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; }
+
+  /* ================= 3. 舞台容器 & 通用 UI 组件 ================= */
+  .stage {
+    flex: 1;
+    padding: 22px 24px 36px;
+    display: flex; flex-direction: column; align-items: center; gap: 20px;
+  }
+  .view-panel { display: none; width: 100%; max-width: 1260px; }
+  .view-panel.active { display: block; }
+
+  /* 统一按钮 */
+  .btn-primary, .btn-secondary, .btn-ghost, .btn-danger-outline {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: var(--control-height-md); padding: 0 13px;
+    border-radius: var(--radius-sm); font-size: 12.5px; font-weight: 500;
+    white-space: nowrap; transition: all 140ms ease;
+  }
+  .btn-primary {
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-contrast);
+  }
+  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn-secondary {
+    border: 1px solid var(--border); background: var(--surface-control); color: var(--text-primary);
+  }
+  .btn-secondary:hover {
+    background: var(--list-hover-bg); border-color: color-mix(in srgb, var(--text-tertiary) 55%, var(--border));
+  }
+  .btn-ghost {
+    border: 1px solid transparent; background: transparent; color: var(--text-secondary);
+  }
+  .btn-ghost:hover { background: var(--list-hover-bg); color: var(--text-primary); }
+  .btn-danger-outline {
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+    color: var(--danger);
+  }
+  .btn-danger-outline:hover { background: color-mix(in srgb, var(--danger) 16%, transparent); }
+  .btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
+
+  /* 统一 Switch 开关（全项目通用） */
+  .tb-switch {
+    position: relative; width: 38px; height: 22px; flex: none;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface-control); padding: 0;
+    transition: background-color 150ms ease, border-color 150ms ease;
+  }
+  .tb-switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--text-secondary);
+    box-shadow: 0 1px 3px rgba(0,0,0,.28);
+    transition: transform 150ms ease, background-color 150ms ease;
+  }
+  .tb-switch.checked { background: var(--accent); border-color: var(--accent); }
+  .tb-switch.checked::after { transform: translateX(16px); background: var(--accent-contrast); }
+
+  /* 统一分段选择器 */
+  .tb-seg {
+    display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+    background: var(--surface-control); border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .tb-seg-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 26px; padding: 0 11px; border: none;
+    border-radius: var(--radius-xs);
+    background: transparent; color: var(--text-secondary);
+    font-size: 12px; font-weight: 500; white-space: nowrap;
+    transition: all 140ms ease;
+  }
+  .tb-seg-btn:hover:not(:disabled) { color: var(--text-primary); }
+  .tb-seg-btn.active {
+    background: var(--bg-secondary); color: var(--text-primary); font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0,0,0,.18), inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, var(--border));
+  }
+  .tb-seg-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* 统一输入控件 */
+  .tb-input, .tb-select, .tb-textarea {
+    width: 100%; height: var(--control-height-md); padding: 0 10px;
+    background: var(--surface-input); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-primary);
+    font-size: 12.5px; outline: none;
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+  }
+  .tb-textarea { height: auto; min-height: 92px; padding: 8px 10px; line-height: 1.55; resize: vertical; }
+  .tb-input:hover, .tb-select:hover, .tb-textarea:hover {
+    border-color: color-mix(in srgb, var(--text-tertiary) 55%, var(--border));
+  }
+  .tb-input:focus, .tb-select:focus, .tb-textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+
+  /* 模拟桌面工作区窗口框 */
+  .app-shell {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-dialog);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .app-window-bar {
+    height: 36px; padding: 0 14px;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .app-window-title { display: flex; align-items: center; gap: 8px; }
+  .app-window-badge {
+    padding: 1px 7px; border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent); font-size: 11px; font-weight: 600;
+  }
+
+  /* ================= 4. 定时任务 · 主工作区（美化版） ================= */
+  .st-workspace { padding: 20px 26px 24px; display: flex; flex-direction: column; gap: 14px; }
+
+  .st-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding-bottom: 14px; border-bottom: 1px solid var(--border-subtle);
+  }
+  .st-header-left { display: flex; align-items: center; gap: 12px; }
+  .st-header-icon {
+    width: 38px; height: 38px; border-radius: 10px;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 24%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+    border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+    color: var(--accent);
+  }
+  .st-header-text h1 {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 16px; font-weight: 600; margin-bottom: 2px;
+  }
+  .st-scheduler-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 20px; padding: 0 8px; border-radius: 999px;
+    background: color-mix(in srgb, var(--success) 13%, transparent);
+    border: 1px solid color-mix(in srgb, var(--success) 32%, transparent);
+    color: var(--success); font-size: 11px; font-weight: 600;
+  }
+  .st-scheduler-pill i {
+    width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+  }
+  .st-header-text p { font-size: 12px; color: var(--text-secondary); }
+  .st-header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  /* 精简运行提示条（单行柔和提示） */
+  .st-notice-slim {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 8px 12px; border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface-card));
+    border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border-subtle));
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .st-notice-slim-left { display: flex; align-items: center; gap: 8px; }
+  .st-notice-slim-left svg { color: var(--accent); }
+  .st-notice-slim strong { color: var(--text-primary); }
+
+  /* 4 格统计指标卡片 */
+  .st-kpi-grid {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+  }
+  .st-kpi-card {
+    padding: 11px 14px; border-radius: var(--radius-md);
+    background: var(--surface-card); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .st-kpi-meta { min-width: 0; }
+  .st-kpi-label { font-size: 11.5px; color: var(--text-tertiary); margin-bottom: 2px; }
+  .st-kpi-value {
+    font-size: 18px; font-weight: 650; color: var(--text-primary);
+    font-variant-numeric: tabular-nums; line-height: 1.25;
+  }
+  .st-kpi-value.accent { color: var(--accent); font-size: 14px; }
+  .st-kpi-icon {
+    width: 32px; height: 32px; border-radius: var(--radius-md); flex: none;
+    display: grid; place-items: center;
+    background: var(--surface-control); color: var(--text-secondary);
+  }
+  .st-kpi-card.running .st-kpi-icon { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+  .st-kpi-card.success .st-kpi-icon { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+
+  /* 筛选与搜索条 */
+  .st-filter-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  }
+  .st-filter-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .st-filter-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 28px; padding: 0 11px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface-card);
+    color: var(--text-secondary); font-size: 12px; font-weight: 500;
+    transition: all 120ms ease;
+  }
+  .st-filter-chip:hover { color: var(--text-primary); background: var(--list-hover-bg); }
+  .st-filter-chip.active {
+    color: var(--accent); font-weight: 600;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  }
+  .st-filter-chip span {
+    font-size: 11px; padding: 0 5px; border-radius: 999px;
+    background: var(--surface-control); color: var(--text-tertiary);
+  }
+  .st-filter-chip.active span {
+    background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent);
+  }
+  .st-search-box { position: relative; width: 230px; }
+  .st-search-box svg {
+    position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+    color: var(--text-tertiary); pointer-events: none;
+  }
+  .st-search-box input { padding-left: 28px; height: 28px; font-size: 12px; }
+
+  /* 升级版任务卡片 */
+  .st-card-list { display: flex; flex-direction: column; gap: 10px; }
+  .st-card {
+    position: relative; display: flex; align-items: stretch;
+    background: var(--surface-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+    transition: border-color 140ms ease, transform 140ms ease, background-color 140ms ease;
+  }
+  .st-card:hover {
+    border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  }
+  .st-card.is-running {
+    border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+    background: color-mix(in srgb, var(--accent) 3%, var(--surface-card));
+  }
+  .st-card.is-attention {
+    border-color: color-mix(in srgb, var(--warning) 48%, var(--border));
+    background: color-mix(in srgb, var(--warning) 3%, var(--surface-card));
+  }
+  .st-card.is-failed {
+    border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  }
+  .st-card.is-paused { background: color-mix(in srgb, var(--bg-secondary) 45%, var(--surface-card)); }
+  .st-card.is-paused .st-card-body { opacity: 0.72; }
+
+  .st-rail { width: 4px; flex: none; background: var(--success); }
+  .st-card.is-running .st-rail { background: var(--accent); }
+  .st-card.is-attention .st-rail { background: var(--warning); }
+  .st-card.is-failed .st-rail { background: var(--danger); }
+  .st-card.is-paused .st-rail { background: var(--text-tertiary); }
+
+  .st-card-body { flex: 1; min-width: 0; padding: 13px 16px; display: flex; flex-direction: column; gap: 9px; }
+
+  .st-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .st-card-identity { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+  .st-type-avatar {
+    width: 30px; height: 30px; border-radius: var(--radius-md); flex: none;
+    display: grid; place-items: center;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+  }
+  .st-type-avatar.profile {
+    background: var(--surface-control); color: var(--text-secondary);
+  }
+  .st-card-title-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+  .st-card-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+
+  .st-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 20px; padding: 0 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .st-tag.agent {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  .st-tag.profile {
+    color: var(--text-secondary); background: var(--surface-control); border-color: var(--border);
+  }
+  .st-tag.muted { color: var(--text-tertiary); border-color: var(--border); }
+
+  .st-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 20px; padding: 0 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; white-space: nowrap;
+  }
+  .st-pill.running { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .st-pill.warn { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+  .st-pill.success { color: var(--success); background: color-mix(in srgb, var(--success) 13%, transparent); }
+  .st-pill.danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 13%, transparent); }
+  .st-pill.idle { color: var(--text-tertiary); background: var(--surface-control); }
+  .st-pulse {
+    width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.05); } }
+
+  .st-card-controls { display: flex; align-items: center; gap: 8px; flex: none; }
+  .st-action-group {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 2px; border-radius: var(--radius-sm);
+    background: var(--bg-secondary); border: 1px solid var(--border-subtle);
+  }
+  .st-act-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    height: 24px; min-width: 26px; padding: 0 6px; border: none;
+    border-radius: var(--radius-xs); background: transparent; color: var(--text-secondary);
+    font-size: 11.5px; transition: all 120ms ease;
+  }
+  .st-act-btn:hover:not(:disabled) { background: var(--list-hover-bg); color: var(--text-primary); }
+  .st-act-btn.danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger);
+  }
+  .st-act-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .st-card-meta-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding-left: 40px;
+  }
+  .st-meta-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); }
+  .st-meta-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px; border-radius: var(--radius-xs);
+    background: var(--bg-secondary); border: 1px solid var(--border-subtle);
+  }
+  .st-meta-chip svg { color: var(--text-tertiary); }
+  .st-schedule-chip {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 12px;
+  }
+  .st-tz-tag {
+    padding: 1px 6px; border-radius: var(--radius-xs);
+    background: var(--surface-control); border: 1px solid var(--border-subtle);
+    color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10.5px;
+  }
+  .st-next-tag { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .st-next-tag b { color: var(--text-primary); }
+
+  .st-card-footer {
+    margin-left: 40px;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 7px 10px; border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--bg-secondary) 72%, var(--surface-card));
+    border: 1px solid var(--border-subtle);
+    font-size: 11.5px; color: var(--text-secondary);
+  }
+  .st-card-footer-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+  .st-footer-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st-card-footer-right {
+    display: flex; align-items: center; gap: 10px; flex: none;
+    color: var(--text-tertiary); font-variant-numeric: tabular-nums;
+  }
+  .st-link-btn {
+    border: none; background: transparent; color: var(--accent);
+    font-size: 11.5px; font-weight: 500; padding: 0;
+  }
+  .st-link-btn:hover { text-decoration: underline; }
+
+  /* 底部状态栏对比预览 */
+  .statusbar-mock {
+    height: 28px; padding: 0 12px;
+    background: var(--bg-primary); border-top: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11.5px; color: var(--text-secondary);
+  }
+  .statusbar-group { display: flex; align-items: center; gap: 10px; }
+  .statusbar-item {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 7px; border-radius: var(--radius-xs);
+  }
+  .statusbar-item.active {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--text-primary);
+  }
+  .statusbar-count {
+    padding: 0 5px; border-radius: 999px;
+    background: var(--surface-control); color: var(--text-primary); font-size: 10.5px; font-weight: 600;
+  }
+
+  /* 空状态 */
+  .st-empty {
+    padding: 46px 24px; text-align: center;
+    background: var(--surface-card); border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+  }
+  .st-empty-badge {
+    width: 64px; height: 64px; border-radius: 16px;
+    display: grid; place-items: center; color: var(--accent);
+    background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
+    border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+    margin-bottom: 4px;
+  }
+  .st-empty h3 { font-size: 15px; font-weight: 600; }
+  .st-empty p { max-width: 400px; font-size: 12px; color: var(--text-secondary); }
+  .st-empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+
+  /* ================= 5. 定时任务弹窗：编辑 & 运行记录 ================= */
+  .dialogs-split {
+    display: grid; grid-template-columns: 1fr; gap: 22px;
+  }
+  .tb-dialog {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-dialog);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    max-width: 880px; width: 100%; margin: 0 auto;
+  }
+  .tb-dialog.wide { max-width: 980px; }
+  .tb-dialog-header {
+    height: 50px; padding: 0 18px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .tb-dialog-title { display: flex; align-items: center; gap: 9px; font-size: 14.5px; font-weight: 600; }
+  .tb-dialog-title small { font-size: 12px; font-weight: 400; color: var(--text-tertiary); }
+  .tb-dialog-body { padding: 18px 22px; display: flex; flex-direction: column; gap: 16px; }
+  .tb-dialog-footer {
+    padding: 12px 20px; background: var(--bg-secondary);
+    border-top: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+
+  .st-form-box {
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--surface-card); overflow: hidden;
+  }
+  .st-form-box-head {
+    padding: 9px 14px; background: var(--surface-card-header);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .st-form-box-title { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; }
+  .st-form-box-title svg { color: var(--accent); }
+  .st-form-box-sub { font-size: 11px; color: var(--text-tertiary); }
+  .st-form-box-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+  .st-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .st-field-lbl { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; }
+
+  /* 执行目标双卡片选择 */
+  .target-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .target-card {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 11px 12px; text-align: left;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border); background: var(--bg-secondary);
+    transition: all 140ms ease;
+  }
+  .target-card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .target-card.active {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  .target-card-ico {
+    width: 30px; height: 30px; border-radius: var(--radius-sm); flex: none;
+    display: grid; place-items: center; background: var(--surface-control); color: var(--text-secondary);
+  }
+  .target-card.active .target-card-ico {
+    background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent);
+  }
+  .target-card strong { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 2px; }
+  .target-card span { font-size: 11.5px; color: var(--text-tertiary); line-height: 1.4; }
+
+  /* 频率胶囊与 Cron 时间轴预览 */
+  .cadence-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cadence-pill {
+    height: 28px; padding: 0 12px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg-secondary);
+    color: var(--text-secondary); font-size: 12px; font-weight: 500;
+  }
+  .cadence-pill.active {
+    color: var(--accent); font-weight: 600;
+    background: color-mix(in srgb, var(--accent) 13%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  }
+  .cron-timeline {
+    padding: 10px 12px; border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid var(--accent);
+  }
+  .cron-timeline-head { font-size: 11px; color: var(--text-tertiary); font-weight: 600; margin-bottom: 7px; display: flex; align-items: center; gap: 6px; }
+  .cron-times { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cron-time-chip {
+    padding: 2px 8px; border-radius: var(--radius-xs);
+    background: var(--surface-card); border: 1px solid var(--border-subtle);
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary);
+  }
+  .cron-time-chip.first {
+    color: var(--accent); font-weight: 600;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  }
+
+  /* 运行记录 KPI & 表格 */
+  .runs-kpi-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+  .runs-kpi-tile {
+    padding: 9px 11px; border-radius: var(--radius-md);
+    background: var(--surface-card); border: 1px solid var(--border);
+  }
+  .runs-kpi-tile span { display: block; font-size: 11px; color: var(--text-tertiary); }
+  .runs-kpi-tile b { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .runs-kpi-tile b.ok { color: var(--success); }
+  .runs-kpi-tile b.fail { color: var(--danger); }
+
+  .runs-table-wrap {
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    overflow: hidden; background: var(--surface-card);
+  }
+  .runs-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .runs-table th {
+    padding: 9px 12px; text-align: left; font-size: 11px; font-weight: 600;
+    color: var(--text-tertiary); background: var(--surface-card-header);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .runs-table td {
+    padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); vertical-align: middle;
+  }
+  .runs-table tr:last-child td { border-bottom: none; }
+  .runs-table tr:hover td { background: var(--list-hover-bg); }
+
+  /* ================= 6. 设置弹窗 · 全面统一美化版 ================= */
+  .settings-dialog-mock {
+    max-width: 1240px; width: 100%; height: 740px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-dialog);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .settings-shell-main { flex: 1; min-height: 0; display: flex; }
+
+  /* 左侧导航 */
+  .s-nav {
+    width: 236px; flex: none;
+    background: var(--bg-primary);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+  }
+  .s-nav-search { padding: 12px 10px 8px; position: relative; }
+  .s-nav-search svg {
+    position: absolute; left: 19px; top: 50%; transform: translateY(-25%);
+    color: var(--text-tertiary); pointer-events: none;
+  }
+  .s-nav-search input { height: 30px; padding-left: 28px; font-size: 12px; border-radius: var(--radius-sm); }
+  .s-nav-scroll { flex: 1; overflow-y: auto; padding: 4px 8px 12px; display: flex; flex-direction: column; gap: 12px; }
+  .s-nav-group-title {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 10px; font-size: 11px; font-weight: 600;
+    color: var(--text-tertiary); letter-spacing: 0.04em;
+  }
+  .s-nav-item {
+    position: relative; width: 100%; height: 34px; padding: 0 10px;
+    display: flex; align-items: center; gap: 9px;
+    border: 1px solid transparent; border-radius: var(--radius-sm);
+    background: transparent; color: var(--text-secondary);
+    font-size: 12.5px; font-weight: 500; text-align: left;
+    transition: all 130ms ease;
+  }
+  .s-nav-item:hover { background: var(--list-hover-bg); color: var(--text-primary); }
+  .s-nav-item.active {
+    background: var(--list-active-bg); color: var(--text-primary); font-weight: 600;
+    border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  }
+  .s-nav-item.active::before {
+    content: ""; position: absolute; left: 0; top: 7px; bottom: 7px;
+    width: 3px; border-radius: 0 2px 2px 0; background: var(--accent);
+  }
+  .s-nav-item.active svg { color: var(--accent); }
+  .s-nav-badge {
+    margin-left: auto; padding: 0 6px; border-radius: 999px;
+    font-size: 10px; font-weight: 600;
+    background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent);
+  }
+  .s-nav-footer {
+    padding: 9px 12px; border-top: 1px solid var(--border-subtle);
+    font-size: 11px; color: var(--text-tertiary);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+
+  /* 右侧内容工作区 */
+  .s-content {
+    flex: 1; min-width: 0; overflow-y: auto;
+    padding: 22px 28px 28px;
+    background: var(--bg-secondary);
+  }
+  .s-page { display: none; flex-direction: column; gap: 16px; max-width: 960px; }
+  .s-page.active { display: flex; }
+
+  .s-page-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+    padding-bottom: 14px; border-bottom: 1px solid var(--border-subtle);
+  }
+  .s-page-title-wrap { display: flex; align-items: center; gap: 12px; }
+  .s-page-icon {
+    width: 36px; height: 36px; border-radius: var(--radius-md); flex: none;
+    display: grid; place-items: center;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+    color: var(--accent);
+  }
+  .s-page-header h2 { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
+  .s-page-header p { font-size: 12px; color: var(--text-secondary); }
+
+  /* 统一卡片组 */
+  .s-card {
+    background: var(--surface-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .s-card-head {
+    padding: 10px 16px;
+    background: var(--surface-card-header);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .s-card-title {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 600; color: var(--text-primary);
+  }
+  .s-card-title svg { color: var(--accent); }
+  .s-card-extra { font-size: 11px; color: var(--text-tertiary); }
+
+  .s-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 20px;
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    transition: background-color 120ms ease;
+  }
+  .s-row:last-child { border-bottom: none; }
+  .s-row:hover { background: color-mix(in srgb, var(--list-hover-bg) 42%, transparent); }
+  .s-row-info { flex: 1; min-width: 0; }
+  .s-row-title { font-size: 13px; font-weight: 500; margin-bottom: 2px; display: flex; align-items: center; gap: 7px; }
+  .s-row-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+  .s-row-desc a { color: var(--accent); text-decoration: none; }
+  .s-row-desc a:hover { text-decoration: underline; }
+  .s-row-ctrl { flex: none; display: flex; align-items: center; gap: 8px; }
+
+  .s-status-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  }
+  .s-status-chip.ok { color: var(--success); background: color-mix(in srgb, var(--success) 13%, transparent); }
+  .s-status-chip.warn { color: var(--warning); background: color-mix(in srgb, var(--warning) 13%, transparent); }
+  .s-status-chip.muted { color: var(--text-tertiary); background: var(--surface-control); }
+
+  /* 键帽样式 (快捷键页) */
+  .kbd-cap {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 28px; padding: 0 11px; border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    box-shadow: 0 2px 0 var(--border);
+    font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+    color: var(--text-primary);
+    transition: all 120ms ease;
+  }
+  .kbd-cap:hover { border-color: var(--accent); color: var(--accent); }
+  .kbd-cap.recording {
+    border-color: var(--accent); color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+
+  /* 呼吸灯色板 chip */
+  .swatch-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 10px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg-secondary);
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .swatch-chip.active {
+    color: var(--text-primary); border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary));
+  }
+  .swatch-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  /* 列表选中实时预览卡片 */
+  .selection-preview-pill {
+    display: inline-flex; align-items: center; gap: 7px; margin-top: 7px;
+    padding: 5px 10px; border-radius: var(--radius-xs);
+    background: var(--list-active-bg); color: var(--list-active-fg);
+    border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+    font-size: 12px; font-weight: 500;
+  }
+
+  /* Web 管理双栏布局（解决 480px 留白痛点） */
+  .web-manage-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr); gap: 14px; align-items: start; }
+  .qr-card-body { padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+  .qr-box {
+    width: 176px; height: 176px; padding: 10px;
+    background: #ffffff; border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    display: grid; place-items: center;
+  }
+
+  /* 2 列小卡（数据管理 / 供应商 / Agent / AI用量） */
+  .s-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .provider-card {
+    padding: 13px 14px; border-radius: var(--radius-md);
+    background: var(--surface-card); border: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .provider-card.active {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 5%, var(--surface-card));
+  }
+  .provider-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .provider-card-name { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; }
+  .provider-card-url { font-size: 11.5px; color: var(--text-tertiary); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .provider-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+  .model-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+  .model-pill {
+    padding: 1px 7px; border-radius: var(--radius-xs);
+    background: var(--surface-control); border: 1px solid var(--border-subtle);
+    font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono);
+  }
+
+  /* 排除规则标签化展示 */
+  .rule-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border-subtle);
+  }
+  .rule-row:last-child { border-bottom: none; }
+  .rule-code {
+    padding: 2px 8px; border-radius: var(--radius-xs);
+    background: var(--surface-control); border: 1px solid var(--border-subtle);
+    color: var(--accent); font-family: var(--font-mono); font-size: 12px;
+  }
+
+  /* Agent CLI 工具卡 */
+  .agent-cli-card {
+    padding: 14px 16px; border-bottom: 1px solid var(--border-subtle);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .agent-cli-card:last-child { border-bottom: none; }
+  .agent-cli-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .agent-cli-id { display: flex; align-items: center; gap: 10px; }
+  .agent-brand-box {
+    width: 34px; height: 34px; border-radius: var(--radius-md);
+    display: grid; place-items: center;
+  }
+  .agent-brand-box.claude { background: color-mix(in srgb, #d97757 14%, transparent); color: #d97757; }
+  .agent-brand-box.codex { background: color-mix(in srgb, #10a37f 14%, transparent); color: #10a37f; }
+  .agent-cmd-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding-top: 10px; border-top: 1px dashed var(--border-subtle);
+  }
+  .agent-cmd-bar label { font-size: 12px; font-weight: 500; color: var(--text-secondary); white-space: nowrap; }
+
+  /* 响应式收口 */
+  @media (max-width: 900px) {
+    .st-kpi-grid, .runs-kpi-row, .web-manage-grid, .s-grid-2, .st-grid-2, .target-cards {
+      grid-template-columns: 1fr;
+    }
+    .settings-dialog-mock { height: auto; min-height: 620px; }
+    .s-nav { width: 190px; }
+  }
+</style>
+</head>
+<body>
+
+  <!-- 顶部预览工具栏 -->
+  <header class="preview-bar">
+    <div class="preview-brand">
+      <span class="preview-dot"></span>
+      <div>
+        <strong>TerminalBuddy UI 美化预览</strong>
+        <span>定时任务 + 设置中心全分区</span>
+      </div>
+    </div>
+
+    <nav class="preview-tabs" aria-label="预览视图">
+      <button type="button" class="preview-tab active" data-view="st-page">定时任务 · 主工作区</button>
+      <button type="button" class="preview-tab" data-view="st-dialogs">定时任务 · 新建与运行记录</button>
+      <button type="button" class="preview-tab" data-view="settings">设置弹窗 · 14 分区统一美化</button>
+    </nav>
+
+    <div class="preview-right">
+      <div class="theme-pills" role="group" aria-label="主题切换">
+        <button type="button" class="theme-pill active" data-theme="dark" data-skin="">
+          <span class="theme-swatch" style="background:#181a1d"></span>深色
+        </button>
+        <button type="button" class="theme-pill" data-theme="light" data-skin="">
+          <span class="theme-swatch" style="background:#f3f4f6"></span>浅色
+        </button>
+        <button type="button" class="theme-pill" data-theme="light" data-skin="cartoon">
+          <span class="theme-swatch" style="background:#f174aa"></span>卡通
+        </button>
+        <button type="button" class="theme-pill" data-theme="dark" data-skin="starry">
+          <span class="theme-swatch" style="background:#c08aff"></span>星空
+        </button>
+        <button type="button" class="theme-pill" data-theme="dark" data-skin="cyber">
+          <span class="theme-swatch" style="background:#ff2dba"></span>赛博
+        </button>
+      </div>
+      <button type="button" class="notes-toggle" id="notesToggle">
+        <svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        美化要点
+      </button>
+    </div>
+  </header>
+
+  <!-- 折叠式改进说明 -->
+  <section class="changelog-drawer" id="notesDrawer">
+    <div class="changelog-grid">
+      <div class="changelog-item">
+        <b>1. 全站控件与圆角语言统一</b>
+        <p>将此前混用的 28–36px 高度、2–10px 圆角、两套开关（settings-toggle / tb-switch）统一为 32px 控件基准、6/8/12px 层级圆角与 38×22 胶囊开关，适配所有深浅色与皮肤。</p>
+      </div>
+      <div class="changelog-item">
+        <b>2. 设置剩余子页面全面卡片化</b>
+        <p>补全 快捷键（键帽样式）、数据管理、SSH、AI 用量（凭据状态卡）、网页认证、文件排除、连接/命令列表的卡片容器；Web 管理改用双栏，消灭 480px 窄栏右侧大片留白。</p>
+      </div>
+      <div class="changelog-item">
+        <b>3. 定时任务主工作区升级</b>
+        <p>顶部增加调度器状态徽章、4 格微缩指标条与筛选/搜索栏；任务卡片优化信息层级（头像图标 + 状态脉冲 + 元数据标签 + 底部最近运行摘要条），并保留状态栏入口联动。</p>
+      </div>
+      <div class="changelog-item">
+        <b>4. 新建弹窗与运行记录打磨</b>
+        <p>目标切换升级为双说明卡片（项目终端配置 / AI Agent）；Cron 触发预览升级为时间轴胶囊；运行记录新增 5 项 KPI 卡片与更清晰的状态操作列。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 舞台内容 -->
+  <main class="stage">
+
+    <!-- ==================== 视图 1：定时任务主工作区 ==================== -->
+    <section class="view-panel active" id="view-st-page">
+      <div class="app-shell">
+        <div class="app-window-bar">
+          <div class="app-window-title">
+            <span>TerminalBuddy 工作区</span>
+            <span class="app-window-badge">定时任务视图</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button type="button" class="btn-secondary btn-sm" id="toggleEmptyBtn">切换为空状态预览</button>
+          </div>
+        </div>
+
+        <div class="st-workspace">
+          <!-- 头部 -->
+          <div class="st-header">
+            <div class="st-header-left">
+              <div class="st-header-icon">
+                <svg class="ic ic-lg" viewBox="0 0 24 24"><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M16 2v4M8 2v4M3 10h5"/><path d="M17.5 17.5 16 16.25V14"/><circle cx="16" cy="16" r="6"/></svg>
+              </div>
+              <div class="st-header-text">
+                <h1>
+                  定时任务
+                  <span class="st-scheduler-pill"><i></i>调度器运行中</span>
+                </h1>
+                <p>按计划自动启动项目终端环境，或派发 Claude / Codex 执行自动化任务。</p>
+              </div>
+            </div>
+            <div class="st-header-actions">
+              <button type="button" class="btn-secondary">
+                <svg class="ic ic-sm" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                全部暂停
+              </button>
+              <button type="button" class="btn-primary" id="jumpCreateModalBtn">
+                <svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                新建任务
+              </button>
+            </div>
+          </div>
+
+          <!-- 精简提醒 -->
+          <div class="st-notice-slim">
+            <div class="st-notice-slim-left">
+              <svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+              <span>任务随 TerminalBuddy 进程运行：桌面端退出后停止；需要 7×24 执行请部署 <strong>Docker 服务端</strong>。调度按任务自身时区计算。</span>
+            </div>
+            <span style="font-size:11px;color:var(--text-tertiary);">Tick 周期 30s</span>
+          </div>
+
+          <!-- 4 格指标概览 -->
+          <div class="st-kpi-grid" id="stKpiGrid">
+            <div class="st-kpi-card success">
+              <div class="st-kpi-meta">
+                <div class="st-kpi-label">已启用任务</div>
+                <div class="st-kpi-value">4 <small style="font-size:12px;font-weight:400;color:var(--text-tertiary)">/ 5</small></div>
+              </div>
+              <div class="st-kpi-icon"><svg class="ic" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+            </div>
+            <div class="st-kpi-card running">
+              <div class="st-kpi-meta">
+                <div class="st-kpi-label">当前活动</div>
+                <div class="st-kpi-value">2 <small style="font-size:12px;font-weight:400;color:var(--text-tertiary)">(1 待确认)</small></div>
+              </div>
+              <div class="st-kpi-icon"><svg class="ic" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg></div>
+            </div>
+            <div class="st-kpi-card">
+              <div class="st-kpi-meta">
+                <div class="st-kpi-label">今日已执行</div>
+                <div class="st-kpi-value">7</div>
+              </div>
+              <div class="st-kpi-icon"><svg class="ic" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></div>
+            </div>
+            <div class="st-kpi-card">
+              <div class="st-kpi-meta">
+                <div class="st-kpi-label">最近下次触发</div>
+                <div class="st-kpi-value accent">今天 18:00 · 6小时后</div>
+              </div>
+              <div class="st-kpi-icon"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+            </div>
+          </div>
+
+          <!-- 筛选与搜索 -->
+          <div class="st-filter-bar" id="stFilterBar">
+            <div class="st-filter-chips">
+              <button type="button" class="st-filter-chip active" data-st-filter="all">全部 <span>5</span></button>
+              <button type="button" class="st-filter-chip" data-st-filter="enabled">已启用 <span>4</span></button>
+              <button type="button" class="st-filter-chip" data-st-filter="running">运行中 <span>2</span></button>
+              <button type="button" class="st-filter-chip" data-st-filter="failed">最近异常 <span>1</span></button>
+              <button type="button" class="st-filter-chip" data-st-filter="paused">已暂停 <span>1</span></button>
+            </div>
+            <div class="st-search-box">
+              <svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" class="tb-input" id="stSearchInput" placeholder="搜索任务名 / 项目 / 模型…">
+            </div>
+          </div>
+
+          <!-- 任务列表 -->
+          <div class="st-card-list" id="stCardList">
+            <!-- 卡片 1：运行中 -->
+            <article class="st-card is-running" data-status="enabled running" data-keywords="每日代码巡检 terminal-buddy claude sonnet">
+              <div class="st-rail"></div>
+              <div class="st-card-body">
+                <div class="st-card-top">
+                  <div class="st-card-identity">
+                    <div class="st-type-avatar"><svg class="ic" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg></div>
+                    <div class="st-card-title-wrap">
+                      <span class="st-card-name">每日代码提交巡检与安全审计</span>
+                      <span class="st-tag agent">Agent · Claude</span>
+                      <span class="st-pill running"><span class="st-pulse"></span>运行中</span>
+                    </div>
+                  </div>
+                  <div class="st-card-controls">
+                    <div class="st-action-group">
+                      <button type="button" class="st-act-btn" disabled title="运行中"><svg class="ic ic-sm" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
+                      <button type="button" class="st-act-btn" title="编辑"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+                      <button type="button" class="st-act-btn" title="运行记录"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>记录</button>
+                      <button type="button" class="st-act-btn danger" title="删除"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+                    </div>
+                    <button type="button" class="tb-switch checked" aria-label="暂停任务"></button>
+                  </div>
+                </div>
+                <div class="st-card-meta-row">
+                  <div class="st-meta-chips">
+                    <span class="st-meta-chip"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>terminal-buddy</span>
+                    <span class="st-meta-chip">claude-sonnet-4-5 · 原生会话</span>
+                  </div>
+                  <div class="st-schedule-chip">
+                    <svg class="ic ic-sm" viewBox="0 0 24 24" style="color:var(--text-tertiary)"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>工作日 18:00</span>
+                    <span class="st-tz-tag">Asia/Shanghai</span>
+                    <span class="st-next-tag">正在执行</span>
+                  </div>
+                </div>
+                <div class="st-card-footer">
+                  <div class="st-card-footer-left">
+                    <span class="st-pill running"><span class="st-pulse"></span>执行中</span>
+                    <span class="st-footer-msg">正在分析近 24 小时 6 个提交的边界条件与依赖变更…</span>
+                  </div>
+                  <div class="st-card-footer-right">
+                    <span>今天 11:12 启动</span>
+                    <button type="button" class="st-link-btn">查看运行详情 →</button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <!-- 卡片 2：等待确认 -->
+            <article class="st-card is-attention" data-status="enabled running" data-keywords="自动依赖升级检查 codex">
+              <div class="st-rail"></div>
+              <div class="st-card-body">
+                <div class="st-card-top">
+                  <div class="st-card-identity">
+                    <div class="st-type-avatar"><svg class="ic" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg></div>
+                    <div class="st-card-title-wrap">
+                      <span class="st-card-name">前端依赖安全扫描与升级建议</span>
+                      <span class="st-tag agent">Agent · Codex</span>
+                      <span class="st-pill warn"><span class="st-pulse"></span>等待确认</span>
+                    </div>
+                  </div>
+                  <div class="st-card-controls">
+                    <div class="st-action-group">
+                      <button type="button" class="st-act-btn" disabled title="运行中"><svg class="ic ic-sm" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
+                      <button type="button" class="st-act-btn" title="编辑"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+                      <button type="button" class="st-act-btn" title="运行记录"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>记录</button>
+                      <button type="button" class="st-act-btn danger" title="删除"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+                    </div>
+                    <button type="button" class="tb-switch checked"></button>
+                  </div>
+                </div>
+                <div class="st-card-meta-row">
+                  <div class="st-meta-chips">
+                    <span class="st-meta-chip"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>android-app</span>
+                    <span class="st-meta-chip">gpt-5.3-codex · 终端接力</span>
+                  </div>
+                  <div class="st-schedule-chip">
+                    <svg class="ic ic-sm" viewBox="0 0 24 24" style="color:var(--text-tertiary)"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>每周一 10:00</span>
+                    <span class="st-tz-tag">Asia/Shanghai</span>
+                    <span class="st-next-tag">下次 <b>11-25 10:00</b></span>
+                  </div>
+                </div>
+                <div class="st-card-footer">
+                  <div class="st-card-footer-left">
+                    <span class="st-pill warn">等待确认</span>
+                    <span class="st-footer-msg">Agent 请求执行 `npm audit --json`，请打开会话或手机通知处理</span>
+                  </div>
+                  <div class="st-card-footer-right">
+                    <span>今天 10:00</span>
+                    <button type="button" class="st-link-btn">去处理 →</button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <!-- 卡片 3：项目终端配置（正常空闲） -->
+            <article class="st-card" data-status="enabled" data-keywords="晨间开发环境 profile powershell">
+              <div class="st-rail"></div>
+              <div class="st-card-body">
+                <div class="st-card-top">
+                  <div class="st-card-identity">
+                    <div class="st-type-avatar profile"><svg class="ic" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg></div>
+                    <div class="st-card-title-wrap">
+                      <span class="st-card-name">晨间开发环境自启</span>
+                      <span class="st-tag profile">项目终端</span>
+                    </div>
+                  </div>
+                  <div class="st-card-controls">
+                    <div class="st-action-group">
+                      <button type="button" class="st-act-btn" title="立即运行"><svg class="ic ic-sm" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
+                      <button type="button" class="st-act-btn" title="编辑"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+                      <button type="button" class="st-act-btn" title="运行记录"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>记录</button>
+                      <button type="button" class="st-act-btn danger" title="删除"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+                    </div>
+                    <button type="button" class="tb-switch checked"></button>
+                  </div>
+                </div>
+                <div class="st-card-meta-row">
+                  <div class="st-meta-chips">
+                    <span class="st-meta-chip"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>terminal-buddy</span>
+                    <span class="st-meta-chip">Vite 开发服务 · 2 小时后自动关闭</span>
+                  </div>
+                  <div class="st-schedule-chip">
+                    <svg class="ic ic-sm" viewBox="0 0 24 24" style="color:var(--text-tertiary)"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>每天 09:00</span>
+                    <span class="st-tz-tag">Asia/Shanghai</span>
+                    <span class="st-next-tag">下次 <b>明天 09:00</b></span>
+                  </div>
+                </div>
+                <div class="st-card-footer">
+                  <div class="st-card-footer-left">
+                    <span class="st-pill success">已完成</span>
+                    <span class="st-footer-msg">已启动终端「Vite 开发服务」并执行 npm run dev</span>
+                  </div>
+                  <div class="st-card-footer-right">
+                    <span>今天 09:00 · 1.2s</span>
+                    <button type="button" class="st-link-btn">运行记录</button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <!-- 卡片 4：最近失败 -->
+            <article class="st-card is-failed" data-status="enabled failed" data-keywords="测试环境数据库备份 ssh">
+              <div class="st-rail"></div>
+              <div class="st-card-body">
+                <div class="st-card-top">
+                  <div class="st-card-identity">
+                    <div class="st-type-avatar profile"><svg class="ic" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg></div>
+                    <div class="st-card-title-wrap">
+                      <span class="st-card-name">测试库增量备份检查</span>
+                      <span class="st-tag profile">项目终端</span>
+                    </div>
+                  </div>
+                  <div class="st-card-controls">
+                    <div class="st-action-group">
+                      <button type="button" class="st-act-btn" title="立即运行"><svg class="ic ic-sm" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
+                      <button type="button" class="st-act-btn" title="编辑"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+                      <button type="button" class="st-act-btn" title="运行记录"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>记录</button>
+                      <button type="button" class="st-act-btn danger" title="删除"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+                    </div>
+                    <button type="button" class="tb-switch checked"></button>
+                  </div>
+                </div>
+                <div class="st-card-meta-row">
+                  <div class="st-meta-chips">
+                    <span class="st-meta-chip"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>infra-ops</span>
+                    <span class="st-meta-chip">debian99-SSH · 保持运行</span>
+                  </div>
+                  <div class="st-schedule-chip">
+                    <svg class="ic ic-sm" viewBox="0 0 24 24" style="color:var(--text-tertiary)"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>每小时第 15 分</span>
+                    <span class="st-tz-tag">Asia/Shanghai</span>
+                    <span class="st-next-tag">下次 <b>12:15</b></span>
+                  </div>
+                </div>
+                <div class="st-card-footer">
+                  <div class="st-card-footer-left">
+                    <span class="st-pill danger">执行失败</span>
+                    <span class="st-footer-msg" style="color:var(--danger)">SSH 连接超时：192.168.1.99:22 无响应</span>
+                  </div>
+                  <div class="st-card-footer-right">
+                    <span>今天 10:15 · 15s</span>
+                    <button type="button" class="st-link-btn">查看错误</button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <!-- 卡片 5：已暂停 -->
+            <article class="st-card is-paused" data-status="paused" data-keywords="周报生成 claude">
+              <div class="st-rail"></div>
+              <div class="st-card-body">
+                <div class="st-card-top">
+                  <div class="st-card-identity">
+                    <div class="st-type-avatar"><svg class="ic" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg></div>
+                    <div class="st-card-title-wrap">
+                      <span class="st-card-name">周五研发周报草稿整理</span>
+                      <span class="st-tag agent">Agent · Claude</span>
+                      <span class="st-tag muted">已暂停</span>
+                    </div>
+                  </div>
+                  <div class="st-card-controls">
+                    <div class="st-action-group">
+                      <button type="button" class="st-act-btn" title="立即运行"><svg class="ic ic-sm" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
+                      <button type="button" class="st-act-btn" title="编辑"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+                      <button type="button" class="st-act-btn" title="运行记录"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>记录</button>
+                      <button type="button" class="st-act-btn danger" title="删除"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+                    </div>
+                    <button type="button" class="tb-switch"></button>
+                  </div>
+                </div>
+                <div class="st-card-meta-row">
+                  <div class="st-meta-chips">
+                    <span class="st-meta-chip"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>terminal-buddy</span>
+                    <span class="st-meta-chip">claude-opus-4-1</span>
+                  </div>
+                  <div class="st-schedule-chip">
+                    <svg class="ic ic-sm" viewBox="0 0 24 24" style="color:var(--text-tertiary)"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>每周五 17:30</span>
+                    <span class="st-tz-tag">Asia/Shanghai</span>
+                    <span class="st-next-tag" style="color:var(--text-tertiary)">已暂停</span>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <!-- 空状态预览（默认隐藏） -->
+          <div class="st-empty" id="stEmptyState" style="display:none;">
+            <div class="st-empty-badge">
+              <svg class="ic" style="width:28px;height:28px;" viewBox="0 0 24 24"><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M16 2v4M8 2v4M3 10h5"/><circle cx="16" cy="16" r="6"/></svg>
+            </div>
+            <h3>还没有定时任务</h3>
+            <p>创建一个定时计划，让终端环境在上班前自启，或让 Claude / Codex 定时为你巡检代码。</p>
+            <div class="st-empty-actions">
+              <button type="button" class="btn-secondary">每天 09:30 启动开发环境</button>
+              <button type="button" class="btn-primary">工作日 18:00 用 Agent 汇总提交</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部状态栏对比 -->
+        <div class="statusbar-mock">
+          <div class="statusbar-group">
+            <span class="statusbar-item"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>D:\terminal-buddy</span>
+            <span class="statusbar-item">master</span>
+          </div>
+          <div class="statusbar-group">
+            <span class="statusbar-item active">
+              <svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span class="st-pulse" style="color:var(--accent)"></span>
+              <span>定时</span>
+              <span class="statusbar-count">4</span>
+              <span class="mono" style="font-size:11px;color:var(--accent)">运行中</span>
+            </span>
+            <span class="statusbar-item">Web :9600</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 视图 2：定时任务弹窗（新建/编辑 + 运行记录） ==================== -->
+    <section class="view-panel" id="view-st-dialogs">
+      <div class="dialogs-split">
+        <!-- 子弹窗 A：新建/编辑 -->
+        <div class="tb-dialog">
+          <div class="tb-dialog-header">
+            <div class="tb-dialog-title">
+              <svg class="ic" style="color:var(--accent)" viewBox="0 0 24 24"><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M16 2v4M8 2v4M3 10h5"/><circle cx="16" cy="16" r="6"/></svg>
+              编辑定时任务
+              <small>保存后立即纳入调度</small>
+            </div>
+            <button type="button" class="btn-ghost btn-sm" aria-label="关闭"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          </div>
+
+          <div class="tb-dialog-body">
+            <!-- 1. 基础信息 -->
+            <div class="st-form-box">
+              <div class="st-form-box-head">
+                <div class="st-form-box-title"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>基础信息</div>
+                <span class="st-form-box-sub">命名与关联项目</span>
+              </div>
+              <div class="st-form-box-body">
+                <div class="st-grid-2">
+                  <div>
+                    <div class="st-field-lbl"><span>任务名称 <b style="color:var(--danger)">*</b></span><span class="mono" style="font-size:11px;color:var(--text-tertiary)">13 / 40</span></div>
+                    <input type="text" class="tb-input" value="每日代码提交巡检与安全审计">
+                  </div>
+                  <div>
+                    <div class="st-field-lbl"><span>所属项目 <b style="color:var(--danger)">*</b></span></div>
+                    <select class="tb-select">
+                      <option>terminal-buddy (D:\terminal-buddy)</option>
+                      <option>android-app</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. 执行内容 -->
+            <div class="st-form-box">
+              <div class="st-form-box-head">
+                <div class="st-form-box-title"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>执行目标</div>
+                <span class="st-form-box-sub">支持启动项目终端或自动派发 Agent</span>
+              </div>
+              <div class="st-form-box-body">
+                <div class="target-cards">
+                  <button type="button" class="target-card active" data-target-mode="agent">
+                    <div class="target-card-ico"><svg class="ic" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M9 13v2M15 13v2"/></svg></div>
+                    <div>
+                      <strong>AI Agent 任务</strong>
+                      <span>按「新会话形态」以原生会话或终端接力执行 Prompt</span>
+                    </div>
+                  </button>
+                  <button type="button" class="target-card" data-target-mode="profile">
+                    <div class="target-card-ico"><svg class="ic" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg></div>
+                    <div>
+                      <strong>项目终端配置</strong>
+                      <span>到点自动打开所选 Profile 终端，可选定时自动关闭</span>
+                    </div>
+                  </button>
+                </div>
+
+                <div id="targetAgentFields" style="display:flex;flex-direction:column;gap:12px;">
+                  <div class="st-grid-2">
+                    <div>
+                      <div class="st-field-lbl"><span>选择助手</span></div>
+                      <div class="tb-seg" style="width:100%">
+                        <button type="button" class="tb-seg-btn active" style="flex:1;justify-content:center;" data-agent-pick>Claude Code</button>
+                        <button type="button" class="tb-seg-btn" style="flex:1;justify-content:center;" data-agent-pick>Codex CLI</button>
+                      </div>
+                    </div>
+                    <div class="st-grid-2" style="gap:8px;">
+                      <div>
+                        <div class="st-field-lbl"><span>供应商</span></div>
+                        <select class="tb-select"><option>Anthropic 默认</option><option>DeepSeek API</option></select>
+                      </div>
+                      <div>
+                        <div class="st-field-lbl"><span>模型</span></div>
+                        <select class="tb-select"><option>claude-sonnet-4-5</option><option>claude-opus-4-1</option></select>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="st-field-lbl"><span>任务描述（Prompt）</span><span class="mono" style="font-size:11px;color:var(--text-tertiary)">38 / 8000</span></div>
+                    <textarea class="tb-textarea">汇总今天本项目的 git 提交，按模块列出改动要点与潜在风险，不要修改任何文件。</textarea>
+                  </div>
+                </div>
+
+                <div id="targetProfileFields" class="st-grid-2" style="display:none;">
+                  <div>
+                    <div class="st-field-lbl"><span>终端配置 (Profile)</span></div>
+                    <select class="tb-select"><option>Vite 开发服务 (PowerShell)</option><option>Rust Server 监听</option></select>
+                  </div>
+                  <div>
+                    <div class="st-field-lbl"><span>自动关闭终端</span></div>
+                    <select class="tb-select"><option>保持运行</option><option>30 分钟后关闭</option><option>2 小时后关闭</option></select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. 执行计划 -->
+            <div class="st-form-box">
+              <div class="st-form-box-head">
+                <div class="st-form-box-title"><svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>触发计划与时区</div>
+                <span class="st-form-box-sub">支持标准 5 段 Cron 与单次定时</span>
+              </div>
+              <div class="st-form-box-body">
+                <div class="cadence-pills">
+                  <button type="button" class="cadence-pill" data-cadence="daily">每天</button>
+                  <button type="button" class="cadence-pill active" data-cadence="weekdays">工作日</button>
+                  <button type="button" class="cadence-pill" data-cadence="weekly">按星期</button>
+                  <button type="button" class="cadence-pill" data-cadence="hourly">每小时</button>
+                  <button type="button" class="cadence-pill" data-cadence="custom">自定义 Cron</button>
+                  <button type="button" class="cadence-pill" data-cadence="once">仅一次</button>
+                </div>
+                <div class="st-grid-2">
+                  <div>
+                    <div class="st-field-lbl"><span>触发时间</span></div>
+                    <input type="time" class="tb-input" value="18:00">
+                  </div>
+                  <div>
+                    <div class="st-field-lbl"><span>调度时区 (IANA)</span></div>
+                    <select class="tb-select"><option>Asia/Shanghai (UTC+8)</option><option>UTC</option><option>America/New_York</option></select>
+                  </div>
+                </div>
+                <div class="cron-timeline">
+                  <div class="cron-timeline-head">
+                    <svg class="ic ic-sm" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    未来 5 次预计触发时间
+                  </div>
+                  <div class="cron-times">
+                    <span class="cron-time-chip first">今天 18:00</span>
+                    <span class="cron-time-chip">11-19 (四) 18:00</span>
+                    <span class="cron-time-chip">11-20 (五) 18:00</span>
+                    <span class="cron-time-chip">11-23 (一) 18:00</span>
+                    <span class="cron-time-chip">11-24 (二) 18:00</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. 执行与通知 -->
+            <div class="st-form-box">
+              <div class="st-form-box-head">
+                <div class="st-form-box-title"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>执行控制与通知</div>
+              </div>
+              <div class="st-form-box-body" style="padding:0;">
+                <div class="s-row">
+                  <div class="s-row-info">
+                    <div class="s-row-title">启用该任务</div>
+                    <div class="s-row-desc">暂停后不再按计划触发，仍可手动「立即运行」</div>
+                  </div>
+                  <button type="button" class="tb-switch checked"></button>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info">
+                    <div class="s-row-title">执行完成或失败时发送通知</div>
+                    <div class="s-row-desc">同步推送到桌面提醒与安卓后台通知通道</div>
+                  </div>
+                  <button type="button" class="tb-switch checked"></button>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info">
+                    <div class="s-row-title">单次执行超时（分钟）</div>
+                    <div class="s-row-desc">可选覆盖项（1–240 分钟），留空使用默认 30 分钟</div>
+                  </div>
+                  <input type="number" class="tb-input" value="30" style="width:96px;text-align:center;">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tb-dialog-footer">
+            <span style="font-size:12px;color:var(--text-tertiary);">当前将按「原生会话」模式启动 · 下次：今天 18:00</span>
+            <div style="display:flex;gap:8px;">
+              <button type="button" class="btn-secondary">取消</button>
+              <button type="button" class="btn-secondary">保存并立即运行</button>
+              <button type="button" class="btn-primary">保存任务</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 子弹窗 B：运行记录 -->
+        <div class="tb-dialog wide">
+          <div class="tb-dialog-header">
+            <div class="tb-dialog-title">
+              <svg class="ic" style="color:var(--accent)" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+              运行记录
+              <small>每日代码提交巡检与安全审计</small>
+            </div>
+            <button type="button" class="btn-ghost btn-sm" aria-label="关闭"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          </div>
+          <div class="tb-dialog-body">
+            <div class="runs-kpi-row">
+              <div class="runs-kpi-tile"><span>总执行次数</span><b>18</b></div>
+              <div class="runs-kpi-tile"><span>成功</span><b class="ok">16</b></div>
+              <div class="runs-kpi-tile"><span>失败 / 超时</span><b class="fail">1</b></div>
+              <div class="runs-kpi-tile"><span>平均耗时</span><b>42.6s</b></div>
+              <div class="runs-kpi-tile"><span>累计 Token</span><b>184,920</b></div>
+            </div>
+
+            <div class="runs-table-wrap">
+              <table class="runs-table">
+                <thead>
+                  <tr>
+                    <th>开始时间</th>
+                    <th>触发方式</th>
+                    <th>状态</th>
+                    <th>耗时</th>
+                    <th>执行摘要 / 错误信息</th>
+                    <th style="text-align:right">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="mono">11-18 11:12:04</td>
+                    <td>手动触发</td>
+                    <td><span class="st-pill running"><span class="st-pulse"></span>运行中</span></td>
+                    <td class="mono">—</td>
+                    <td>正在分析近 24 小时 6 个提交的改动要点…</td>
+                    <td style="text-align:right;">
+                      <button type="button" class="btn-danger-outline btn-sm" style="height:24px;padding:0 8px;">停止</button>
+                      <button type="button" class="btn-secondary btn-sm" style="height:24px;padding:0 8px;">打开会话</button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="mono">11-17 18:00:01</td>
+                    <td>定时调度</td>
+                    <td><span class="st-pill success">已完成</span></td>
+                    <td class="mono">38.4s</td>
+                    <td>已完成 4 个模块提交汇总，未发现敏感密钥泄露 · <span style="color:var(--text-tertiary)">12,480 tokens</span></td>
+                    <td style="text-align:right;"><button type="button" class="btn-secondary btn-sm" style="height:24px;padding:0 8px;">打开会话</button></td>
+                  </tr>
+                  <tr>
+                    <td class="mono">11-14 18:00:02</td>
+                    <td>定时调度</td>
+                    <td><span class="st-pill danger">执行失败</span></td>
+                    <td class="mono">15.0s</td>
+                    <td style="color:var(--danger)">供应商 API 返回 429 Too Many Requests，请检查并发额度</td>
+                    <td style="text-align:right;"><button type="button" class="btn-secondary btn-sm" style="height:24px;padding:0 8px;">打开会话</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="tb-dialog-footer">
+            <span style="font-size:12px;color:var(--text-tertiary);">每个任务自动保留最近 100 条运行记录</span>
+            <button type="button" class="btn-secondary">关闭</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 视图 3：设置弹窗（全 14 分区美化效果） ==================== -->
+    <section class="view-panel" id="view-settings">
+      <div class="settings-dialog-mock">
+        <div class="tb-dialog-header">
+          <div class="tb-dialog-title">
+            <svg class="ic" style="color:var(--accent)" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            设置
+            <small>统一卡片化与控件标准</small>
+          </div>
+          <button type="button" class="btn-ghost btn-sm"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+
+        <div class="settings-shell-main">
+          <!-- 左侧分组导航 -->
+          <nav class="s-nav" aria-label="设置分类">
+            <div class="s-nav-search">
+              <svg class="ic ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input type="text" class="tb-input" id="settingsSearch" placeholder="搜索设置项…">
+            </div>
+
+            <div class="s-nav-scroll" id="settingsNavList">
+              <div>
+                <div class="s-nav-group-title"><span>常规与偏好</span><span>4</span></div>
+                <button type="button" class="s-nav-item active" data-section="behavior">
+                  <svg class="ic" viewBox="0 0 24 24"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/></svg>
+                  <span>行为设置</span>
+                </button>
+                <button type="button" class="s-nav-item" data-section="appearance">
+                  <svg class="ic" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2Z"/></svg>
+                  <span>外观设置</span>
+                </button>
+                <button type="button" class="s-nav-item" data-section="hotkeys">
+                  <svg class="ic" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10"/></svg>
+                  <span>快捷键设置</span>
+                  <span class="s-nav-badge">美化</span>
+                </button>
+                <button type="button" class="s-nav-item" data-section="data">
+                  <svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>
+                  <span>数据管理</span>
+                  <span class="s-nav-badge">美化</span>
+                </button>
+              </div>
+
+              <div>
+                <div class="s-nav-group-title"><span>终端与连接</span><span>4</span></div>
+                <button type="button" class="s-nav-item" data-section="profiles">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
+                  <span>项目与命令</span>
+                  <span class="s-nav-badge">美化</span>
+                </button>
+                <button type="button" class="s-nav-item" data-section="commands">
+                  <svg class="ic" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m7 10 2 2-2 2M13 14h4"/></svg>
+                  <span>命令模板</span>
+                  <span class="s-nav-badge">美化</span>
+                </button>
+                <button type="button" class="s-nav-item" data-section="ssh">
+                  <svg class="ic" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
+                  <span>SSH 设置</span>
+                  <span class="s-nav-badge">美化</span>
+                </button>
+                <button type="button" class="s-nav-item" data-section="web-auth">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+                  <span>网页认证</span>
+                  <span class="s-nav-badge">美化</span>
+                </button>
+              </div>
+
+              <div>
+                <div class="s-nav-group-title"><span>Agent &amp; LLM</span><span>4</span></div>
+                <button type="button" class="s-nav-item" data-section="agent-cli">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                  <span>Agent 管理</span>
+                </button>
+                <button type="button" class="s-nav-item" data-section="llm-providers">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+                  <span>模型供应商</span>
+                </button>
+                <button type="button" class="s-nav-item" data-section="claude-settings">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1"/></svg>
+                  <span>Claude 默认配置</span>
+                </button>
+                <button type="button" class="s-nav-item" data-section="ai-usage">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                  <span>AI 用量</span>
+                  <span class="s-nav-badge">美化</span>
+                </button>
+              </div>
+
+              <div>
+                <div class="s-nav-group-title"><span>扩展与服务</span><span>2</span></div>
+                <button type="button" class="s-nav-item" data-section="web-management">
+                  <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                  <span>Web 管理</span>
+                  <span class="s-nav-badge">双栏</span>
+                </button>
+                <button type="button" class="s-nav-item" data-section="exclusions">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="m9.5 12.5 5 5M14.5 12.5l-5 5"/></svg>
+                  <span>文件排除</span>
+                  <span class="s-nav-badge">美化</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="s-nav-footer">
+              <span>TerminalBuddy v1.9.0</span>
+              <span>14 个设置区</span>
+            </div>
+          </nav>
+
+          <!-- 右侧各分页 -->
+          <div class="s-content">
+            <!-- 1. 行为设置 -->
+            <div class="s-page active" id="sec-behavior">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/></svg></div>
+                  <div><h2>行为设置</h2><p>内核引擎、AI 会话生命周期、启动与窗口交互行为</p></div>
+                </div>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">终端内核与加载</span><span class="s-status-chip ok">Node v22.19 可用</span></div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">终端加载方案</div><div class="s-row-desc">检测到系统 Node.js v22.19，可启用 VS Code 终端增强宿主</div></div>
+                  <div class="s-row-ctrl">
+                    <div class="tb-seg"><button type="button" class="tb-seg-btn active">默认</button><button type="button" class="tb-seg-btn">VS Code</button></div>
+                  </div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">默认终端（实验） <span class="s-status-chip muted">未接管</span></div><div class="s-row-desc">双击 .bat 或 Win+R 运行 cmd 时自动在 TerminalBuddy 标签页中打开</div></div>
+                  <div class="s-row-ctrl"><button type="button" class="tb-switch"></button></div>
+                </div>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">AI 会话与自动归档</span></div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">新会话形态</div><div class="s-row-desc">原生会话支持斜杠命令、Skill 与审批卡；终端接力与手机共用同一 PTY</div></div>
+                  <div class="s-row-ctrl">
+                    <div class="tb-seg"><button type="button" class="tb-seg-btn">原生会话</button><button type="button" class="tb-seg-btn active">终端接力</button></div>
+                  </div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">会话自动归档</div><div class="s-row-desc">超过设定天数未使用的 Claude / Codex 会话自动归档（收藏会话不受影响）</div></div>
+                  <div class="s-row-ctrl">
+                    <input type="number" class="tb-input" value="30" style="width:68px;text-align:center;">
+                    <span style="font-size:12px;color:var(--text-secondary)">天未使用</span>
+                    <button type="button" class="tb-switch checked"></button>
+                  </div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">空闲会话进程自动回收</div><div class="s-row-desc">自动释放完全空闲的原生会话进程，保留聊天记录供下次发送恢复</div></div>
+                  <div class="s-row-ctrl">
+                    <input type="number" class="tb-input" value="5" style="width:68px;text-align:center;">
+                    <span style="font-size:12px;color:var(--text-secondary)">小时空闲</span>
+                    <button type="button" class="tb-switch checked"></button>
+                  </div>
+                </div>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">启动与窗口行为</span></div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">启动窗口模式</div><div class="s-row-desc">启动时直接按所选窗口状态展示</div></div>
+                  <div class="s-row-ctrl"><div class="tb-seg"><button type="button" class="tb-seg-btn active">窗口模式</button><button type="button" class="tb-seg-btn">最大化启动</button></div></div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">关闭时最小化到托盘</div><div class="s-row-desc">点击关闭按钮隐藏至系统托盘，双击托盘图标恢复窗口</div></div>
+                  <div class="s-row-ctrl"><button type="button" class="tb-switch checked"></button></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. 外观设置 -->
+            <div class="s-page" id="sec-appearance">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2Z"/></svg></div>
+                  <div><h2>外观设置</h2><p>界面布局样式、状态指示灯配色、列表选中色与分屏字号</p></div>
+                </div>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">界面布局与主题</span></div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">显示任务摘要</div><div class="s-row-desc">在窗口标题和会话标签中显示当前 Claude / Codex 任务摘要</div></div>
+                  <div class="s-row-ctrl"><button type="button" class="tb-switch checked"></button></div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">UI 样式</div><div class="s-row-desc">侧边栏样式参考 VS Code，将项目、文件、标签和会话集中到左侧</div></div>
+                  <div class="s-row-ctrl"><div class="tb-seg"><button type="button" class="tb-seg-btn">默认</button><button type="button" class="tb-seg-btn active">侧边栏</button></div></div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">终端跟随应用主题</div><div class="s-row-desc">自动切换浅色/深色终端底色；单独配置过配色的连接除外</div></div>
+                  <div class="s-row-ctrl"><button type="button" class="tb-switch checked"></button></div>
+                </div>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">活动指示灯与列表配色</span></div>
+                <div class="s-row" style="align-items:flex-start;">
+                  <div class="s-row-info"><div class="s-row-title">活动指示灯颜色</div><div class="s-row-desc">终端执行命令时呼吸灯使用的颜色方案</div></div>
+                  <div class="s-row-ctrl" style="flex-direction:column;align-items:flex-end;">
+                    <div class="tb-seg"><button type="button" class="tb-seg-btn">跟随选项卡颜色</button><button type="button" class="tb-seg-btn active">自定义颜色</button></div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+                      <button type="button" class="swatch-chip active"><span class="swatch-dot" style="background:#4b95e9"></span>天空蓝</button>
+                      <button type="button" class="swatch-chip"><span class="swatch-dot" style="background:#55b988"></span>薄荷绿</button>
+                      <button type="button" class="swatch-chip"><span class="swatch-dot" style="background:#d9a441"></span>琥珀金</button>
+                      <button type="button" class="swatch-chip"><span class="swatch-dot" style="background:#f174aa"></span>樱花粉</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="s-row" style="align-items:flex-start;">
+                  <div class="s-row-info">
+                    <div class="s-row-title">列表选中样式</div>
+                    <div class="s-row-desc">项目与命令、文件与 Git 面板中选中条目的高亮风格</div>
+                    <div class="selection-preview-pill"><b>SSH</b> 示例选中条目（实时预览）</div>
+                  </div>
+                  <div class="s-row-ctrl"><div class="tb-seg"><button type="button" class="tb-seg-btn">默认灰</button><button type="button" class="tb-seg-btn active">IDEA 蓝</button><button type="button" class="tb-seg-btn">自定义</button></div></div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">终端分屏字号</div><div class="s-row-desc">单屏 / 一分二 / 四分屏下的默认 xterm 字体大小</div></div>
+                  <div class="s-row-ctrl">
+                    <span style="font-size:12px;color:var(--text-secondary)">单屏</span><input type="number" class="tb-input" value="14" style="width:54px;text-align:center;">
+                    <span style="font-size:12px;color:var(--text-secondary)">1×2</span><input type="number" class="tb-input" value="12" style="width:54px;text-align:center;">
+                    <span style="font-size:12px;color:var(--text-secondary)">2×2</span><input type="number" class="tb-input" value="11" style="width:54px;text-align:center;">
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. 快捷键设置 (重点美化：卡片 + 键帽) -->
+            <div class="s-page" id="sec-hotkeys">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M7 16h10"/></svg></div>
+                  <div><h2>快捷键设置</h2><p>点击右侧键帽进入录制，按下目标组合键保存，按 Esc 取消</p></div>
+                </div>
+                <button type="button" class="btn-secondary btn-sm">恢复全部默认</button>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">全局与工作区快捷键</span><span class="s-card-extra">已配置 4 项</span></div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">唤起主窗口 <span class="s-status-chip ok">全局热键</span></div><div class="s-row-desc">即使应用最小化或位于后台，也可一键将主窗口置顶显示</div></div>
+                  <div class="s-row-ctrl"><button type="button" class="kbd-cap">Ctrl + Alt + T</button></div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">新建默认终端</div><div class="s-row-desc">在当前工作项目或默认路径下快速打开一个新的终端标签页</div></div>
+                  <div class="s-row-ctrl"><button type="button" class="kbd-cap">Ctrl + T</button></div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">关闭当前标签页</div><div class="s-row-desc">关闭当前聚焦的终端、编辑器或工作区标签</div></div>
+                  <div class="s-row-ctrl"><button type="button" class="kbd-cap">Ctrl + W</button></div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">命令补全面板</div><div class="s-row-desc">唤起带搜索的终端命令模板与历史建议浮层</div></div>
+                  <div class="s-row-ctrl"><button type="button" class="kbd-cap recording" data-orig-text="Ctrl + K">请按下新快捷键…</button></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. 数据管理 (重点美化：状态卡片 + 迁移 + 备份) -->
+            <div class="s-page" id="sec-data">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg></div>
+                  <div><h2>数据管理</h2><p>配置存储路径迁移、SQLite 会话索引与全量 JSON 备份恢复</p></div>
+                </div>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">数据存储位置</span><span class="s-status-chip ok">目录可写 · 默认目录</span></div>
+                <div class="s-row" style="flex-direction:column;align-items:stretch;gap:10px;">
+                  <div style="display:flex;gap:8px;align-items:center;">
+                    <input type="text" class="tb-input mono" readonly value="C:\Users\Administrator\AppData\Roaming\TerminalBuddy">
+                    <button type="button" class="btn-secondary">浏览目录</button>
+                    <button type="button" class="btn-primary">迁移数据</button>
+                  </div>
+                  <div class="s-row-desc">修改路径后会自动校验权限并复制 Profiles、SQLite 数据库与会话数据（原数据保留备份）。</div>
+                </div>
+              </div>
+              <div class="s-grid-2">
+                <div class="s-card">
+                  <div class="s-card-head"><span class="s-card-title">导出全部数据</span></div>
+                  <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px;">
+                    <div class="s-row-desc">将 Profiles、项目登记、命令历史与模板打包导出为单个 JSON 备份文件。</div>
+                    <div><button type="button" class="btn-secondary"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>导出备份 JSON</button></div>
+                  </div>
+                </div>
+                <div class="s-card">
+                  <div class="s-card-head"><span class="s-card-title">从备份导入恢复</span></div>
+                  <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px;">
+                    <div class="s-row-desc">导入历史导出的全量备份，自动校验连接字段与设置结构后覆盖恢复。</div>
+                    <div><button type="button" class="btn-secondary"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>选择备份文件</button></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 5. 项目与命令（连接列表美化） -->
+            <div class="s-page" id="sec-profiles">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></div>
+                  <div><h2>项目与命令</h2><p>按项目分组管理本地 Shell、SSH、Docker 与 Kubernetes 连接</p></div>
+                </div>
+                <button type="button" class="btn-primary"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新建连接</button>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                <div class="tb-seg">
+                  <button type="button" class="tb-seg-btn active">terminal-buddy (3)</button>
+                  <button type="button" class="tb-seg-btn">生产服务器 (2)</button>
+                  <button type="button" class="tb-seg-btn">默认 (1)</button>
+                </div>
+                <input type="text" class="tb-input" style="width:220px;" placeholder="搜索连接名 / 类型…">
+              </div>
+              <div class="s-card">
+                <div class="s-row">
+                  <div class="s-row-info" style="display:flex;align-items:center;gap:10px;">
+                    <span class="st-tag profile mono">PS</span>
+                    <div><div class="s-row-title">Vite 开发服务</div><div class="s-row-desc mono">D:\terminal-buddy\terminal-buddy</div></div>
+                  </div>
+                  <div class="s-row-ctrl">
+                    <button type="button" class="btn-secondary btn-sm">编辑</button>
+                    <button type="button" class="btn-danger-outline btn-sm">删除</button>
+                  </div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info" style="display:flex;align-items:center;gap:10px;">
+                    <span class="st-tag agent mono">SSH</span>
+                    <div><div class="s-row-title">debian99 构建机</div><div class="s-row-desc mono">192.168.1.99:22 · key 认证</div></div>
+                  </div>
+                  <div class="s-row-ctrl">
+                    <button type="button" class="btn-secondary btn-sm">编辑</button>
+                    <button type="button" class="btn-danger-outline btn-sm">删除</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 6. 命令模板 -->
+            <div class="s-page" id="sec-commands">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m7 10 2 2-2 2M13 14h4"/></svg></div>
+                  <div><h2>命令模板</h2><p>终端智能补全内置模板库与用户自定义常用指令</p></div>
+                </div>
+                <button type="button" class="btn-primary"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>添加自定义命令</button>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                <div class="tb-seg">
+                  <button type="button" class="tb-seg-btn active">网络与端口 (17)</button>
+                  <button type="button" class="tb-seg-btn">进程与服务 (11)</button>
+                  <button type="button" class="tb-seg-btn">项目构建 (4)</button>
+                </div>
+                <input type="text" class="tb-input" style="width:220px;" placeholder="搜索命令或说明…">
+              </div>
+              <div class="s-card">
+                <div class="s-row">
+                  <div class="s-row-info" style="display:flex;align-items:center;gap:12px;">
+                    <code class="rule-code">netstat -ano | findstr</code>
+                    <span class="s-row-desc">查找指定端口占用与对应 PID</span>
+                  </div>
+                  <div class="s-row-ctrl">
+                    <button type="button" class="btn-secondary btn-sm">改说明</button>
+                    <button type="button" class="btn-ghost btn-sm">隐藏</button>
+                  </div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info" style="display:flex;align-items:center;gap:12px;">
+                    <code class="rule-code">bash xcj/update.sh local</code>
+                    <span class="s-row-desc">更新本机服务端并执行健康检查</span>
+                  </div>
+                  <div class="s-row-ctrl">
+                    <button type="button" class="btn-secondary btn-sm">改说明</button>
+                    <button type="button" class="btn-ghost btn-sm">隐藏</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 7. SSH 设置 -->
+            <div class="s-page" id="sec-ssh">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/></svg></div>
+                  <div><h2>SSH 设置</h2><p>SFTP 文件下载默认位置与远端服务器资源探针采样频率</p></div>
+                </div>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">SFTP 传输与监控</span></div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">远程文件下载目录</div><div class="s-row-desc">默认保存路径：<code class="mono">C:\Users\Administrator\Downloads</code></div></div>
+                  <div class="s-row-ctrl"><button type="button" class="btn-secondary">更改目录</button></div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">服务器负载监控刷新间隔</div><div class="s-row-desc">CPU / 内存 / 磁盘实时探针轮询频率</div></div>
+                  <div class="s-row-ctrl">
+                    <select class="tb-select" style="width:120px;"><option>1 秒</option><option selected>3 秒</option><option>5 秒</option><option>10 秒</option><option>关闭</option></select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 8. 网页认证（Docker 专属） -->
+            <div class="s-page" id="sec-web-auth">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg></div>
+                  <div><h2>网页认证</h2><p>Docker / 独立服务端网页标签标题与管理员登录凭据</p></div>
+                </div>
+                <span class="s-status-chip ok">Docker 服务端模式</span>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">品牌展示</span></div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">网页主页标题</div><div class="s-row-desc">作用于登录页大标题与浏览器标签页，留空恢复默认「终端伙伴」</div></div>
+                  <div class="s-row-ctrl" style="width:320px;">
+                    <input type="text" class="tb-input" value="终端伙伴 · 个人开发台">
+                    <button type="button" class="btn-primary">保存</button>
+                  </div>
+                </div>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">修改管理员登录密码</span><span class="s-card-extra">最短 8 字符</span></div>
+                <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px;">
+                  <div class="st-grid-2" style="grid-template-columns:repeat(3,minmax(0,1fr));">
+                    <input type="password" class="tb-input" placeholder="旧密码">
+                    <input type="password" class="tb-input" placeholder="新密码（≥ 8 字符）">
+                    <input type="password" class="tb-input" placeholder="确认新密码">
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span class="s-row-desc">修改后下次登录使用新密码，已签发且未过期的 JWT 不受影响</span>
+                    <button type="button" class="btn-secondary">提交修改</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 9. Agent 管理 -->
+            <div class="s-page" id="sec-agent-cli">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
+                  <div><h2>Agent 管理</h2><p>Claude Code 与 Codex CLI 的安装、版本检测、更新源及基础启动命令</p></div>
+                </div>
+                <button type="button" class="btn-secondary btn-sm">重新检测环境</button>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">npm 下载源配置</span></div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">版本检查与安装源</div><div class="s-row-desc">registry.npmmirror.com · 国内网络推荐默认镜像</div></div>
+                  <div class="s-row-ctrl">
+                    <select class="tb-select" style="width:220px;"><option>国内镜像（npmmirror，默认）</option><option>官方源 (npmjs.org)</option></select>
+                  </div>
+                </div>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">已纳管 CLI 工具</span></div>
+                <div class="agent-cli-card">
+                  <div class="agent-cli-top">
+                    <div class="agent-cli-id">
+                      <div class="agent-brand-box claude"><b>C</b></div>
+                      <div>
+                        <div style="display:flex;align-items:center;gap:8px;"><strong>Claude Code</strong><code class="rule-code" style="color:var(--text-primary)">v2.1.48</code><span class="s-status-chip ok">已是最新</span></div>
+                      </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="s-status-chip ok">已安装</span><button type="button" class="btn-secondary btn-sm">检查更新</button></div>
+                  </div>
+                  <div class="agent-cmd-bar">
+                    <label>基础启动命令</label>
+                    <input type="text" class="tb-input mono" value="claude --dangerously-skip-permissions">
+                    <button type="button" class="btn-primary btn-sm">保存</button>
+                  </div>
+                </div>
+                <div class="agent-cli-card">
+                  <div class="agent-cli-top">
+                    <div class="agent-cli-id">
+                      <div class="agent-brand-box codex"><b>O</b></div>
+                      <div>
+                        <div style="display:flex;align-items:center;gap:8px;"><strong>Codex CLI</strong><code class="rule-code" style="color:var(--text-primary)">v0.42.0</code><span class="s-status-chip warn">发现新版本 v0.44.1</span></div>
+                      </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;"><span class="s-status-chip ok">已安装</span><button type="button" class="btn-primary btn-sm">立即更新</button></div>
+                  </div>
+                  <div class="agent-cmd-bar">
+                    <label>基础启动命令</label>
+                    <input type="text" class="tb-input mono" value="codex --dangerously-bypass-approvals-and-sandbox">
+                    <button type="button" class="btn-secondary btn-sm">保存</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 10. 模型供应商 -->
+            <div class="s-page" id="sec-llm-providers">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/></svg></div>
+                  <div><h2>模型供应商</h2><p>集中管理 Claude 与 Codex 的自定义 API 端点、加密密钥与推理模型目录</p></div>
+                </div>
+                <button type="button" class="btn-primary"><svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新增供应商</button>
+              </div>
+              <div class="tb-seg">
+                <button type="button" class="tb-seg-btn active">Claude 供应商</button>
+                <button type="button" class="tb-seg-btn">Codex 供应商</button>
+              </div>
+              <div class="s-grid-2">
+                <div class="provider-card active">
+                  <div class="provider-card-head">
+                    <div class="provider-card-name">Anthropic 官方直连 <span class="s-status-chip ok">默认</span></div>
+                    <span class="mono" style="font-size:11px;color:var(--text-tertiary)">sk-ant-****7a9e</span>
+                  </div>
+                  <div class="provider-card-url">https://api.anthropic.com</div>
+                  <div class="model-pills"><span class="model-pill">claude-sonnet-4-5</span><span class="model-pill">claude-opus-4-1</span><span class="model-pill">high</span></div>
+                  <div class="provider-card-foot">
+                    <span style="font-size:11px;color:var(--text-tertiary)">通过临时 --settings 隔离注入</span>
+                    <div style="display:flex;gap:6px;"><button type="button" class="btn-secondary btn-sm">编辑</button><button type="button" class="btn-ghost btn-sm">取消默认</button></div>
+                  </div>
+                </div>
+                <div class="provider-card">
+                  <div class="provider-card-head">
+                    <div class="provider-card-name">DeepSeek Anthropic 兼容</div>
+                    <span class="mono" style="font-size:11px;color:var(--text-tertiary)">sk-****3f10</span>
+                  </div>
+                  <div class="provider-card-url">https://api.deepseek.com/anthropic</div>
+                  <div class="model-pills"><span class="model-pill">deepseek-chat</span><span class="model-pill">deepseek-reasoner</span></div>
+                  <div class="provider-card-foot">
+                    <span style="font-size:11px;color:var(--text-tertiary)">支持终端引用快速启动</span>
+                    <div style="display:flex;gap:6px;"><button type="button" class="btn-secondary btn-sm">设为默认</button><button type="button" class="btn-secondary btn-sm">编辑</button></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 11. Claude 默认配置 -->
+            <div class="s-page" id="sec-claude-settings">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/></svg></div>
+                  <div><h2>Claude 默认配置</h2><p>用户级 <code class="mono">~/.claude/settings.json</code> 图形化编辑与自动快照备份</p></div>
+                </div>
+                <button type="button" class="btn-secondary btn-sm">备份与还原 (3)</button>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">推理与输出偏好</span><span class="mono s-card-extra">~/.claude/settings.json</span></div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">默认思考强度 (effortLevel)</div><div class="s-row-desc">控制 Claude 推理链路深度（low / medium / high / xhigh）</div></div>
+                  <div class="s-row-ctrl"><div class="tb-seg"><button type="button" class="tb-seg-btn">low</button><button type="button" class="tb-seg-btn">medium</button><button type="button" class="tb-seg-btn active">high</button></div></div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info"><div class="s-row-title">自动记忆 (autoMemoryEnabled)</div><div class="s-row-desc">允许 Claude 在项目维度持久化跨会话记忆文件</div></div>
+                  <div class="s-row-ctrl"><button type="button" class="tb-switch checked"></button></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12. AI 用量（重点美化：凭据状态卡） -->
+            <div class="s-page" id="sec-ai-usage">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg></div>
+                  <div><h2>AI 用量凭据</h2><p>配置各厂商控制台 API Key 或 Cookie，用于顶部工具栏实时查询套餐余量</p></div>
+                </div>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">厂商用量查询凭据</span><span class="s-card-extra">2 / 4 已配置</span></div>
+                <div class="s-row">
+                  <div class="s-row-info">
+                    <div class="s-row-title">智谱 GLM API Key <span class="s-status-chip ok">已配置</span></div>
+                    <div class="s-row-desc">在 <a href="#">open.bigmodel.cn</a> 获取密钥</div>
+                  </div>
+                  <div class="s-row-ctrl" style="width:340px;">
+                    <input type="password" class="tb-input mono" value="zhipu-demo-secret-key">
+                    <button type="button" class="btn-secondary btn-sm">显示</button>
+                  </div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info">
+                    <div class="s-row-title">DeepSeek 认证 Token <span class="s-status-chip ok">已配置</span></div>
+                    <div class="s-row-desc">从 <a href="#">platform.deepseek.com/usage</a> 复制 Authorization Bearer 值</div>
+                  </div>
+                  <div class="s-row-ctrl" style="width:340px;">
+                    <input type="password" class="tb-input mono" value="ds-demo-bearer-token">
+                    <button type="button" class="btn-secondary btn-sm">显示</button>
+                  </div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info">
+                    <div class="s-row-title">百度千帆 Cookie <span class="s-status-chip muted">未配置</span></div>
+                    <div class="s-row-desc">登录百度千帆控制台后从开发者工具复制完整 Cookie</div>
+                  </div>
+                  <div class="s-row-ctrl" style="width:340px;">
+                    <input type="password" class="tb-input" placeholder="请输入百度千帆 Cookie">
+                    <button type="button" class="btn-secondary btn-sm">显示</button>
+                  </div>
+                </div>
+                <div class="s-row">
+                  <div class="s-row-info">
+                    <div class="s-row-title">MiniMax / 火山方舟 Coding 套餐 <span class="s-status-chip muted">未配置</span></div>
+                    <div class="s-row-desc">支持 MiniMax API Key 与火山方舟控制台 Cookie（含 csrfToken）</div>
+                  </div>
+                  <div class="s-row-ctrl" style="width:340px;">
+                    <input type="password" class="tb-input" placeholder="请输入 API Key 或 Cookie">
+                    <button type="button" class="btn-secondary btn-sm">显示</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 13. Web 管理（重点美化：双栏布局） -->
+            <div class="s-page" id="sec-web-management">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg></div>
+                  <div><h2>Web 管理</h2><p>通过局域网浏览器或 TerminalBuddy 安卓端安全访问服务端与终端</p></div>
+                </div>
+                <span class="s-status-chip ok">服务运行中 · http://192.168.1.50:9600</span>
+              </div>
+              <div class="web-manage-grid">
+                <div class="s-card">
+                  <div class="s-card-head"><span class="s-card-title">服务参数与会话策略</span><button type="button" class="btn-secondary btn-sm">自定义域名</button></div>
+                  <div class="s-row">
+                    <div class="s-row-info"><div class="s-row-title">监听端口</div><div class="s-row-desc">HTTP / WebSocket 服务绑定端口</div></div>
+                    <div class="s-row-ctrl"><input type="number" class="tb-input mono" value="9600" style="width:110px;"></div>
+                  </div>
+                  <div class="s-row">
+                    <div class="s-row-info"><div class="s-row-title">登录账号</div><div class="s-row-desc">Web 与 App 登录用户名</div></div>
+                    <div class="s-row-ctrl"><input type="text" class="tb-input" value="admin" style="width:180px;"></div>
+                  </div>
+                  <div class="s-row">
+                    <div class="s-row-info"><div class="s-row-title">访问密码</div><div class="s-row-desc">已设置（留空不修改，bcrypt 加密保存）</div></div>
+                    <div class="s-row-ctrl"><input type="password" class="tb-input" placeholder="留空保持当前密码" style="width:180px;"></div>
+                  </div>
+                  <div class="s-row">
+                    <div class="s-row-info"><div class="s-row-title">与桌面共享终端会话</div><div class="s-row-desc">开启后浏览器/手机可读写并接管桌面终端（永远不可关闭 PC 终端）</div></div>
+                    <div class="s-row-ctrl"><button type="button" class="tb-switch checked"></button></div>
+                  </div>
+                  <div style="padding:12px 16px;display:flex;gap:8px;justify-content:flex-end;background:var(--surface-card-header);border-top:1px solid var(--border-subtle);">
+                    <button type="button" class="btn-danger-outline">停止服务</button>
+                    <button type="button" class="btn-primary">保存并重启服务</button>
+                  </div>
+                </div>
+
+                <div class="s-card">
+                  <div class="s-card-head"><span class="s-card-title">手机 / 浏览器扫码直连</span><span class="s-card-extra">JWT 30 天免密</span></div>
+                  <div class="qr-card-body">
+                    <div class="qr-box" aria-hidden="true">
+                      <svg viewBox="0 0 100 100" style="width:100%;height:100%;fill:#181a1d">
+                        <rect x="6" y="6" width="28" height="28" rx="3"/><rect x="12" y="12" width="16" height="16" fill="#fff"/><rect x="16" y="16" width="8" height="8"/>
+                        <rect x="66" y="6" width="28" height="28" rx="3"/><rect x="72" y="12" width="16" height="16" fill="#fff"/><rect x="76" y="16" width="8" height="8"/>
+                        <rect x="6" y="66" width="28" height="28" rx="3"/><rect x="12" y="72" width="16" height="16" fill="#fff"/><rect x="16" y="76" width="8" height="8"/>
+                        <rect x="42" y="10" width="8" height="8"/><rect x="54" y="18" width="6" height="14"/><rect x="40" y="38" width="20" height="20" rx="2"/><rect x="46" y="44" width="8" height="8" fill="#fff"/>
+                        <rect x="10" y="44" width="16" height="8"/><rect x="68" y="42" width="22" height="10"/><rect x="46" y="68" width="16" height="8"/><rect x="70" y="64" width="24" height="24" rx="2"/><rect x="76" y="70" width="12" height="12" fill="#fff"/>
+                      </svg>
+                    </div>
+                    <div style="width:100%;display:flex;gap:6px;">
+                      <input type="text" class="tb-input mono" readonly value="http://192.168.1.50:9600/?token=eyJhbGci...">
+                      <button type="button" class="btn-secondary">复制</button>
+                    </div>
+                    <span class="s-row-desc">打开链接即自动登录并清理 URL 查询参数，电脑与手机浏览器通用完整界面</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 14. 文件排除（重点美化） -->
+            <div class="s-page" id="sec-exclusions">
+              <div class="s-page-header">
+                <div class="s-page-title-wrap">
+                  <div class="s-page-icon"><svg class="ic" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="m9.5 12.5 5 5M14.5 12.5l-5 5"/></svg></div>
+                  <div><h2>文件排除</h2><p>项目文件树目录列表默认隐藏的目录与文件匹配规则</p></div>
+                </div>
+                <button type="button" class="btn-secondary btn-sm">重置为默认</button>
+              </div>
+              <div class="s-card">
+                <div class="s-card-head"><span class="s-card-title">已启用规则</span><span class="s-card-extra">支持精确名称、*.ext 与 **/*.ext</span></div>
+                <div class="rule-row">
+                  <div style="display:flex;align-items:center;gap:10px;"><code class="rule-code">node_modules</code><span class="s-row-desc">精确匹配目录名</span></div>
+                  <button type="button" class="btn-danger-outline btn-sm">移除</button>
+                </div>
+                <div class="rule-row">
+                  <div style="display:flex;align-items:center;gap:10px;"><code class="rule-code">.git</code><span class="s-row-desc">精确匹配目录名</span></div>
+                  <button type="button" class="btn-danger-outline btn-sm">移除</button>
+                </div>
+                <div class="rule-row">
+                  <div style="display:flex;align-items:center;gap:10px;"><code class="rule-code">*.log</code><span class="s-row-desc">匹配后缀名</span></div>
+                  <button type="button" class="btn-danger-outline btn-sm">移除</button>
+                </div>
+                <div style="padding:12px 14px;background:var(--surface-card-header);border-top:1px solid var(--border-subtle);display:flex;gap:8px;">
+                  <input type="text" class="tb-input mono" placeholder="输入新规则，例如 target、dist、*.tmp、**/*.map">
+                  <button type="button" class="btn-primary">添加规则</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+<script>
+  // 1. 顶部视图切换
+  const viewTabs = document.querySelectorAll('.preview-tab');
+  const viewPanels = document.querySelectorAll('.view-panel');
+  viewTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.view;
+      viewTabs.forEach(t => t.classList.toggle('active', t === tab));
+      viewPanels.forEach(p => p.classList.toggle('active', p.id === 'view-' + target));
+    });
+  });
+
+  // 2. 主题 / 皮肤切换
+  const themePills = document.querySelectorAll('.theme-pill');
+  themePills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      themePills.forEach(p => p.classList.toggle('active', p === pill));
+      const root = document.documentElement;
+      root.setAttribute('data-theme', pill.dataset.theme || 'dark');
+      if (pill.dataset.skin) root.setAttribute('data-skin', pill.dataset.skin);
+      else root.removeAttribute('data-skin');
+    });
+  });
+
+  // 3. 美化要点抽屉
+  const notesToggle = document.getElementById('notesToggle');
+  const notesDrawer = document.getElementById('notesDrawer');
+  notesToggle.addEventListener('click', () => {
+    notesToggle.classList.toggle('active');
+    notesDrawer.classList.toggle('open');
+  });
+
+  // 4. 定时任务主工作区交互（空状态切换、状态筛选、搜索、开关）
+  const toggleEmptyBtn = document.getElementById('toggleEmptyBtn');
+  const stCardList = document.getElementById('stCardList');
+  const stEmptyState = document.getElementById('stEmptyState');
+  const stFilterBar = document.getElementById('stFilterBar');
+  const stKpiGrid = document.getElementById('stKpiGrid');
+  let emptyShown = false;
+  toggleEmptyBtn.addEventListener('click', () => {
+    emptyShown = !emptyShown;
+    stCardList.style.display = emptyShown ? 'none' : 'flex';
+    stFilterBar.style.display = emptyShown ? 'none' : 'flex';
+    stKpiGrid.style.display = emptyShown ? 'none' : 'grid';
+    stEmptyState.style.display = emptyShown ? 'flex' : 'none';
+    toggleEmptyBtn.textContent = emptyShown ? '恢复任务列表预览' : '切换为空状态预览';
+  });
+
+  document.getElementById('jumpCreateModalBtn').addEventListener('click', () => {
+    document.querySelector('[data-view="st-dialogs"]').click();
+  });
+
+  let activeFilter = 'all';
+  const searchInput = document.getElementById('stSearchInput');
+  function filterCards() {
+    const q = searchInput.value.trim().toLowerCase();
+    document.querySelectorAll('.st-card').forEach(card => {
+      const status = (card.dataset.status || '').split(' ');
+      const kw = (card.dataset.keywords || '') + ' ' + card.textContent.toLowerCase();
+      const matchFilter = activeFilter === 'all' || status.includes(activeFilter);
+      const matchSearch = !q || kw.includes(q);
+      card.style.display = matchFilter && matchSearch ? 'flex' : 'none';
+    });
+  }
+  document.querySelectorAll('.st-filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.st-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      activeFilter = chip.dataset.stFilter || 'all';
+      filterCards();
+    });
+  });
+  searchInput.addEventListener('input', filterCards);
+
+  // 5. 通用 Switch、分段控件、快捷键键帽示例交互
+  document.addEventListener('click', e => {
+    const sw = e.target.closest('.tb-switch');
+    if (sw) sw.classList.toggle('checked');
+    const segBtn = e.target.closest('.tb-seg-btn');
+    if (segBtn && !segBtn.disabled) {
+      segBtn.parentElement.querySelectorAll('.tb-seg-btn').forEach(b => b.classList.toggle('active', b === segBtn));
+    }
+    const cadence = e.target.closest('.cadence-pill');
+    if (cadence) {
+      cadence.parentElement.querySelectorAll('.cadence-pill').forEach(b => b.classList.toggle('active', b === cadence));
+    }
+    const swChip = e.target.closest('.swatch-chip');
+    if (swChip) {
+      swChip.parentElement.querySelectorAll('.swatch-chip').forEach(b => b.classList.toggle('active', b === swChip));
+    }
+    const kbd = e.target.closest('.kbd-cap');
+    if (kbd) {
+      const wasRec = kbd.classList.contains('recording');
+      document.querySelectorAll('.kbd-cap.recording').forEach(k => {
+        k.classList.remove('recording');
+        if (k.dataset.origText) k.textContent = k.dataset.origText;
+      });
+      if (!wasRec) {
+        if (!kbd.dataset.origText) kbd.dataset.origText = kbd.textContent;
+        kbd.classList.add('recording');
+        kbd.textContent = '请按下新快捷键…';
+      }
+    }
+  });
+
+  // 6. 新建/编辑弹窗目标切换
+  const targetCards = document.querySelectorAll('.target-card');
+  const agentFields = document.getElementById('targetAgentFields');
+  const profileFields = document.getElementById('targetProfileFields');
+  targetCards.forEach(card => {
+    card.addEventListener('click', () => {
+      targetCards.forEach(c => c.classList.toggle('active', c === card));
+      const mode = card.dataset.targetMode;
+      agentFields.style.display = mode === 'agent' ? 'flex' : 'none';
+      profileFields.style.display = mode === 'profile' ? 'grid' : 'none';
+    });
+  });
+
+  // 7. 设置弹窗左侧导航切换与搜索过滤
+  const navItems = document.querySelectorAll('.s-nav-item');
+  const sPages = document.querySelectorAll('.s-page');
+  navItems.forEach(item => {
+    item.addEventListener('click', () => {
+      const id = item.dataset.section;
+      navItems.forEach(n => n.classList.toggle('active', n === item));
+      sPages.forEach(p => p.classList.toggle('active', p.id === 'sec-' + id));
+    });
+  });
+
+  document.getElementById('settingsSearch').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    document.querySelectorAll('#settingsNavList > div').forEach(group => {
+      let visibleCount = 0;
+      group.querySelectorAll('.s-nav-item').forEach(item => {
+        const match = !q || item.textContent.toLowerCase().includes(q);
+        item.style.display = match ? 'flex' : 'none';
+        if (match) visibleCount++;
+      });
+      group.style.display = visibleCount > 0 ? 'block' : 'none';
+    });
+  });
+</script>
+</body>
+</html>

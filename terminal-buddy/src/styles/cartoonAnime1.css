@@ -34,6 +34,11 @@
   --scrollbar-thumb-hover: #cf7898;
   --shadow-menu: 0 12px 32px rgba(137, 77, 108, 0.18);
   --shadow-dialog: 0 24px 64px rgba(137, 77, 108, 0.22);
+  --shadow-card: 0 3px 12px rgba(196, 91, 139, 0.08);
+  --surface-card: #fffafc;
+  --surface-card-header: #fff0f6;
+  --surface-control: #ffe8f2;
+  --surface-input: #ffffff;
   --skin-canvas:
     url('../assets/cartoon-anime1-background.webp') center / cover no-repeat,
     #fff7fb;
@@ -74,6 +79,11 @@
   --scrollbar-thumb-hover: #8276ca;
   --shadow-menu: 0 12px 34px rgba(6, 8, 43, 0.48);
   --shadow-dialog: 0 24px 68px rgba(6, 8, 43, 0.58);
+  --shadow-card: 0 4px 16px rgba(6, 8, 43, 0.35);
+  --surface-card: #1d205c;
+  --surface-card-header: #24276d;
+  --surface-control: #2d3077;
+  --surface-input: #141646;
   --skin-canvas:
     url('../assets/skin-starry-background.webp') center bottom / cover no-repeat,
     #17184d;
@@ -114,6 +124,11 @@
   --scrollbar-thumb-hover: #8b337d;
   --shadow-menu: 0 12px 34px rgba(0, 0, 0, 0.54);
   --shadow-dialog: 0 24px 70px rgba(0, 0, 0, 0.64);
+  --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.45);
+  --surface-card: #0c0e28;
+  --surface-card-header: #14173b;
+  --surface-control: #1a1e47;
+  --surface-input: #07091b;
   --skin-canvas:
     url('../assets/skin-cyber-background.webp') center bottom / cover no-repeat,
     #02030b;
@@ -154,6 +169,11 @@
   --scrollbar-thumb-hover: #ac746c;
   --shadow-menu: 0 12px 32px rgba(117, 67, 50, 0.17);
   --shadow-dialog: 0 24px 64px rgba(117, 67, 50, 0.24);
+  --shadow-card: 0 3px 12px rgba(133, 73, 62, 0.1);
+  --surface-card: #fffdf9;
+  --surface-card-header: #faeee8;
+  --surface-control: #f4e2dc;
+  --surface-input: #ffffff;
   --skin-canvas:
     url('../assets/skin-sakura-background.webp') center bottom / cover no-repeat,
     #fff8ef;

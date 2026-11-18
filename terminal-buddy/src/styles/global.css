@@ -42,15 +42,20 @@ body {
   --scrollbar-thumb-hover: #5a6069;
 
   /* 通用尺寸与动效。组件只从这组令牌取值。 */
-  --radius-xs: 3px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
   --control-height-sm: 28px;
   --control-height-md: 32px;
   --panel-header-height: 40px;
+  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.16);
   --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.28);
   --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.42);
+  --surface-card: var(--bg-primary);
+  --surface-card-header: color-mix(in srgb, var(--bg-primary) 55%, var(--bg-tertiary));
+  --surface-control: var(--bg-tertiary);
+  --surface-input: color-mix(in srgb, var(--bg-secondary) 75%, var(--bg-primary));
   --motion-instant: 90ms;
   --motion-fast: 140ms;
   --motion-normal: 180ms;
@@ -86,8 +91,13 @@ body {
   --scrollbar-bg: transparent;
   --scrollbar-thumb: #b7bcc3;
   --scrollbar-thumb-hover: #969ca5;
+  --shadow-card: 0 2px 8px rgba(24, 30, 38, 0.06);
   --shadow-menu: 0 10px 30px rgba(24, 30, 38, 0.16);
   --shadow-dialog: 0 24px 64px rgba(24, 30, 38, 0.22);
+  --surface-card: #ffffff;
+  --surface-card-header: #f8f9fb;
+  --surface-control: #eef0f3;
+  --surface-input: #f8f9fb;
 }
 
 html, body, #root {
@@ -186,6 +196,11 @@ textarea:focus-visible,
 .btn-primary,
 .btn-secondary,
 .btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
   min-height: var(--control-height-md);
   padding: 0 14px;
   border-radius: var(--radius-sm);
@@ -228,11 +243,152 @@ textarea:focus-visible,
   background: color-mix(in srgb, var(--danger) 11%, transparent);
 }
 
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--control-height-md);
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
+}
+
+.btn-danger-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--control-height-md);
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+}
+
+.btn-danger-outline:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 68%, var(--border));
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.btn-primary.btn-sm,
+.btn-secondary.btn-sm,
+.btn-danger.btn-sm,
+.btn-ghost.btn-sm,
+.btn-danger-outline.btn-sm {
+  min-height: var(--control-height-sm);
+  height: var(--control-height-sm);
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 .btn-primary:disabled,
 .btn-secondary:disabled,
-.btn-danger:disabled {
+.btn-danger:disabled,
+.btn-ghost:disabled,
+.btn-danger-outline:disabled {
   cursor: not-allowed;
   opacity: 0.48;
+}
+
+/* 共享表单与状态微组件（设置中心与定时任务复用） */
+.tb-input,
+.tb-select,
+.tb-textarea {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-md);
+  padding: 0 10px;
+  background: var(--surface-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+}
+
+.tb-textarea {
+  height: auto;
+  min-height: 104px;
+  padding: 8px 10px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.tb-input:hover:not(:disabled),
+.tb-select:hover:not(:disabled),
+.tb-textarea:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--text-tertiary) 55%, var(--border));
+}
+
+.tb-input:focus,
+.tb-select:focus,
+.tb-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.tb-input::placeholder,
+.tb-textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.tb-select {
+  appearance: none;
+  padding-right: 28px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236f767f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.s-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.s-status-chip.ok {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 13%, transparent);
+}
+
+.s-status-chip.warn {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 13%, transparent);
+}
+
+.s-status-chip.danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+}
+
+.s-status-chip.muted {
+  color: var(--text-tertiary);
+  background: var(--surface-control);
 }
 
 .context-menu-overlay {

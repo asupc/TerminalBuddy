@@ -122,9 +122,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 10px 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  background: var(--bg-primary);
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-card);
   transition: background-color var(--motion-fast) var(--ease-standard);
 }
 
@@ -133,16 +133,16 @@
 }
 
 .claude-settings-row:hover {
-  background: color-mix(in srgb, var(--bg-tertiary) 40%, transparent);
+  background: color-mix(in srgb, var(--list-hover-bg) 42%, var(--surface-card));
 }
 
 /* 已自定义项：优雅的高亮，绝无突兀的大蓝框 */
 .claude-settings-row.customized {
-  background: color-mix(in srgb, var(--accent) 3.5%, var(--bg-primary));
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface-card));
 }
 
 .claude-settings-row.customized:hover {
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-primary));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-card));
 }
 
 .claude-settings-row.customized::before {

@@ -20,12 +20,13 @@
 
 .llm-provider-card {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: var(--bg-primary);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-card);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .llm-provider-card.editing {
