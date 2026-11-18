@@ -815,8 +815,8 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
               const editorSessions = sessions.filter(
                 s => s.sessionType === 'editor' && s.id !== sessionId
               );
-              for (const s of editorSessions) {
-                removeSession(s.id);
+              if (editorSessions.length > 0) {
+                removeSessions(editorSessions.map(s => s.id));
               }
             }}
           />

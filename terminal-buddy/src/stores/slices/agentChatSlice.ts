@@ -1,6 +1,12 @@
 import type { StoreApi } from "zustand";
 import type { AgentTab, AppState } from "../appStore";
 import { saveTabsToStorage } from "../appStore";
+import {
+	agentChatTabKey,
+	appendBackgroundTab,
+	recordTabActivation,
+	resolveCloseTabState,
+} from "../../utils/tabActivation";
 
 /** 聊天标签的落盘：打开/关闭立即写；标题/状态更新走防抖，避免每个流式帧都写 ClientData。 */
 let saveTimer: number | null = null;
@@ -43,6 +49,7 @@ export const createAgentChatSlice = (
 				agentTabs,
 				activeAgentTabKey: tab.key,
 				activeSpecialTab: "agent-chat",
+				tabActivationHistory: recordTabActivation(state.tabActivationHistory, agentChatTabKey(tab.key)),
 			};
 		});
 		persistNow(get);
@@ -53,32 +60,30 @@ export const createAgentChatSlice = (
 	addAgentTab: (tab) => {
 		set((state) => {
 			if (state.agentTabs.some((item) => item.key === tab.key)) return state;
-			return { agentTabs: [...state.agentTabs, tab] };
+			return {
+				agentTabs: [...state.agentTabs, tab],
+				tabActivationHistory: appendBackgroundTab(state.tabActivationHistory, agentChatTabKey(tab.key)),
+			};
 		});
 		persistNow(get);
 	},
 
 	closeAgentTab: (key) => {
 		set((state) => {
+			if (!state.agentTabs.some((item) => item.key === key)) return state;
 			const agentTabs = state.agentTabs.filter((item) => item.key !== key);
-			const wasActive = state.activeAgentTabKey === key;
-			// 关闭当前标签后回到最后一个仍打开的会话；没有则回到终端区。
-			const nextActive = wasActive ? (agentTabs[agentTabs.length - 1]?.key ?? null) : state.activeAgentTabKey;
+			const closeUpdate = resolveCloseTabState(state, { agentTabs }, [agentChatTabKey(key)]);
 			// 标签关闭后草稿与待发送图片没有归属，一并清掉，避免内存里残留无主内容。
 			const { [key]: _removedDraft, ...agentDrafts } = state.agentDrafts;
 			const { [key]: _removedDraftImages, ...agentDraftImages } = state.agentDraftImages;
 			return {
 				agentTabs,
-				activeAgentTabKey: nextActive,
+				...closeUpdate,
 				agentDrafts,
 				agentDraftImages,
 				// 标签已关闭，一次性聚焦标记不该继续留着。
 				pendingAgentInputFocusKey:
 					state.pendingAgentInputFocusKey === key ? null : state.pendingAgentInputFocusKey,
-				activeSpecialTab:
-					state.activeSpecialTab === "agent-chat" && wasActive && nextActive === null
-						? null
-						: state.activeSpecialTab,
 			};
 		});
 		persistNow(get);
@@ -117,7 +122,11 @@ export const createAgentChatSlice = (
 	},
 
 	setActiveAgentTab: (key) => {
-		set({ activeAgentTabKey: key, activeSpecialTab: "agent-chat" });
+		set((state) => ({
+			activeAgentTabKey: key,
+			activeSpecialTab: "agent-chat",
+			tabActivationHistory: recordTabActivation(state.tabActivationHistory, agentChatTabKey(key)),
+		}));
 		schedulePersist(get);
 	},
 });

@@ -4,8 +4,9 @@ import type { AppState } from "../appStore";
 export const createTabsSlice = (
 	set: StoreApi<AppState>["setState"],
 ): Partial<AppState> => ({
-	// Tab Groups
+	// Tab Groups & activation history (MRU)
 	groups: [{ id: "default", name: "默认", collapsed: false }],
+	tabActivationHistory: [],
 	addGroup: (name, color) =>
 		set((state) => ({
 			groups: [...state.groups, { id: crypto.randomUUID(), name, color, collapsed: false }],

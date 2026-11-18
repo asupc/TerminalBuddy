@@ -93,8 +93,10 @@ assert.equal(starts.length, 2);
 await assert.rejects(() => resume.resumeCodexSession({ sessionId: 'other-id', title: '未知目录', projectDir: '' }), /工作目录/);
 
 const keys = load('src/utils/sessionHistory.ts');
+const tabActivation = load('src/utils/tabActivation.ts', { './sessionHistory': keys });
 const { createProfilesSlice } = load('src/stores/slices/profilesSlice.ts', {
   '../../utils/sessionHistory': keys,
+  '../../utils/tabActivation': tabActivation,
   '../../utils/settings': { getAppSettings: () => ({}), saveAppSettings() {} },
 });
 let tabs = {};

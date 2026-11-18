@@ -39,6 +39,7 @@ function load(file, mocks = {}) {
     if (Object.hasOwn(mocks, name)) return mocks[name];
     if (name.endsWith('utils/commandParams')) return commandParams;
     if (name.endsWith('utils/sessionHistory')) return sessionHistory;
+    if (name.endsWith('utils/tabActivation')) return tabActivation;
     if (name.endsWith('utils/claudeLaunch')) return claudeLaunch;
     if (name.endsWith('utils/codexLaunch')) return codexLaunch;
     // 不同文件引用 slice 的相对前缀不同（./slices/… 与 ../stores/slices/…），
@@ -76,6 +77,7 @@ const sessionHistory = load('src/utils/sessionHistory.ts', {
   '../components/claude-history/resumeClaudeSession': { pickClaudeProfile: () => undefined, resumeClaudeSession: async () => {} },
   '../components/claude-history/resumeCodexSession': { pickCodexProfile: () => undefined, resumeCodexSession: async () => {} },
 });
+const tabActivation = load('src/utils/tabActivation.ts', { './sessionHistory': sessionHistory });
 const openTerminal = load('src/utils/openTerminalInDir.ts', {
   '../stores/appStore': { useAppStore: store }, '../services/tauri': tauri, './agentCommands': agentCommands,
   '../services/platform': { defaultShellType: () => 'powershell' },

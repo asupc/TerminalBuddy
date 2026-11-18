@@ -21,6 +21,13 @@ import { PRESET_THEMES } from '../types';
 import type { AgentSessionBinding, TerminalSession } from '../types';
 import { isBrowserClient, clientTerminalOwner, defaultShellType } from './platform';
 import { stripCodexResumeArgs, stripResumeArgs } from '../utils/commandParams';
+import {
+  agentChatTabKey,
+  appendBackgroundTab,
+  getVisibleActiveTabKey,
+  recordTabActivation,
+  sessionTabKey,
+} from '../utils/tabActivation';
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
 
@@ -175,9 +182,47 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   return terminalId;
 }
 
+/** 将持久化的 recentTabs token 恢复为 store 的 tabActivationHistory，并保证当前激活页签位于最前。 */
+function seedRestoredTabHistory(
+  recentTabs: readonly string[],
+  resolveSavedSessionId: (savedIndex: number) => string | undefined,
+): void {
+  const state = useAppStore.getState();
+  const validSessionIds = new Set(state.sessions.map(session => session.id));
+  const validAgentKeys = new Set((state.agentTabs ?? []).map(tab => tab.key));
+  let history: string[] = [];
+  for (const token of recentTabs) {
+    if (token.startsWith('s:')) {
+      const idx = Number(token.slice(2));
+      const sessionId = Number.isInteger(idx) ? resolveSavedSessionId(idx) : undefined;
+      if (sessionId && validSessionIds.has(sessionId)) {
+        history = appendBackgroundTab(history, sessionTabKey(sessionId));
+      }
+    } else if (token.startsWith('a:')) {
+      const agentKey = token.slice(2);
+      if (validAgentKeys.has(agentKey)) {
+        history = appendBackgroundTab(history, agentChatTabKey(agentKey));
+      }
+    }
+  }
+  const activeKey = getVisibleActiveTabKey(state);
+  if (activeKey) {
+    history = recordTabActivation(history, activeKey);
+  }
+  for (const session of state.sessions) {
+    history = appendBackgroundTab(history, sessionTabKey(session.id));
+  }
+  for (const tab of state.agentTabs ?? []) {
+    history = appendBackgroundTab(history, agentChatTabKey(tab.key));
+  }
+  useAppStore.setState({ tabActivationHistory: history });
+}
+
 interface RestoreSavedTabsOptions {
   /** 浏览器重启恢复：先移除后端已不存在的前端会话，避免新旧页签并存。 */
   dropStaleSessions?: boolean;
+  /** 与入参 `tabs` 下标对齐的最近激活记录。 */
+  recentTabs?: string[];
 }
 
 /**
@@ -255,6 +300,7 @@ async function restoreSavedTabs(
       ?? restoredSessionIds.find((id): id is string => id !== undefined)
       ?? null;
     store.setActiveSession(restoredActiveId);
+    seedRestoredTabHistory(options.recentTabs ?? [], index => restoredSessionIds[index]);
     useAppStore.setState({ _skipSaveTabs: false });
     const { sessions, activeSessionId } = useAppStore.getState();
     saveTabsToStorage(sessions, activeSessionId);
@@ -325,7 +371,7 @@ async function runBrowserSessionRestore(): Promise<BrowserSessionRestoreOutcome>
   // 用户刚关闭会话时页签保存可能还在防抖窗口内。先落盘，避免恢复读到旧列表，
   // 把刚关掉的会话重新创建出来。
   await flushPendingSaveTabsIfAny();
-  const { tabs, activeIndex } = await loadSavedTabs();
+  const { tabs, activeIndex, recentTabs } = await loadSavedTabs();
   // PC 端页签由桌面端负责恢复，浏览器不越权重建。
   const terminalTabs = tabs.filter(tab => tab.sessionType !== 'editor' && tab.owner !== 'pc');
   if (terminalTabs.length === 0) {
@@ -350,7 +396,19 @@ async function runBrowserSessionRestore(): Promise<BrowserSessionRestoreOutcome>
     const savedActiveTab = tabs[activeIndex];
     let activeTerminalIndex = savedActiveTab ? terminalTabs.indexOf(savedActiveTab) : -1;
     if (activeTerminalIndex < 0) activeTerminalIndex = 0;
-    const restored = await restoreSavedTabs(terminalTabs, activeTerminalIndex, { dropStaleSessions: true });
+    const mappedRecentTabs = recentTabs.flatMap((token) => {
+      if (token.startsWith('s:')) {
+        const origIdx = Number(token.slice(2));
+        const origTab = Number.isInteger(origIdx) ? tabs[origIdx] : undefined;
+        const mappedIdx = origTab ? terminalTabs.indexOf(origTab) : -1;
+        return mappedIdx >= 0 ? [`s:${mappedIdx}`] : [];
+      }
+      return [token];
+    });
+    const restored = await restoreSavedTabs(terminalTabs, activeTerminalIndex, {
+      dropStaleSessions: true,
+      recentTabs: mappedRecentTabs,
+    });
     if (restored.length === 0) {
       console.error('浏览器页签恢复失败：没有任何页签恢复成功');
       return 'failed';
@@ -446,8 +504,9 @@ async function restoreNativeAgentTabs(saved: SavedNativeAgentTab[], activeKey: s
 
 /** 只恢复原生会话标签（不涉及终端 PTY），用于关闭「启动恢复页签」时仍保留聊天页签。 */
 export async function restoreAgentChatTabs(): Promise<void> {
-  const { agentTabs, activeAgentTabKey, agentChatActive } = await loadSavedTabs();
+  const { agentTabs, activeAgentTabKey, agentChatActive, recentTabs } = await loadSavedTabs();
   await restoreNativeAgentTabs(agentTabs, activeAgentTabKey);
+  seedRestoredTabHistory(recentTabs, () => undefined);
   if (agentChatActive && activeAgentTabKey) {
     const store = useAppStore.getState();
     if (store.agentTabs.some(tab => tab.key === activeAgentTabKey)) store.setActiveAgentTab(activeAgentTabKey);
@@ -456,7 +515,7 @@ export async function restoreAgentChatTabs(): Promise<void> {
 
 /** 恢复上次保存的页签：活动页签优先，其余并发池恢复，完成后统一落盘。 */
 export async function restoreTabs() {
-  const { tabs, activeIndex, agentTabs: savedAgentTabs, activeAgentTabKey, agentChatActive } = await loadSavedTabs();
+  const { tabs, activeIndex, agentTabs: savedAgentTabs, activeAgentTabKey, agentChatActive, recentTabs } = await loadSavedTabs();
   // 先恢复聊天标签：终端恢复流程结尾会落盘，若此时 agentTabs 还是空，会把保存的聊天标签覆盖掉。
   await restoreNativeAgentTabs(savedAgentTabs, activeAgentTabKey);
   if (isBrowserClient()) {
@@ -464,10 +523,25 @@ export async function restoreTabs() {
     for (const tab of tabs) {
       if (tab.sessionType === 'editor') await restoreEditorTab(tab);
     }
-    await ensureBrowserSessionsRestored();
+    const browserOutcome = await ensureBrowserSessionsRestored();
     await reconcileBackendSessions();
+    if (browserOutcome !== 'restored') {
+      seedRestoredTabHistory(recentTabs, (savedIdx) => {
+        const savedTab = tabs[savedIdx];
+        if (!savedTab) return undefined;
+        const sessions = useAppStore.getState().sessions;
+        if (savedTab.sessionType === 'editor') {
+          return sessions.find(s => s.sessionType === 'editor' && s.profileId === savedTab.profileId)?.id;
+        }
+        return savedTab.terminalId && sessions.some(s => s.id === savedTab.terminalId)
+          ? savedTab.terminalId
+          : undefined;
+      });
+    }
+  } else if (tabs.length === 0) {
+    seedRestoredTabHistory(recentTabs, () => undefined);
   } else {
-    await restoreSavedTabs(tabs, activeIndex);
+    await restoreSavedTabs(tabs, activeIndex, { recentTabs });
   }
   // 终端恢复会把 activeSpecialTab 归零；保存时正在看原生会话则最后切回去并落盘。
   if (agentChatActive && activeAgentTabKey) {

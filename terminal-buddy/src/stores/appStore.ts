@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Profile, TerminalSession, TabGroup, RemoteFileEntry, ServerStats, TransferItem, SessionHistoryProvider, AgentSessionBinding } from "../types";
 import { readClientData, writeClientData } from "../services/tauri";
+import { serializeRecentTabs } from "../utils/tabActivation";
 import { createProfilesSlice } from "./slices/profilesSlice";
 import { createFileTreeSlice } from "./slices/fileTreeSlice";
 import { createSessionsSlice } from "./slices/sessionsSlice";
@@ -162,10 +163,11 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 		const agentViewActive = state.activeSpecialTab === "agent-chat" && state.activeAgentTabKey != null;
 		const activeAgentTabKey = state.activeAgentTabKey && agentTabs.some(tab => tab.key === state.activeAgentTabKey)
 			? state.activeAgentTabKey : null;
+		const recentTabs = serializeRecentTabs(state.tabActivationHistory, persistedSessions, agentTabs);
 		// 保存失败必须留痕：静默吞掉会让「重启后标签丢了」无从排查。
 		// 返回 Promise 让退出流程可以 await，避免 invoke 未 settle 进程就退出。
 		return writeClientData("saved_tabs", JSON.stringify({
-			tabs, activeIndex, agentTabs, activeAgentTabKey, agentChatActive: agentViewActive,
+			tabs, activeIndex, agentTabs, activeAgentTabKey, agentChatActive: agentViewActive, recentTabs,
 		})).catch((error) => {
 			console.error("Failed to save tabs:", error);
 		});
@@ -238,6 +240,7 @@ export async function loadSavedTabs(): Promise<{
 	agentTabs: SavedNativeAgentTab[];
 	activeAgentTabKey: string | null;
 	agentChatActive: boolean;
+	recentTabs: string[];
 }> {
 	try {
 		const raw = await readClientData("saved_tabs");
@@ -245,7 +248,7 @@ export async function loadSavedTabs(): Promise<{
 			const data = JSON.parse(raw);
 			// 根值必须是对象；tabs 必须是数组；逐条校验归一化
 			if (typeof data !== "object" || data === null || !Array.isArray(data.tabs)) {
-				return { tabs: [], activeIndex: 0, agentTabs: [], activeAgentTabKey: null, agentChatActive: false };
+				return { tabs: [], activeIndex: 0, agentTabs: [], activeAgentTabKey: null, agentChatActive: false, recentTabs: [] };
 			}
 			const tabs = data.tabs
 				.map(normalizeSavedTab)
@@ -262,12 +265,33 @@ export async function loadSavedTabs(): Promise<{
 			const activeAgentTabKey = typeof data.activeAgentTabKey === "string"
 				&& agentTabs.some(tab => tab.key === data.activeAgentTabKey)
 				? data.activeAgentTabKey : null;
-			return { tabs, activeIndex, agentTabs, activeAgentTabKey, agentChatActive: data.agentChatActive === true && activeAgentTabKey != null };
+			const agentKeySet = new Set(agentTabs.map(tab => tab.key));
+			const seenRecent = new Set<string>();
+			const recentTabs: string[] = [];
+			if (Array.isArray(data.recentTabs)) {
+				for (const entry of data.recentTabs) {
+					if (typeof entry !== "string" || seenRecent.has(entry)) continue;
+					if (entry.startsWith("s:")) {
+						const idx = Number(entry.slice(2));
+						if (Number.isInteger(idx) && idx >= 0 && idx < tabs.length) {
+							seenRecent.add(entry);
+							recentTabs.push(entry);
+						}
+					} else if (entry.startsWith("a:")) {
+						const agentKey = entry.slice(2);
+						if (agentKeySet.has(agentKey)) {
+							seenRecent.add(entry);
+							recentTabs.push(entry);
+						}
+					}
+				}
+			}
+			return { tabs, activeIndex, agentTabs, activeAgentTabKey, agentChatActive: data.agentChatActive === true && activeAgentTabKey != null, recentTabs };
 		}
 	} catch (error) {
 		console.error("Failed to load saved tabs:", error);
 	}
-	return { tabs: [], activeIndex: 0, agentTabs: [], activeAgentTabKey: null, agentChatActive: false };
+	return { tabs: [], activeIndex: 0, agentTabs: [], activeAgentTabKey: null, agentChatActive: false, recentTabs: [] };
 }
 
 /** 原生会话标签的持久化数据校验：会话 ID 是唯一恢复锚点，其余字段给安全默认值。 */
@@ -418,8 +442,9 @@ export interface AppState {
 	addFileRoot: (path: string) => void;
 	removeFileRoot: (path: string) => void;
 
-	// Tab Groups
+	// Tab Groups & activation history (MRU, index 0 = most recently active)
 	groups: TabGroup[];
+	tabActivationHistory: string[];
 	addGroup: (name: string, color?: string) => void;
 	removeGroup: (id: string) => void;
 	renameGroup: (id: string, name: string) => void;

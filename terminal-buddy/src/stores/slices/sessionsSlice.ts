@@ -6,6 +6,13 @@ import { saveTabsToStorage, useAppStore } from "../appStore";
 import type { TabGroup, TerminalSession } from "../../types";
 import { deletePath, ensureDir, getDataPath, readClientData, reportSessionDirectory, updateTerminalDisplayName, writeClientData, writeFileContent } from "../../services/tauri";
 import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from "../../utils/terminalResizeEvent";
+import {
+	appendBackgroundTab,
+	recordTabActivation,
+	replaceTabHistoryKey,
+	resolveCloseTabState,
+	sessionTabKey,
+} from "../../utils/tabActivation";
 
 let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
 /** 进行中的写入 promise：flush 时 await 它，保证退出前最后一次保存真正落盘。 */
@@ -101,6 +108,41 @@ function withEditorGroup(groups: TabGroup[]): TabGroup[] {
 		: [...groups, { id: "editor-group", name: "文本编辑", collapsed: false }];
 }
 
+/** 文件与 Git 面板跟随当前连接：优先用会话已记录目录，否则回退到 profile 启动目录。 */
+function resolveSessionDirectory(
+	state: Pick<AppState, "sessionDirectories" | "sessions" | "profiles" | "projects" | "currentDirectory">,
+	id: string | null,
+): string {
+	if (!id) return state.currentDirectory;
+	if (state.sessionDirectories?.[id]) return state.sessionDirectories[id];
+	const session = state.sessions.find((s) => s.id === id);
+	if (session) {
+		const profile = (state.profiles ?? []).find((p) => p.id === session.profileId);
+		if (profile) {
+			return effectiveProfilePath(profile, state.projects ?? []);
+		}
+	}
+	return state.currentDirectory;
+}
+
+/** 关闭会话标签后若焦点切到另一终端/编辑器，同步刷新 currentDirectory。 */
+function resolveClosedCurrentDirectory(
+	state: AppState,
+	sessions: TerminalSession[],
+	sessionDirectories: Record<string, string>,
+	closeUpdate: Pick<Partial<AppState>, "activeSessionId" | "activeSpecialTab">,
+): string {
+	const nextSessionId = closeUpdate.activeSessionId !== undefined
+		? closeUpdate.activeSessionId
+		: state.activeSessionId;
+	const nextSpecialTab = closeUpdate.activeSpecialTab !== undefined
+		? closeUpdate.activeSpecialTab
+		: state.activeSpecialTab;
+	return nextSpecialTab === null && nextSessionId && nextSessionId !== state.activeSessionId
+		? resolveSessionDirectory({ ...state, sessions, sessionDirectories }, nextSessionId)
+		: state.currentDirectory;
+}
+
 export const createSessionsSlice = (
 	set: StoreApi<AppState>["setState"],
 	get: StoreApi<AppState>["getState"],
@@ -120,6 +162,9 @@ export const createSessionsSlice = (
 			const sessions = state.sessions.some(existing => existing.id === s.id)
 				? state.sessions.map(existing => existing.id === s.id ? { ...existing, ...s } : existing)
 				: [...state.sessions, s];
+			const tabActivationHistory = keepActive
+				? appendBackgroundTab(state.tabActivationHistory, sessionTabKey(s.id))
+				: recordTabActivation(state.tabActivationHistory, sessionTabKey(s.id));
 			if (!state._skipSaveTabs && !s.starting) {
 				debouncedSaveTabs();
 			}
@@ -129,6 +174,7 @@ export const createSessionsSlice = (
 				// 其它端新建终端时不抢当前视图：保留用户正在看的特殊页签，
 				// 否则手机/Web 端每建一个终端都会把桌面端的设置/文件页顶掉。
 				activeSpecialTab: keepActive ? state.activeSpecialTab : null,
+				tabActivationHistory,
 			};
 		}),
 	resolveStartingSession: (startingId, terminalId) => {
@@ -142,6 +188,11 @@ export const createSessionsSlice = (
 				.map((session) => (session.id === startingId ? { ...session, id: terminalId, starting: false } : session));
 			const activeSessionId = state.activeSessionId === startingId ? terminalId : state.activeSessionId;
 			const splitSlots = state.splitSlots.map((slot) => (slot.sessionId === startingId ? { ...slot, sessionId: terminalId } : slot));
+			const tabActivationHistory = replaceTabHistoryKey(
+				state.tabActivationHistory,
+				sessionTabKey(startingId),
+				sessionTabKey(terminalId),
+			);
 			if (!state._skipSaveTabs) {
 				debouncedSaveTabs();
 			}
@@ -149,6 +200,7 @@ export const createSessionsSlice = (
 				sessions,
 				activeSessionId,
 				splitSlots,
+				tabActivationHistory,
 				terminalLayoutVersion: splitSlots.some((slot, index) => slot !== state.splitSlots[index]) ? state.terminalLayoutVersion + 1 : state.terminalLayoutVersion,
 			};
 		});
@@ -162,7 +214,6 @@ export const createSessionsSlice = (
 				return state;
 			}
 			const sessions = state.sessions.filter((session) => !idsToRemove.has(session.id));
-			let activeSessionId = state.activeSessionId !== null && idsToRemove.has(state.activeSessionId) ? (sessions[0]?.id ?? null) : state.activeSessionId;
 			const restCache = { ...state.remoteFileCache };
 			const terminalActivities = { ...state.terminalActivities };
 			const claudeSessionIds = { ...state.claudeSessionIds };
@@ -178,22 +229,24 @@ export const createSessionsSlice = (
 				delete terminalWebTakeovers[id];
 			}
 			// Split-slot cleanup: free any slot referencing the closed session.
-			// If the closed pane was focused, refocus the first remaining filled slot
-			// (split mode is preserved even if all slots become blank).
 			let splitSlots = state.splitSlots;
 			if (state.splitMode !== "off" && splitSlots.some((slot) => slot.sessionId !== null && idsToRemove.has(slot.sessionId))) {
 				splitSlots = splitSlots.map((slot) => (slot.sessionId !== null && idsToRemove.has(slot.sessionId) ? { sessionId: null, enteredAt: 0 } : slot));
-				if (state.activeSessionId !== null && idsToRemove.has(state.activeSessionId)) {
-					activeSessionId = splitSlots.find((s) => s.sessionId !== null)?.sessionId ?? null;
-				}
 			}
+			const closeUpdate = resolveCloseTabState(
+				state,
+				{ sessions, splitSlots },
+				[...idsToRemove].map(sessionTabKey),
+			);
+			const currentDirectory = resolveClosedCurrentDirectory(state, sessions, sessionDirectories, closeUpdate);
 			// 恢复流程在 _skipSaveTabs 下清理旧会话，不能把半成品页签写盘。
 			// 正常关闭会话必须立即落盘（而不是 300ms 防抖）：关闭最后一个会话后，
 			// 容器重启恢复或页面刷新若读到旧页签，会把刚关掉的会话重新创建出来。
 			if (!state._skipSaveTabs) queueMicrotask(() => { void flushPendingSaveTabs(); });
 			return {
 				sessions,
-				activeSessionId,
+				...closeUpdate,
+				currentDirectory,
 				remoteFileCache: restCache,
 				terminalActivities,
 				terminalWebTakeovers,
@@ -207,31 +260,35 @@ export const createSessionsSlice = (
 	setSessions: (sessions) => {
 		const normalized = sessions.map((s) => ({ ...s, createdAt: s.createdAt ?? Date.now() }));
 		const activeSessionId = normalized[0]?.id ?? null;
-		saveTabsToStorage(normalized, activeSessionId);
-		set({ sessions: normalized, activeSessionId, terminalActivities: {}, terminalWebTakeovers: {} });
+		set((state) => {
+			let tabActivationHistory = (state.tabActivationHistory ?? []).filter((key) => !key.startsWith("session:"));
+			if (activeSessionId) {
+				tabActivationHistory = recordTabActivation(tabActivationHistory, sessionTabKey(activeSessionId));
+			}
+			for (const session of normalized) {
+				tabActivationHistory = appendBackgroundTab(tabActivationHistory, sessionTabKey(session.id));
+			}
+			return {
+				sessions: normalized,
+				activeSessionId,
+				activeSpecialTab: null,
+				terminalActivities: {},
+				terminalWebTakeovers: {},
+				tabActivationHistory,
+			};
+		});
+		void saveTabsToStorage(normalized, activeSessionId);
 	},
 	setActiveSession: (id) =>
 		set((state) => {
-			// 文件与 Git 面板跟随当前连接：优先使用会话内已记录的目录（用户浏览或 cd 过的）；
-			// 若无记录，则回退到 profile 设置的启动目录（startupPath）。
-			let currentDirectory = state.currentDirectory;
-			if (id) {
-				if (state.sessionDirectories[id]) {
-					currentDirectory = state.sessionDirectories[id];
-				} else {
-					const session = state.sessions.find((s) => s.id === id);
-					if (session) {
-						const profile = state.profiles.find((p) => p.id === session.profileId);
-						if (profile) {
-							currentDirectory = effectiveProfilePath(profile, state.projects);
-						}
-					}
-				}
-			}
+			const currentDirectory = resolveSessionDirectory(state, id);
+			const tabActivationHistory = id
+				? recordTabActivation(state.tabActivationHistory, sessionTabKey(id))
+				: state.tabActivationHistory;
 			if (!state._skipSaveTabs) {
 				debouncedSaveTabs();
 			}
-			return { activeSessionId: id, currentDirectory, activeSpecialTab: null };
+			return { activeSessionId: id, currentDirectory, activeSpecialTab: null, tabActivationHistory };
 		}),
 	renameSession: (id, name) => {
 		const session = get().sessions.find((item) => item.id === id);
@@ -268,24 +325,38 @@ export const createSessionsSlice = (
 		set((state) => {
 			const existing = state.sessions.find((s) => s.sessionType === "editor" && s.profileId === filePath);
 			if (existing) {
-				saveTabsToStorage(state.sessions, existing.id);
-				return { activeSessionId: existing.id, activeSpecialTab: null };
+				return {
+					activeSessionId: existing.id,
+					activeSpecialTab: null,
+					tabActivationHistory: recordTabActivation(state.tabActivationHistory, sessionTabKey(existing.id)),
+				};
 			}
 			const fileName = filePath.split(/[\\/]/).pop() || filePath;
 			const id = crypto.randomUUID();
 			const session = makeEditorSession(id, filePath, fileName, { sshRemotePath, sshTerminalId });
 			const sessions = [...state.sessions, session];
-			saveTabsToStorage(sessions, id);
-			return { sessions, activeSessionId: id, activeSpecialTab: null, groups: withEditorGroup(state.groups) };
+			return {
+				sessions,
+				activeSessionId: id,
+				activeSpecialTab: null,
+				groups: withEditorGroup(state.groups),
+				tabActivationHistory: recordTabActivation(state.tabActivationHistory, sessionTabKey(id)),
+			};
 		});
+		const { sessions, activeSessionId } = get();
+		void saveTabsToStorage(sessions, activeSessionId);
 	},
-	closeEditorSession: (id) =>
+	closeEditorSession: (id) => {
 		set((state) => {
+			if (!state.sessions.some((s) => s.id === id)) return state;
 			const sessions = state.sessions.filter((s) => s.id !== id);
-			const activeSessionId = state.activeSessionId === id ? (sessions[0]?.id ?? null) : state.activeSessionId;
-			saveTabsToStorage(sessions, activeSessionId);
-			return { sessions, activeSessionId };
-		}),
+			const closeUpdate = resolveCloseTabState(state, { sessions }, [sessionTabKey(id)]);
+			const currentDirectory = resolveClosedCurrentDirectory(state, sessions, state.sessionDirectories, closeUpdate);
+			return { sessions, ...closeUpdate, currentDirectory };
+		});
+		const { sessions, activeSessionId } = get();
+		void saveTabsToStorage(sessions, activeSessionId);
+	},
 	openDraftSession: async () => {
 		if (get().splitMode !== "off") {
 			get().showToast("请先退出分屏模式再编辑文件", "info");
@@ -301,9 +372,15 @@ export const createSessionsSlice = (
 
 		const id = crypto.randomUUID();
 		const session = makeEditorSession(id, filePath, "未命名");
-		const sessions = [...get().sessions, session];
-		saveTabsToStorage(sessions, id);
-		set({ sessions, activeSessionId: id, activeSpecialTab: null, groups: withEditorGroup(get().groups) });
+		set((state) => ({
+			sessions: [...state.sessions, session],
+			activeSessionId: id,
+			activeSpecialTab: null,
+			groups: withEditorGroup(state.groups),
+			tabActivationHistory: recordTabActivation(state.tabActivationHistory, sessionTabKey(id)),
+		}));
+		const { sessions, activeSessionId } = get();
+		void saveTabsToStorage(sessions, activeSessionId);
 	},
 	removeDraftFile: async (draftPath: string) => {
 		try {
@@ -551,10 +628,15 @@ export const createSessionsSlice = (
 				if (activeSessionId && !slots.some((s) => s.sessionId === activeSessionId)) {
 					activeSessionId = slots.find((s) => s.sessionId !== null)?.sessionId ?? activeSessionId;
 				}
+				const tabActivationHistory =
+					(state.activeSpecialTab ?? null) === null && activeSessionId && activeSessionId !== state.activeSessionId
+						? recordTabActivation(state.tabActivationHistory, sessionTabKey(activeSessionId))
+						: state.tabActivationHistory;
 				return {
 					splitMode: "2x1" as const,
 					splitSlots: slots,
 					activeSessionId,
+					tabActivationHistory,
 					terminalLayoutVersion: state.terminalLayoutVersion + 1,
 					splitTransitionUntil,
 				};
@@ -591,33 +673,25 @@ export const createSessionsSlice = (
 		set((state) => {
 			if (state.splitMode === "off") return state;
 			const slots = state.splitSlots;
-
-			// 1. 找空位
-			const emptyIdx = slots.findIndex((s) => s.sessionId === null);
-			if (emptyIdx !== -1) {
-				const splitSlots = [...slots];
-				splitSlots[emptyIdx] = { sessionId, enteredAt: Date.now() };
-				return {
-					splitSlots,
-					activeSessionId: sessionId,
-					terminalLayoutVersion: state.terminalLayoutVersion + 1,
-				};
-			}
-
-			// 2. 无空位，替换最旧的
-			let oldestIdx = 0;
-			let oldestTime = slots[0].enteredAt;
-			for (let i = 1; i < slots.length; i++) {
-				if (slots[i].enteredAt < oldestTime) {
-					oldestTime = slots[i].enteredAt;
-					oldestIdx = i;
+			let targetIdx = slots.findIndex((s) => s.sessionId === null);
+			if (targetIdx === -1) {
+				targetIdx = 0;
+				let oldestTime = slots[0].enteredAt;
+				for (let i = 1; i < slots.length; i++) {
+					if (slots[i].enteredAt < oldestTime) {
+						oldestTime = slots[i].enteredAt;
+						targetIdx = i;
+					}
 				}
 			}
 			const splitSlots = [...slots];
-			splitSlots[oldestIdx] = { sessionId, enteredAt: Date.now() };
+			splitSlots[targetIdx] = { sessionId, enteredAt: Date.now() };
 			return {
 				splitSlots,
 				activeSessionId: sessionId,
+				activeSpecialTab: null,
+				currentDirectory: resolveSessionDirectory(state, sessionId),
+				tabActivationHistory: recordTabActivation(state.tabActivationHistory, sessionTabKey(sessionId)),
 				terminalLayoutVersion: state.terminalLayoutVersion + 1,
 			};
 		}),
