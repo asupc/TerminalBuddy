@@ -127,7 +127,7 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
     id: 'terminal',
     label: '终端与连接',
     sections: [
-      { id: 'profiles', label: '项目与命令', icon: Plug, description: '项目、连接配置与命令模板集中管理', keywords: ['profile', 'ssh', 'docker', 'powershell', 'cmd'] },
+      { id: 'profiles', label: '项目与连接', icon: Plug, description: '按项目与分组集中管理终端、SSH、容器及远程桌面连接', keywords: ['profile', 'ssh', 'docker', 'powershell', 'cmd', 'mstsc', 'rdp', '项目与命令', '连接'] },
       { id: 'commands', label: '命令模板', icon: SquareTerminal, description: '常用终端命令模板库与自定义命令', keywords: ['template', 'cmd', 'snippet'] },
       { id: 'ssh', label: 'SSH 设置', icon: Server, description: 'SSH 远程文件下载路径与服务器负载探针刷新', keywords: ['download', 'monitor', 'cpu', 'memory'] },
       // Docker 网页版专属：非 Docker 环境在 visibleGroups 中过滤掉
