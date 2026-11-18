@@ -149,6 +149,10 @@
   scrollbar-width: thin;
 }
 
+.st-scroll > * {
+  flex: 0 0 auto;
+}
+
 .st-scroll::-webkit-scrollbar,
 .st-runs-table-wrap::-webkit-scrollbar {
   width: 6px;
@@ -428,6 +432,10 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.st-task-list > .st-task-card {
+  flex: 0 0 auto;
 }
 
 .st-task-card {
@@ -973,10 +981,14 @@
 }
 
 .st-dialog .tb-dialog-body {
-  padding: 18px 22px 20px;
+  padding: 16px 20px 18px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+}
+
+.st-dialog .tb-dialog-body > * {
+  flex: 0 0 auto;
 }
 
 .st-dialog-footer {
@@ -1036,7 +1048,7 @@
 }
 
 .st-form-box-head {
-  padding: 9px 14px;
+  padding: 8px 14px;
   background: var(--surface-card-header);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
@@ -1072,10 +1084,15 @@
 }
 
 .st-form-box-body {
-  padding: 14px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+
+.st-form-box-body > *,
+.st-control-rows > * {
+  flex: 0 0 auto;
 }
 
 .st-form-box-body.compact {
@@ -1238,7 +1255,7 @@
 }
 
 .st-textarea {
-  min-height: 100px;
+  min-height: 82px;
   padding: 8px 10px;
   font-family: var(--font-ui, inherit);
   line-height: 1.55;
@@ -1540,6 +1557,10 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.st-runs-body > * {
+  flex: 0 0 auto;
 }
 
 .st-runs-kpi-row {

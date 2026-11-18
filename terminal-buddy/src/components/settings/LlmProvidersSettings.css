@@ -9,6 +9,10 @@
   max-width: 980px;
 }
 
+.llm-providers-settings > * {
+  flex: 0 0 auto;
+}
+
 .llm-providers-tabs {
   display: inline-flex;
   align-self: flex-start;

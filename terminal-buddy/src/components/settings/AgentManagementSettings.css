@@ -250,6 +250,7 @@
 
 /* ===== 基础启动命令：跟随各自的命令行工具卡片 ===== */
 .agent-management-settings { display: flex; flex-direction: column; gap: 16px; max-width: 980px; }
+.agent-management-settings > * { flex: 0 0 auto; }
 .agent-command-field {
   display: flex;
   flex-direction: column;
