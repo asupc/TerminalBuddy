@@ -203,15 +203,16 @@ impl RemoteWorkspaceService {
             .ok_or_else(|| "远程连接代理尚未启动".into())
     }
 
-    pub fn start_proxy(&self) -> Result<(), String> {
+    pub async fn start_proxy(&self) -> Result<(), String> {
         if self.inner.proxy_addr.get().is_some() {
             return Ok(());
         }
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        // 必须直接在当前异步命令上下文创建 Tokio 监听器；同步命令线程没有 reactor，
+        // 调用 TcpListener::from_std 会 panic，并将 release 版进程直接中止。
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
             .map_err(|error| format!("启动远程连接代理失败：{}", error))?;
-        listener.set_nonblocking(true).map_err(|error| error.to_string())?;
         let address = listener.local_addr().map_err(|error| error.to_string())?;
-        let listener = tokio::net::TcpListener::from_std(listener).map_err(|error| error.to_string())?;
         let service = self.clone();
         // WebView2 页面与回环代理不同源，上传/长任务响应需要 CORS；回环地址不对外暴露。
         // 只接受本机 WebView 的来源：发布包为 tauri://localhost / http://tauri.localhost，
@@ -462,8 +463,19 @@ impl RemoteWorkspaceService {
         if let Some(agent) = headers.get(header::USER_AGENT) {
             builder = builder.header(header::USER_AGENT, agent);
         }
-        let (remote, _) = tokio_tungstenite::connect_async(builder.body(()).map_err(|error| error.to_string())?)
-            .await.map_err(|error| format!("远程 WebSocket 连接失败：{}", error))?;
+        let remote = tokio_tungstenite::connect_async(builder.body(()).map_err(|error| error.to_string())?)
+            .await.map_err(|error| format!("远程 WebSocket 连接失败：{}", error));
+        let (remote, _) = match remote {
+            Ok(remote) => remote,
+            Err(error) => {
+                let mut socket = socket;
+                let _ = socket.send(Message::Text(
+                    serde_json::json!({"type":"error","message":error}).to_string().into()
+                )).await;
+                let _ = socket.close().await;
+                return Ok(());
+            }
+        };
         let (mut local_sender, mut local_receiver) = socket.split();
         let (mut remote_sender, mut remote_receiver) = remote.split();
         loop {

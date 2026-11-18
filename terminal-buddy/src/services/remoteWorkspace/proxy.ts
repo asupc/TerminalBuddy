@@ -43,7 +43,11 @@ export async function subscribeRemoteTerminal(id: string, callback: (output: str
 
 function attach(id: string, connection: TerminalConnection): void {
   const socket = connection.socket;
-  socket.onopen = () => socket.send(JSON.stringify({ type: 'resize', rows: connection.rows, cols: connection.cols }));
+  socket.onopen = () => {
+    // 服务端 viewport 模式收到首条 resize 后才回放历史输出；
+    // 终端初始化时尺寸可能已被去重，连接建立时必须再声明一次当前尺寸。
+    socket.send(JSON.stringify({ type: 'resize', rows: connection.rows, cols: connection.cols }));
+  };
   socket.onmessage = event => {
     try {
       const message = JSON.parse(String(event.data)) as {

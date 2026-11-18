@@ -9,8 +9,8 @@ pub fn get_remote_workspace_state(service: State<'_, RemoteWorkspaceService>) ->
 }
 
 #[tauri::command]
-pub fn get_remote_workspace_proxy(service: State<'_, RemoteWorkspaceService>) -> Result<String, String> {
-    service.start_proxy()?;
+pub async fn get_remote_workspace_proxy(service: State<'_, RemoteWorkspaceService>) -> Result<String, String> {
+    service.start_proxy().await?;
     service.proxy_origin()
 }
 
