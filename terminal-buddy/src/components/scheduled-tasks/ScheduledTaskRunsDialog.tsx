@@ -113,23 +113,44 @@ export function ScheduledTaskRunsDialog({ task, onClose, onChanged }: ScheduledT
 
   return (
     <Dialog
-      title={<>运行记录 <span className="st-runs-subtitle">{task.name}</span></>}
+      title={(
+        <div className="st-dialog-title">
+          <History className="st-dialog-title-icon" aria-hidden="true" />
+          <span>运行记录</span>
+          <small>{task.name}</small>
+        </div>
+      )}
       onClose={onClose}
       className="st-runs-dialog"
       bodyClassName="st-runs-body"
       footer={(
         <div className="st-dialog-footer">
-          <span className="st-dialog-hint"><History aria-hidden="true" />每个任务保留最近 100 条记录。</span>
+          <span className="st-dialog-hint"><History aria-hidden="true" />每个任务自动保留最近 100 条运行记录</span>
           <button type="button" className="btn-secondary" onClick={onClose}>关闭</button>
         </div>
       )}
     >
-      <div className="st-runs-summary">
-        <span className="st-runs-summary-item"><b>{runs.length}</b> 次执行</span>
-        <span className="st-runs-summary-item"><b>{completed}</b> 成功</span>
-        <span className="st-runs-summary-item"><b>{failed}</b> 失败</span>
-        <span className="st-runs-summary-item">平均耗时 <b>{formatDuration(average)}</b></span>
-        <span className="st-runs-summary-item">累计 Token <b>{tokens.toLocaleString('zh-CN')}</b></span>
+      <div className="st-runs-kpi-row">
+        <div className="st-runs-kpi-tile">
+          <span>总执行次数</span>
+          <b>{runs.length}</b>
+        </div>
+        <div className="st-runs-kpi-tile">
+          <span>成功</span>
+          <b className="ok">{completed}</b>
+        </div>
+        <div className="st-runs-kpi-tile">
+          <span>失败 / 超时</span>
+          <b className={failed > 0 ? 'fail' : undefined}>{failed}</b>
+        </div>
+        <div className="st-runs-kpi-tile">
+          <span>平均耗时</span>
+          <b>{formatDuration(average)}</b>
+        </div>
+        <div className="st-runs-kpi-tile">
+          <span>累计 Token</span>
+          <b>{tokens.toLocaleString('zh-CN')}</b>
+        </div>
       </div>
 
       {error && <div className="st-error-banner" role="alert">{error}</div>}
@@ -138,63 +159,65 @@ export function ScheduledTaskRunsDialog({ task, onClose, onChanged }: ScheduledT
       ) : runs.length === 0 ? (
         <div className="st-runs-empty">还没有运行记录。可以点击任务卡片上的「立即运行」验证配置。</div>
       ) : (
-        <table className="st-run-table">
-          <thead>
-            <tr>
-              <th>开始时间</th>
-              <th>触发</th>
-              <th>状态</th>
-              <th>耗时</th>
-              <th>摘要 / 错误</th>
-              <th aria-label="操作" />
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map(run => {
-              const status = formatRunStatus(run.status);
-              const duration = run.finishedAt ? formatDuration(run.finishedAt - run.startedAt) : '—';
-              const active = isActiveRun(run);
-              return (
-                <tr key={run.id}>
-                  <td className="st-run-time">{formatRunTime(run.startedAt)}</td>
-                  <td className="st-run-trigger">{formatTrigger(run.trigger)}</td>
-                  <td>
-                    <span className={`st-status-pill ${status.tone}`}>
-                      {active ? <span className="st-pulse" aria-hidden="true" /> : null}
-                      {status.label}
-                    </span>
-                  </td>
-                  <td className="st-run-duration">{duration}</td>
-                  <td className={`st-run-message${run.status === 'failed' || run.status === 'timeout' ? ' fail' : ''}`}>
-                    {run.message || '—'}
-                    {runTokenTotal(run) > 0 && (
-                      <span className="st-run-tokens"> · {runTokenTotal(run).toLocaleString('zh-CN')} tokens</span>
-                    )}
-                  </td>
-                  <td className="st-run-action">
-                    {active && task.target.kind === 'agentPrompt' && (
-                      <button
-                        type="button"
-                        className="st-run-link danger"
-                        disabled={busyRun === run.id}
-                        onClick={() => void stopRun(run)}
-                      >
-                        {busyRun === run.id ? <LoaderCircle className="st-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
-                        停止
-                      </button>
-                    )}
-                    {run.sessionId && (
-                      <button type="button" className="st-run-link" onClick={() => void openSession(run)}>打开会话</button>
-                    )}
-                    {run.terminalId && (
-                      <button type="button" className="st-run-link" onClick={() => openTerminal(run)}>查看终端</button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="st-runs-table-wrap">
+          <table className="st-run-table">
+            <thead>
+              <tr>
+                <th>开始时间</th>
+                <th>触发方式</th>
+                <th>状态</th>
+                <th>耗时</th>
+                <th>执行摘要 / 错误信息</th>
+                <th style={{ textAlign: 'right' }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map(run => {
+                const status = formatRunStatus(run.status);
+                const duration = run.finishedAt ? formatDuration(run.finishedAt - run.startedAt) : '—';
+                const active = isActiveRun(run);
+                return (
+                  <tr key={run.id}>
+                    <td className="st-run-time">{formatRunTime(run.startedAt)}</td>
+                    <td className="st-run-trigger">{formatTrigger(run.trigger)}</td>
+                    <td>
+                      <span className={`st-status-pill ${status.tone}`}>
+                        {active ? <span className="st-pulse" aria-hidden="true" /> : null}
+                        {status.label}
+                      </span>
+                    </td>
+                    <td className="st-run-duration">{duration}</td>
+                    <td className={`st-run-message${run.status === 'failed' || run.status === 'timeout' ? ' fail' : ''}`}>
+                      {run.message || '—'}
+                      {runTokenTotal(run) > 0 && (
+                        <span className="st-run-tokens"> · {runTokenTotal(run).toLocaleString('zh-CN')} tokens</span>
+                      )}
+                    </td>
+                    <td className="st-run-action">
+                      {active && task.target.kind === 'agentPrompt' && (
+                        <button
+                          type="button"
+                          className="btn-danger-outline btn-sm st-run-btn"
+                          disabled={busyRun === run.id}
+                          onClick={() => void stopRun(run)}
+                        >
+                          {busyRun === run.id ? <LoaderCircle className="st-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
+                          停止
+                        </button>
+                      )}
+                      {run.sessionId && (
+                        <button type="button" className="btn-secondary btn-sm st-run-btn" onClick={() => void openSession(run)}>打开会话</button>
+                      )}
+                      {run.terminalId && (
+                        <button type="button" className="btn-secondary btn-sm st-run-btn" onClick={() => openTerminal(run)}>查看终端</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </Dialog>
   );

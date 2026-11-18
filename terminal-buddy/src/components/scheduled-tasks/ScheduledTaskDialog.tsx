@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  Activity,
   AlertTriangle,
+  Bell,
   Bot,
   CalendarClock,
-  Folder,
   Info,
   LoaderCircle,
+  PencilLine,
   Play,
-  Settings2,
+  Terminal,
 } from 'lucide-react';
 import { Dialog } from '../shared/Dialog';
 import { useAppStore } from '../../stores/appStore';
@@ -204,22 +206,23 @@ function Switch({ checked, onChange, label }: { checked: boolean; onChange: (che
   );
 }
 
-function Section({ icon, title, description, children }: {
+function Section({ icon, title, description, bodyClassName, children }: {
   icon: ReactNode;
   title: string;
   description?: string;
+  bodyClassName?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="st-form-section">
-      <div className="st-section-head">
-        <span className="st-section-icon" aria-hidden="true">{icon}</span>
-        <div className="st-section-text">
-          <div className="st-section-title">{title}</div>
-          {description && <div className="st-section-desc">{description}</div>}
+    <section className="st-form-box">
+      <div className="st-form-box-head">
+        <div className="st-form-box-title">
+          <span className="st-section-icon" aria-hidden="true">{icon}</span>
+          <span>{title}</span>
         </div>
+        {description && <span className="st-form-box-sub">{description}</span>}
       </div>
-      <div className="st-section-body">{children}</div>
+      <div className={bodyClassName ? `st-form-box-body ${bodyClassName}` : 'st-form-box-body'}>{children}</div>
     </section>
   );
 }
@@ -406,7 +409,7 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
 
   const previewBlock = scheduleMode !== 'once' && (
     <div className="st-preview-box">
-      <div className="st-preview-title"><CalendarClock aria-hidden="true" />接下来 5 次</div>
+      <div className="st-preview-title"><Activity aria-hidden="true" />未来 5 次预计触发时间</div>
       {previewError ? (
         <div className="st-preview-error"><AlertTriangle aria-hidden="true" />{previewError}</div>
       ) : previewTimes.length === 0 ? (
@@ -414,7 +417,9 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
       ) : (
         <div className="st-preview-times">
           {previewTimes.map((value, index) => (
-            <span key={`${value}-${index}`}>{formatInTimezone(value, timezone)}</span>
+            <span key={`${value}-${index}`} className={index === 0 ? 'first' : undefined}>
+              {formatInTimezone(value, timezone)}
+            </span>
           ))}
         </div>
       )}
@@ -435,8 +440,9 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
     <Dialog
       title={(
         <div className="st-dialog-title">
+          <CalendarClock className="st-dialog-title-icon" aria-hidden="true" />
           <span>{task ? '编辑定时任务' : '新建定时任务'}</span>
-          <small>保存后按计划自动执行</small>
+          <small>保存后立即纳入调度</small>
         </div>
       )}
       onClose={onClose}
@@ -452,7 +458,7 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
             <span className="st-dialog-hint-text">
               {targetKind === 'agent'
                 ? (nativeChatSessions
-                    ? '使用当前 Agent 基础启动命令；若需要确认，任务会停在等待确认。'
+                    ? '当前将按「原生会话」模式启动；若需要确认，任务会停在等待确认。'
                     : '到点创建终端运行 Agent，任务描述会自动输入；执行结束后终端保留。')
                 : '到点启动终端，不抢当前焦点。'}
             </span>
@@ -465,7 +471,7 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
               onClick={() => void submit(false)}
               disabled={saving !== null || scheduleBlocked}
             >
-              {saving === 'save' ? <LoaderCircle className="st-spin" aria-hidden="true" /> : null}保存
+              {saving === 'save' ? <LoaderCircle className="st-spin" aria-hidden="true" /> : null}保存并关闭
             </button>
             <button
               type="button"
@@ -483,135 +489,137 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
         <div className="st-error-banner" role="alert"><AlertTriangle aria-hidden="true" />{saveError}</div>
       )}
 
-      <Section icon={<Settings2 />} title="基本信息" description="名称、启用状态与运行通知">
-        <div className="st-field">
-          <label className="st-field-label" htmlFor="st-task-name">
-            <span className="st-label-text">任务名称<span className="st-required">*</span></span>
-            <span className="st-char-count">{name.length} / 40</span>
-          </label>
-          <input
-            id="st-task-name"
-            className="st-input"
-            value={name}
-            maxLength={40}
-            placeholder="例如：工作日晨间开发环境"
-            onChange={event => setName(event.target.value)}
-            autoFocus
-          />
-        </div>
-        <div className="st-switch-row">
-          <div>
-            <div className="st-switch-title">启用</div>
-            <div className="st-switch-desc">关闭后保留配置，但不会按计划执行。</div>
-          </div>
-          <Switch checked={enabled} onChange={setEnabled} label="启用任务" />
-        </div>
-        <div className="st-switch-row">
-          <div>
-            <div className="st-switch-title">运行通知</div>
-            <div className="st-switch-desc">完成、失败或等待确认时推送到 App 通知。</div>
-          </div>
-          <Switch checked={notify} onChange={setNotify} label="运行通知" />
-        </div>
-      </Section>
-
-      <Section
-        icon={<Bot />}
-        title="执行内容"
-        description={targetKind === 'agent' ? '到点由 Agent 执行任务描述' : '到点启动已配置的终端'}
-      >
-        <div className="st-seg st-seg-wide" role="tablist" aria-label="任务类型">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={targetKind === 'agent'}
-            className={`st-seg-btn${targetKind === 'agent' ? ' active' : ''}`}
-            onClick={() => setTargetKind('agent')}
-          ><Bot aria-hidden="true" />Agent 任务</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={targetKind === 'profile'}
-            className={`st-seg-btn${targetKind === 'profile' ? ' active' : ''}`}
-            onClick={() => setTargetKind('profile')}
-          ><Folder aria-hidden="true" />项目配置</button>
-        </div>
-
+      <Section icon={<PencilLine />} title="基础信息" description="命名与关联项目">
         <div className="st-field-row">
           <div className="st-field">
-            <label className="st-field-label" htmlFor="st-project">项目<span className="st-required">*</span></label>
+            <label className="st-field-label" htmlFor="st-task-name">
+              <span className="st-label-text">任务名称<span className="st-required">*</span></span>
+              <span className="st-char-count">{name.length} / 40</span>
+            </label>
+            <input
+              id="st-task-name"
+              className="st-input"
+              value={name}
+              maxLength={40}
+              placeholder="例如：工作日晨间开发环境"
+              onChange={event => setName(event.target.value)}
+              autoFocus
+            />
+          </div>
+          <div className="st-field">
+            <label className="st-field-label" htmlFor="st-project">
+              <span className="st-label-text">所属项目<span className="st-required">*</span></span>
+            </label>
             <select id="st-project" className="st-select" value={projectName} onChange={event => changeProject(event.target.value)}>
               {options.projects.length === 0 && <option value="">暂无已登记项目</option>}
               {options.projects.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}
             </select>
           </div>
-          {targetKind === 'profile' ? (
+        </div>
+      </Section>
+
+      <Section
+        icon={<Bot />}
+        title="执行目标"
+        description="支持启动项目终端或自动派发 Agent"
+      >
+        <div className="st-target-cards" role="tablist" aria-label="任务类型">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={targetKind === 'agent'}
+            className={`st-target-card${targetKind === 'agent' ? ' active' : ''}`}
+            onClick={() => setTargetKind('agent')}
+          >
+            <span className="st-target-card-ico" aria-hidden="true"><Bot /></span>
+            <span className="st-target-card-text">
+              <strong>AI Agent 任务</strong>
+              <span>按「新会话形态」以原生会话或终端接力执行 Prompt</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={targetKind === 'profile'}
+            className={`st-target-card${targetKind === 'profile' ? ' active' : ''}`}
+            onClick={() => setTargetKind('profile')}
+          >
+            <span className="st-target-card-ico" aria-hidden="true"><Terminal /></span>
+            <span className="st-target-card-text">
+              <strong>项目终端配置</strong>
+              <span>到点自动打开所选 Profile 终端，可选定时自动关闭</span>
+            </span>
+          </button>
+        </div>
+
+        {targetKind === 'profile' ? (
+          <div className="st-field-row">
             <div className="st-field">
-              <label className="st-field-label" htmlFor="st-profile">终端配置<span className="st-required">*</span></label>
+              <label className="st-field-label" htmlFor="st-profile">
+                <span className="st-label-text">终端配置 (Profile)<span className="st-required">*</span></span>
+              </label>
               <select id="st-profile" className="st-select" value={profileId} onChange={event => setProfileId(event.target.value)}>
                 {projectProfiles.length === 0 && <option value="">该项目下暂无配置</option>}
                 {projectProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
               </select>
             </div>
-          ) : (
             <div className="st-field">
-              <span className="st-field-label">Agent</span>
-              <div className="st-seg st-seg-block" role="group" aria-label="Agent">
-                {agentChoices.map(choice => (
-                  <button
-                    type="button"
-                    key={choice}
-                    className={`st-seg-btn${agent === choice ? ' active' : ''}`}
-                    onClick={() => changeAgent(choice)}
-                  >{choice === 'claude' ? 'Claude' : 'Codex'}</button>
+              <label className="st-field-label" htmlFor="st-auto-close">自动关闭终端</label>
+              <select
+                id="st-auto-close"
+                className="st-select"
+                value={autoCloseMinutes}
+                onChange={event => setAutoCloseMinutes(Number(event.target.value))}
+              >
+                {AUTO_CLOSE_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </div>
+              </select>
+              <div className="st-field-hint">到点创建终端标签，且不会切走当前页面。</div>
             </div>
-          )}
-        </div>
-
-        {targetKind === 'profile' ? (
-          <div className="st-field">
-            <label className="st-field-label" htmlFor="st-auto-close">自动关闭</label>
-            <select
-              id="st-auto-close"
-              className="st-select"
-              value={autoCloseMinutes}
-              onChange={event => setAutoCloseMinutes(Number(event.target.value))}
-            >
-              {AUTO_CLOSE_OPTIONS.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <div className="st-field-hint">到点创建终端标签，且不会切走当前页面。</div>
           </div>
         ) : (
           <>
-            <div className="st-field-row">
+            <div className="st-field-row st-agent-grid">
               <div className="st-field">
-                <label className="st-field-label" htmlFor="st-provider">供应商</label>
-                <select id="st-provider" className="st-select" value={providerId} onChange={event => changeProvider(event.target.value)}>
-                  {providers.length === 0 && <option value="">服务端默认配置</option>}
-                  {providers.map(item => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}{item.isDefault ? '（默认）' : ''}
-                    </option>
+                <span className="st-field-label">选择助手</span>
+                <div className="st-seg st-seg-block" role="group" aria-label="Agent">
+                  {agentChoices.map(choice => (
+                    <button
+                      type="button"
+                      key={choice}
+                      className={`st-seg-btn${agent === choice ? ' active' : ''}`}
+                      onClick={() => changeAgent(choice)}
+                    >{choice === 'claude' ? 'Claude Code' : 'Codex CLI'}</button>
                   ))}
-                </select>
+                </div>
               </div>
-              <div className="st-field">
-                <label className="st-field-label" htmlFor="st-model">模型</label>
-                <select id="st-model" className="st-select" value={model} onChange={event => setModel(event.target.value)}>
-                  {models.length === 0 && <option value="">服务端默认模型</option>}
-                  {models.map(item => (
-                    <option key={item.id || 'default'} value={item.id}>{item.label || item.id || '服务端默认模型'}</option>
-                  ))}
-                </select>
+              <div className="st-field-row st-field-row-tight">
+                <div className="st-field">
+                  <label className="st-field-label" htmlFor="st-provider">供应商</label>
+                  <select id="st-provider" className="st-select" value={providerId} onChange={event => changeProvider(event.target.value)}>
+                    {providers.length === 0 && <option value="">服务端默认配置</option>}
+                    {providers.map(item => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}{item.isDefault ? '（默认）' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="st-field">
+                  <label className="st-field-label" htmlFor="st-model">模型</label>
+                  <select id="st-model" className="st-select" value={model} onChange={event => setModel(event.target.value)}>
+                    {models.length === 0 && <option value="">服务端默认模型</option>}
+                    {models.map(item => (
+                      <option key={item.id || 'default'} value={item.id}>{item.label || item.id || '服务端默认模型'}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
             <div className="st-field">
               <label className="st-field-label" htmlFor="st-prompt">
-                <span className="st-label-text">任务描述<span className="st-required">*</span></span>
+                <span className="st-label-text">任务描述（Prompt）<span className="st-required">*</span></span>
                 <span className="st-char-count">{prompt.length} / 8000</span>
               </label>
               <textarea
@@ -623,41 +631,16 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
                 onChange={event => setPrompt(event.target.value)}
               />
             </div>
-            <div className="st-field st-timeout-field">
-              <label className="st-field-label" htmlFor="st-timeout">
-                <span className="st-label-text">超时<span className="st-optional">可选</span></span>
-              </label>
-              <div className="st-input-with-suffix st-input-narrow">
-                <input
-                  id="st-timeout"
-                  className="st-input"
-                  type="number"
-                  min={1}
-                  max={240}
-                  inputMode="numeric"
-                  placeholder="30"
-                  value={timeoutMinutes ?? ''}
-                  onChange={event => {
-                    const raw = event.target.value.trim();
-                    if (!raw) { setTimeoutMinutes(null); return; }
-                    const value = Number(raw);
-                    setTimeoutMinutes(Number.isFinite(value) ? value : null);
-                  }}
-                />
-                <span className="st-input-suffix">分钟</span>
-              </div>
-              <div className="st-field-hint">留空使用默认 30 分钟；仅 Agent 任务生效，超时会停止执行并记为超时。</div>
-            </div>
           </>
         )}
       </Section>
 
-      <Section icon={<CalendarClock />} title="触发时间" description="按 Cron 或指定时间执行">
+      <Section icon={<CalendarClock />} title="触发计划与时区" description="支持标准 5 段 Cron 与单次定时">
         <div className="st-chips" role="tablist" aria-label="触发方式">
           {([
             ['daily', '每天'],
             ['weekdays', '工作日'],
-            ['weekly', '每周'],
+            ['weekly', '按星期'],
             ['hourly', '每小时'],
             ['custom', '自定义 Cron'],
             ['once', '仅一次'],
@@ -715,7 +698,7 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
             </div>
           ) : (
             <div className="st-field st-field-time">
-              <label className="st-field-label" htmlFor="st-time">时间</label>
+              <label className="st-field-label" htmlFor="st-time">触发时间</label>
               <input
                 id="st-time"
                 className="st-input"
@@ -726,7 +709,7 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
             </div>
           )}
           <div className="st-field st-field-tz">
-            <label className="st-field-label" htmlFor="st-timezone">时区</label>
+            <label className="st-field-label" htmlFor="st-timezone">调度时区 (IANA)</label>
             <select id="st-timezone" className="st-select" value={timezone} onChange={event => setTimezone(event.target.value)}>
               {zones.map(zone => <option key={zone} value={zone}>{zone}</option>)}
             </select>
@@ -751,6 +734,56 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
         {scheduleMode === 'once'
           ? <div className="st-field-hint">按所选时区的本地时间执行一次；执行后任务自动停用。</div>
           : previewBlock}
+      </Section>
+
+      <Section icon={<Bell />} title="执行控制与通知" bodyClassName="compact">
+        <div className="st-control-rows">
+          <div className="st-switch-row">
+            <div>
+              <div className="st-switch-title">启用该任务</div>
+              <div className="st-switch-desc">暂停后不再按计划触发，仍可手动「立即运行」。</div>
+            </div>
+            <Switch checked={enabled} onChange={setEnabled} label="启用任务" />
+          </div>
+          <div className="st-switch-row">
+            <div>
+              <div className="st-switch-title">执行完成或失败时发送通知</div>
+              <div className="st-switch-desc">完成、失败或等待确认时推送到 App 与系统通知。</div>
+            </div>
+            <Switch checked={notify} onChange={setNotify} label="运行通知" />
+          </div>
+          {targetKind === 'agent' && (
+            <div className="st-switch-row">
+              <div>
+                <div className="st-switch-title">
+                  单次执行超时
+                  <span className="st-optional">可选</span>
+                </div>
+                <div className="st-switch-desc">覆盖默认 30 分钟限制（1–240 分钟），超时会自动停止并记为超时。</div>
+              </div>
+              <div className="st-input-with-suffix st-input-narrow">
+                <input
+                  id="st-timeout"
+                  className="st-input"
+                  type="number"
+                  min={1}
+                  max={240}
+                  inputMode="numeric"
+                  placeholder="30"
+                  aria-label="单次执行超时（分钟）"
+                  value={timeoutMinutes ?? ''}
+                  onChange={event => {
+                    const raw = event.target.value.trim();
+                    if (!raw) { setTimeoutMinutes(null); return; }
+                    const value = Number(raw);
+                    setTimeoutMinutes(Number.isFinite(value) ? value : null);
+                  }}
+                />
+                <span className="st-input-suffix">分钟</span>
+              </div>
+            </div>
+          )}
+        </div>
       </Section>
     </Dialog>
   );

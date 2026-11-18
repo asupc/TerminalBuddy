@@ -11,8 +11,17 @@
   color: var(--text-secondary);
 }
 
-.scheduled-status-entry.active .scheduled-status-next {
+.scheduled-status-entry.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--text-primary);
+}
+
+.scheduled-status-entry.active .app-statusbar-icon {
+  color: var(--accent);
+}
+
+.scheduled-status-entry.active .scheduled-status-next {
+  color: var(--accent);
 }
 
 /* 运行中用强调色脉冲点；等待确认用警示色常亮点，两者优先级：运行中 > 等待确认。 */
