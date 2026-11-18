@@ -1,5 +1,6 @@
 import { FC, useState, useEffect, useCallback } from 'react';
 import QRCode from 'qrcode';
+import { Check, Copy, Globe2, QrCode } from 'lucide-react';
 import {
   getWebApiStatus,
   saveWebApiSettings,
@@ -313,138 +314,242 @@ export const WebManageSettings: FC = () => {
 
   return (
     <div className="web-manage-settings">
-          <div className="web-dialog-intro">
-            <p className="web-dialog-desc">{browserClient
-              ? '在浏览器打开服务地址即可进入与桌面端一致的完整界面（手机浏览器同样进入完整界面），使用相同密码登录'
-              : '启用后可通过浏览器远程访问终端'}</p>
+      <div className="web-manage-grid">
+        {/* 左栏：服务参数与会话策略 */}
+        <div className="settings-card-group web-manage-card">
+          <div className="card-group-header">
+            <span className="card-group-title">
+              <Globe2 size={14} aria-hidden="true" />
+              服务参数与会话策略
+            </span>
+            <span className={`s-status-chip ${serverRunning ? 'ok' : 'muted'}`}>
+              {serverRunning ? `运行中 · ${displayedServerAddress}` : '服务未启动'}
+            </span>
           </div>
 
-          {!browserClient && <>
-          <div className="web-field web-field-inline">
-            <label className="web-label" htmlFor="web-api-port">端口</label>
-            <input
-              id="web-api-port"
-              className="web-input"
-              type="number"
-              value={port}
-              min={1024}
-              max={65535}
-              onChange={(e) => setPort(parseInt(e.target.value) || 9600)}
-            />
-          </div>
-
-          <div className="web-field web-field-inline">
-            <label className="web-label" htmlFor="web-api-username">用户名</label>
-            <input
-              id="web-api-username"
-              className="web-input"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </div>
-
-          <div className="web-field web-field-inline">
-            <label className="web-label" htmlFor="web-api-password">密码</label>
-            <input
-              id="web-api-password"
-              className="web-input"
-              type="password"
-              value={webPassword}
-              placeholder={hasPassword ? '已设置，留空不修改' : '请输入密码'}
-              onChange={(e) => setWebPassword(e.target.value)}
-            />
-          </div>
-          </>}
-
-          {serverRunning && (
-            <div className="web-field web-field-inline">
-              <label className="web-label" htmlFor="web-api-custom-endpoint">自定义 Host</label>
-              <input
-                id="web-api-custom-endpoint"
-                className="web-input"
-                type="text"
-                value={customEndpointDraft}
-                placeholder="地址:端口，留空使用自动地址"
-                autoCapitalize="none"
-                spellCheck={false}
-                aria-invalid={Boolean(customEndpointError)}
-                aria-describedby={customEndpointError ? 'web-api-custom-endpoint-error' : undefined}
-                onChange={(event) => {
-                  setCustomEndpointDraft(event.target.value);
-                  if (customEndpointError) setCustomEndpointError(getCustomEndpointInputError(event.target.value));
-                }}
-                onBlur={handleCustomEndpointBlur}
-              />
-              {customEndpointError && (
-                <div id="web-api-custom-endpoint-error" className="web-field-error" role="alert">
-                  {customEndpointError}
-                </div>
-              )}
+          {browserClient ? (
+            <div className="settings-row">
+              <div className="settings-row-info">
+                <div className="settings-row-title">浏览器访问说明</div>
+                <p className="settings-row-desc">
+                  在浏览器打开服务地址即可进入与桌面端一致的完整界面（手机浏览器同样进入完整界面），使用相同密码登录。
+                </p>
+              </div>
             </div>
+          ) : (
+            <>
+              <div className="settings-row">
+                <div className="settings-row-info">
+                  <label className="settings-row-title" htmlFor="web-api-port">监听端口</label>
+                  <p className="settings-row-desc">HTTP / WebSocket 服务绑定端口</p>
+                </div>
+                <div className="settings-row-ctrl">
+                  <input
+                    id="web-api-port"
+                    className="tb-input mono"
+                    type="number"
+                    value={port}
+                    min={1024}
+                    max={65535}
+                    style={{ width: 112 }}
+                    onChange={(e) => setPort(parseInt(e.target.value, 10) || 9600)}
+                  />
+                </div>
+              </div>
+
+              <div className="settings-row">
+                <div className="settings-row-info">
+                  <label className="settings-row-title" htmlFor="web-api-username">登录账号</label>
+                  <p className="settings-row-desc">Web 与 App 登录用户名</p>
+                </div>
+                <div className="settings-row-ctrl">
+                  <input
+                    id="web-api-username"
+                    className="tb-input"
+                    type="text"
+                    value={username}
+                    style={{ width: 184 }}
+                    onChange={(e) => setUsername(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="settings-row">
+                <div className="settings-row-info">
+                  <label className="settings-row-title" htmlFor="web-api-password">访问密码</label>
+                  <p className="settings-row-desc">
+                    {hasPassword ? '已设置（留空不修改，bcrypt 加密保存）' : '首次启动前请先设置访问密码'}
+                  </p>
+                </div>
+                <div className="settings-row-ctrl">
+                  <input
+                    id="web-api-password"
+                    className="tb-input"
+                    type="password"
+                    value={webPassword}
+                    placeholder={hasPassword ? '留空保持当前密码' : '请输入密码'}
+                    style={{ width: 184 }}
+                    onChange={(e) => setWebPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
           )}
 
-          <div className="web-field web-field-inline web-share-row">
-            <span className="web-label" id="web-api-share-sessions-label">共享桌面会话</span>
-            <label className="settings-toggle" htmlFor="web-api-share-sessions">
-              <input
-                id="web-api-share-sessions"
-                type="checkbox"
-                aria-labelledby="web-api-share-sessions-label"
-                checked={shareSessions}
-                disabled={shareBusy}
-                onChange={(e) => { void handleToggleShare(e.target.checked); }}
-              />
-              <span>开启后，手机与网页端可查看并接管桌面端创建的终端（接管不能关闭桌面会话，关闭共享立即断开在飞连接）</span>
-            </label>
-          </div>
-
-          <div className="web-status-row">
-            <span className={`web-status-dot ${serverRunning ? 'on' : 'off'}`} />
-            <span className="web-status-text">{displayedServerAddress}</span>
-          </div>
-
-          {serverError && <div className="web-error">{serverError}</div>}
-
-          {!serverRunning && !browserClient ? (
-            <button className="web-btn primary" onClick={handleToggleServer} disabled={serverLoading}>
-              {serverLoading ? '处理中…' : '启动服务'}
-            </button>
-          ) : serverRunning ? (
-            <>
-              {!browserClient && <button className="web-btn danger" onClick={handleToggleServer} disabled={serverLoading}>
-                {serverLoading ? '处理中…' : '停止服务'}
-              </button>}
-
-              <div className="web-access">
-                <div className="web-access-title">扫码或点击下方链接免密访问</div>
-                {qrDataUrl && (
-                  <div className="web-qr-wrap">
-                    <img className="web-qr" src={qrDataUrl} alt="访问二维码" />
-                  </div>
-                )}
-                {quickUrl && (
-                  <div className="web-link-row">
-                    <a
-                      className="web-link"
-                      href={quickUrl}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        void openUrl(quickUrl);
-                      }}
-                      rel="noopener noreferrer"
-                      title={quickUrl}
-                    >
-                      {quickUrl}
-                    </a>
-                    <button className="web-copy-btn" onClick={handleCopy}>
-                      {copied ? '已复制' : '复制'}
-                    </button>
+          {serverRunning && (
+            <div className="settings-row settings-row--wrap-ctrl">
+              <div className="settings-row-info">
+                <label className="settings-row-title" htmlFor="web-api-custom-endpoint">自定义访问地址</label>
+                <p className="settings-row-desc">适用于反代、域名或端口转发，格式为「地址:端口」，留空使用局域网自动地址</p>
+                {customEndpointError && (
+                  <div id="web-api-custom-endpoint-error" className="web-field-error" role="alert">
+                    {customEndpointError}
                   </div>
                 )}
               </div>
-            </>
-          ) : null}
+              <div className="settings-row-ctrl" style={{ width: 200 }}>
+                <input
+                  id="web-api-custom-endpoint"
+                  className="tb-input mono"
+                  type="text"
+                  value={customEndpointDraft}
+                  placeholder="例: 192.168.1.10:9600"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  aria-invalid={Boolean(customEndpointError)}
+                  aria-describedby={customEndpointError ? 'web-api-custom-endpoint-error' : undefined}
+                  onChange={(event) => {
+                    setCustomEndpointDraft(event.target.value);
+                    if (customEndpointError) setCustomEndpointError(getCustomEndpointInputError(event.target.value));
+                  }}
+                  onBlur={handleCustomEndpointBlur}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="settings-row">
+            <div className="settings-row-info">
+              <div className="settings-row-title" id="web-api-share-sessions-label">与桌面共享终端会话</div>
+              <p className="settings-row-desc">
+                开启后，手机与网页端可查看并接管桌面端创建的终端（永远不能关闭桌面会话；关闭共享立即断开在途连接）
+              </p>
+            </div>
+            <div className="settings-row-ctrl">
+              <label className="settings-toggle" htmlFor="web-api-share-sessions">
+                <input
+                  id="web-api-share-sessions"
+                  type="checkbox"
+                  aria-labelledby="web-api-share-sessions-label"
+                  checked={shareSessions}
+                  disabled={shareBusy}
+                  onChange={(e) => { void handleToggleShare(e.target.checked); }}
+                />
+                <span className="settings-sr-only">与桌面共享终端会话</span>
+              </label>
+            </div>
+          </div>
+
+          {!browserClient && (
+            <div className="card-group-footer web-manage-footer">
+              <div className="web-manage-footer-msg">
+                {serverError ? (
+                  <span className="web-error" role="alert">{serverError}</span>
+                ) : (
+                  <span className="settings-row-desc">修改端口、账号或密码后需重新启动服务生效</span>
+                )}
+              </div>
+              <div className="web-manage-footer-actions">
+                {serverRunning ? (
+                  <button
+                    type="button"
+                    className="btn-danger-outline"
+                    onClick={handleToggleServer}
+                    disabled={serverLoading}
+                  >
+                    {serverLoading ? '处理中…' : '停止服务'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleToggleServer}
+                    disabled={serverLoading}
+                  >
+                    {serverLoading ? '处理中…' : '启动服务'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 右栏：手机 / 浏览器扫码直连 */}
+        <div className="settings-card-group web-manage-card">
+          <div className="card-group-header">
+            <span className="card-group-title">
+              <QrCode size={14} aria-hidden="true" />
+              手机 / 浏览器扫码直连
+            </span>
+            <span className="card-group-extra">JWT 30 天免密</span>
+          </div>
+
+          {serverRunning ? (
+            <div className="web-qr-card-body">
+              {qrDataUrl && (
+                <div className="web-qr-box">
+                  <img className="web-qr" src={qrDataUrl} alt="访问二维码" />
+                </div>
+              )}
+              {quickUrl && (
+                <>
+                  <div className="web-quick-link-bar">
+                    <input
+                      type="text"
+                      className="tb-input mono"
+                      readOnly
+                      value={quickUrl}
+                      title={quickUrl}
+                      aria-label="免密访问地址"
+                      onClick={(e) => e.currentTarget.select()}
+                    />
+                    <button type="button" className="btn-secondary" onClick={handleCopy}>
+                      {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                      {copied ? '已复制' : '复制'}
+                    </button>
+                  </div>
+                  <a
+                    className="web-link-open"
+                    href={quickUrl}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      void openUrl(quickUrl);
+                    }}
+                    rel="noopener noreferrer"
+                  >
+                    在系统浏览器中打开直连地址 ↗
+                  </a>
+                </>
+              )}
+              <p className="settings-row-desc">
+                打开链接即自动登录并清理 URL 查询参数，电脑与手机浏览器通用完整界面
+              </p>
+            </div>
+          ) : (
+            <div className="web-qr-empty">
+              <div className="web-qr-empty-icon" aria-hidden="true">
+                <QrCode size={28} />
+              </div>
+              <strong>Web 服务当前未启动</strong>
+              <p className="settings-row-desc">
+                {browserClient
+                  ? '暂无可展示的局域网直连地址'
+                  : '在左侧设置密码并启动服务后，将在此生成扫码直连二维码与免密地址'}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
