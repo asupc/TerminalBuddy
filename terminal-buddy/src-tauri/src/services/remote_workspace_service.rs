@@ -421,7 +421,8 @@ impl RemoteWorkspaceService {
             .timeout(REQUEST_TIMEOUT)
             .body(bytes);
         for name in [header::ACCEPT, header::CONTENT_TYPE] {
-            if let Some(value) = parts.headers.get(name) {
+            // HeaderName 不实现 Copy，查询用引用，转发时再移入 header()。
+            if let Some(value) = parts.headers.get(&name) {
                 outgoing = outgoing.header(name, value);
             }
         }
@@ -433,7 +434,7 @@ impl RemoteWorkspaceService {
         let headers = response.headers().clone();
         let mut builder = Response::builder().status(status);
         for name in [header::CONTENT_TYPE, header::CONTENT_DISPOSITION, header::CACHE_CONTROL] {
-            if let Some(value) = headers.get(name) {
+            if let Some(value) = headers.get(&name) {
                 builder = builder.header(name, value);
             }
         }
