@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 
 /** 终端 Agent 接力的对外协议（与后端 `services/terminal_agent_relay.rs` 对应）。 */
 export interface MirrorStatus {

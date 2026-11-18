@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { listen } from '@tauri-apps/api/event';
+import { listen } from './../../services/remoteWorkspace/events';
 import { Play, RefreshCw, Star, X } from 'lucide-react';
 import { AgentIcon } from '../agent-chat/AgentIcon';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';

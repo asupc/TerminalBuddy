@@ -3,8 +3,8 @@ import { useAgentTabStatusSync } from './hooks/useAgentTabStatusSync';
 import { useAgentSessionCreatedSync } from './hooks/useAgentSessionCreatedSync';
 import { useDesktopOpenSessionSync } from './hooks/useDesktopOpenSessionSync';
 ﻿import { lazy, Suspense, useEffect, useState, useCallback, useRef } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from './services/remoteWorkspace/window';
+import { listen } from './services/remoteWorkspace/events';
 import { TitleBar } from "./components/shell/TitleBar";
 import { AppStatusBar } from "./components/shell/AppStatusBar";
 import { ConfigNav } from "./components/profile-config/ConfigNav";
@@ -33,7 +33,7 @@ import { initializeClaudeNotificationActions } from './services/claudeNotificati
 import { initAppHotkeys, registerHotkeyAction } from './services/hotkeys';
 import { restoreTabs, launchTerminalSession, reconcileBackendSessions, markStartupRestoreComplete, scheduleBrowserResync, restoreAgentChatTabs } from './services/sessionRestore';
 import { useExitConfirm } from './hooks/useExitConfirm';
-import { clientTerminalOwner, isBrowserClient } from './services/platform';
+import { clientTerminalOwner, isBrowserClient, isWebBackend } from './services/platform';
 
 const SettingsPage = lazy(() => import('./components/settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
 
@@ -491,11 +491,11 @@ function App() {
     const unlistenDirectory = listen<{ terminalId: string; directory: string }>('session-directory-changed', (event) => {
       useAppStore.getState().setSessionDirectory(event.payload.terminalId, event.payload.directory, { skipRemoteSync: true });
     });
-    const unlistenResync = isBrowserClient()
+    const unlistenResync = isWebBackend()
       ? listen('web-resync', () => { scheduleBrowserResync(); })
       : Promise.resolve(() => {});
     // 事件连接（重新）建立只可能发生在页面加载或容器重启后：此时才允许按保存的页签恢复。
-    const unlistenConnected = isBrowserClient()
+    const unlistenConnected = isWebBackend()
       ? listen('web-connected', () => { scheduleBrowserResync({ allowRestore: true }); })
       : Promise.resolve(() => {});
 

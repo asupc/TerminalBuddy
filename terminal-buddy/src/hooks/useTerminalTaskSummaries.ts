@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '../services/remoteWorkspace/window';
 import { useAppStore } from '../stores/appStore';
 import { isBrowserClient } from '../services/platform';
 import { refreshTaskSummaries, terminalDisplayTitle, useTaskSummaryStore } from '../stores/taskSummaryStore';

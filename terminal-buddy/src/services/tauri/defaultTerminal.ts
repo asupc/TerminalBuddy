@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 
 // 默认终端（实验）：Windows Delegation/Handoff 机制的注册与状态查询。
 

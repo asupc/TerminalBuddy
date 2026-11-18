@@ -5,6 +5,7 @@ import {
   Bell,
   Check,
   Columns2,
+  Cloud,
   Flower2,
   Folder,
   Grid2X2,
@@ -337,6 +338,13 @@ export const TitleBar: FC<TitleBarProps> = ({
       </div>
       <div className="titlebar-right">
         <div className="titlebar-action-group">
+          {!isBrowserClient() && <button
+            type="button"
+            className="titlebar-btn titlebar-action-btn"
+            title="连接远程 TerminalBuddy 服务或切换本机工作区"
+            aria-label="工作区连接"
+            onClick={() => window.dispatchEvent(new Event('terminal-buddy-open-workspace'))}
+          ><Cloud aria-hidden="true" /></button>}
           <div
             className="ai-usage-trigger"
             onMouseEnter={handleRefreshEnter}

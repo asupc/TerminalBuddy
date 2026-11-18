@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../services/remoteWorkspace/core';
 import { applyTerminalEvent } from '../services/claudeNotification';
 import type { ClaudeHookTerminalEvent } from '../services/tauri/claudeHook';
 

@@ -1,5 +1,5 @@
 import { FC, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { listen } from './../../services/remoteWorkspace/events';
 import {
   Archive,
   ArchiveRestore,

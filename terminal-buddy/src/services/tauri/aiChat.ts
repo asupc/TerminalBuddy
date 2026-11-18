@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 
 /** 原生 AI 会话：与后端 `models/ai_chat.rs` 对应（camelCase 序列化）。 */
 /** 会话消息里的图片附件：服务端已落盘，客户端只拿路径与元数据。 */

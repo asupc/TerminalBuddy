@@ -1,3 +1,4 @@
+// 窗口控制始终属于本机外壳，远程工作区也不能把它转发到服务器。
 import { invoke } from '@tauri-apps/api/core';
 
 // Window Commands (bypass ACL bug)

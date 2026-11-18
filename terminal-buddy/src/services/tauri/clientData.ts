@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 
 // Client Data Commands
 export async function readClientData(key: string): Promise<string | null> {

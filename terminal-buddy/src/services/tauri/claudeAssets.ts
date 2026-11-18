@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 
 export type ClaudeAssetKind = 'skills' | 'agents' | 'commands';
 export type AssetScope = 'user' | 'project';

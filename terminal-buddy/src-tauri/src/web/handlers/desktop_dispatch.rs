@@ -1,6 +1,6 @@
 // 显式白名单：仅向已认证的个人服务账号开放下列业务命令。
 use super::{argument, data, result};
-use crate::{runtime::{AppHandle, Manager}, web::error::ApiError};
+use crate::{commands::TerminalService, runtime::{AppHandle, Manager}, web::error::ApiError};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -13,6 +13,22 @@ async fn run<T: Serialize + Send + 'static>(job: impl FnOnce() -> Result<T, Stri
 
 pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -> Result<Value, ApiError> {
     match command {
+        // 远程桌面工作区复用浏览器业务端口；窗口控制、剪贴板等本机能力不走这里。
+        // 权限必须显式按 Web 身份判定，不能复用桌面命令里的 Pc 分支。
+        "report_session_directory" => {
+            let terminal_id: String = argument(&args, "id")?;
+            let directory: String = argument(&args, "directory")?;
+            let terminal_service = app.state::<TerminalService>();
+            terminal_service.set_session_directory(&app, &terminal_id, &directory, crate::models::TerminalActor::Web)
+                .map_err(ApiError::BadRequest).and_then(|_| data(()))
+        }
+        "update_terminal_display_name" => {
+            let terminal_id: String = argument(&args, "id")?;
+            let display_name: String = argument(&args, "displayName")?;
+            app.state::<TerminalService>()
+                .update_terminal_display_name(&terminal_id, &display_name, crate::models::TerminalActor::Web)
+                .map_err(ApiError::BadRequest).and_then(|_| data(()))
+        }
         // 原生 AI 会话：owner 取登录账号，项目范围在创建与发送时把关。
         "ai_session_list" => {
             let owner = owner.to_string();

@@ -1,5 +1,5 @@
 import { FC, useEffect, useState } from 'react';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc } from './../../services/remoteWorkspace/core';
 import { saveClipboardImageToClaudeCache } from '../../services/tauri';
 import { Dialog } from '../shared/Dialog';
 import './PasteImageDialog.css';

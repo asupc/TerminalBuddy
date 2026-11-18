@@ -1,4 +1,4 @@
-import { defaultShellType, serverUsesWindowsPaths, isBrowserClient } from '../../services/platform';
+import { defaultShellType, serverUsesWindowsPaths, isBrowserClient, isWebBackend } from '../../services/platform';
 import { FC, useState, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useForm } from 'react-hook-form';
@@ -285,7 +285,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
               <option value="ssh">SSH</option>
               <option value="docker">Docker</option>
               <option value="k8s">Kubernetes</option>
-              {!isBrowserClient() && <option value="mstsc">远程桌面 (RDP)</option>}
+              {!isWebBackend() && <option value="mstsc">远程桌面 (RDP)</option>}
             </select>
           </div>
 

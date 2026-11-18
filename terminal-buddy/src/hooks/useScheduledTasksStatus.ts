@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { UnlistenFn } from './../services/remoteWorkspace/events';
 import { listenTauri, scheduledTaskList } from '../services/tauri';
 import {
   SCHEDULED_TASK_RUN_EVENT,

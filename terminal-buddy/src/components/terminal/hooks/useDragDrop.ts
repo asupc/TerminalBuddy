@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { UnlistenFn } from '../../../services/remoteWorkspace/events';
 import { useAppStore } from '../../../stores/appStore';
-import { isBrowserClient } from '../../../services/platform';
+import { isBrowserClient, isRemoteWorkspace } from '../../../services/platform';
 import { uploadFiles } from '../../../services/browser/connection';
 
 export interface UseDragDropOptions {
@@ -42,7 +41,7 @@ export function useDragDrop(opts: UseDragDropOptions) {
     let unlisten: UnlistenFn | undefined;
     let cancelled = false;
 
-    getCurrentWebview().onDragDropEvent((event) => {
+    void import('../../../services/remoteWorkspace/nativeWebview').then(({ getCurrentWebview }) => getCurrentWebview().onDragDropEvent((event) => {
       if (cancelled) return;
       if (event.payload.type === 'enter') {
         if (optsRef.current.isActiveRef.current) setDragOver(true);
@@ -53,16 +52,27 @@ export function useDragDrop(opts: UseDragDropOptions) {
         if (!optsRef.current.isActiveRef.current || optsRef.current.readOnly) return;
         const paths = event.payload.paths;
         if (paths && paths.length > 0) {
-          optsRef.current.onDrop(paths.join(' '));
+          if (isRemoteWorkspace()) {
+            // 本机文件先经桌面代理上传到远程服务，再把服务器路径输入终端。
+            void import('../../../services/remoteWorkspace/native').then(({ uploadRemoteWorkspaceFiles }) =>
+              uploadRemoteWorkspaceFiles(paths),
+            ).then(remotePaths => {
+              optsRef.current.onDrop(remotePaths.join(' '));
+            }).catch(error => useAppStore.getState().showToast(
+              error instanceof Error ? error.message : String(error), 'error',
+            ));
+          } else {
+            optsRef.current.onDrop(paths.join(' '));
+          }
         }
       } else {
         // 'leave' / cancel
         setDragOver(false);
       }
-    }).then(fn => {
+    })).then(fn => {
       if (cancelled) { fn(); return; }
       unlisten = fn;
-    });
+    }).catch(error => console.error('注册原生拖放失败:', error));
 
     return () => {
       cancelled = true;

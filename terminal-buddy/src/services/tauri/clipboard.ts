@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 
 // Clipboard Commands
 export async function readClipboardFilePaths(): Promise<string[]> {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { UnlistenFn } from './../../services/remoteWorkspace/events';
 import { History, LoaderCircle, Square } from 'lucide-react';
 import { Dialog } from '../shared/Dialog';
 import { useAppStore } from '../../stores/appStore';

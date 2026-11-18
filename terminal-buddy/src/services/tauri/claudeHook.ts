@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import { invoke } from './../remoteWorkspace/core';
+import type { UnlistenFn } from './../remoteWorkspace/events';
 import { listenTauri } from './events';
 
 export interface ClaudeHookOption {

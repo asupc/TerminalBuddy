@@ -1,4 +1,4 @@
-﻿import { FC, useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react';
+import { FC, useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { X } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -10,7 +10,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../../services/tauri';
 import { defaultShellType, isBrowserClient } from '../../services/platform';
 import { ServerMonitor } from '../shared/ServerMonitor';
-import { listen } from '@tauri-apps/api/event';
+import { listen } from './../../services/remoteWorkspace/events';
 import { getAppSettings, matchesHotkey } from '../../utils/settings';
 import { getHotkey, isAppHotkeyEvent } from '../../services/hotkeys';
 import { getAllSuggestions, getTerminalSuggestions } from '../../data/commandTemplates';

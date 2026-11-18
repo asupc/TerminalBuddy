@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 
 // System Commands
 let _windowsBuildNumber: number | null | undefined = undefined;

@@ -140,7 +140,7 @@ export async function fetchZhipuUsage(apiKey: string): Promise<AiUsageData> {
 
 export async function fetchQianfanUsage(cookie: string): Promise<AiUsageData> {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const { invoke } = await import('./remoteWorkspace/core');
     const result = await invoke<{
       success: boolean;
       tiers: Array<{ name: string; utilization: number; resets_at: string | null }>;
@@ -159,7 +159,7 @@ export async function fetchQianfanUsage(cookie: string): Promise<AiUsageData> {
 
 export async function fetchDeepseekUsage(apiKey: string): Promise<DeepseekUsageData> {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const { invoke } = await import('./remoteWorkspace/core');
     return await invoke<DeepseekUsageData>('fetch_deepseek_usage', { apiKey });
   } catch (e) {
     return {
@@ -177,7 +177,7 @@ export async function fetchDeepseekUsage(apiKey: string): Promise<DeepseekUsageD
 
 export async function fetchMinimaxUsage(apiKey: string): Promise<AiUsageData> {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const { invoke } = await import('./remoteWorkspace/core');
     const result = await invoke<{
       success: boolean;
       tiers: Array<{ name: string; utilization: number; resets_at: string | null }>;
@@ -196,7 +196,7 @@ export async function fetchMinimaxUsage(apiKey: string): Promise<AiUsageData> {
 
 export async function fetchArkUsage(cookie: string): Promise<AiUsageData> {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const { invoke } = await import('./remoteWorkspace/core');
     const result = await invoke<{
       success: boolean;
       tiers: Array<{ name: string; utilization: number; resets_at: string | null }>;
