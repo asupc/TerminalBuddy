@@ -30,9 +30,13 @@ pub async fn authenticate_remote_workspace(
     service.authenticate(input).await
 }
 
+/// 进入远程工作区并校验令牌；`id` 为空时进入当前选中的连接，否则先切换再校验。
 #[tauri::command]
-pub async fn activate_remote_workspace(service: State<'_, RemoteWorkspaceService>) -> Result<RemoteWorkspaceState, String> {
-    service.activate().await
+pub async fn activate_remote_workspace(
+    id: Option<String>,
+    service: State<'_, RemoteWorkspaceService>,
+) -> Result<RemoteWorkspaceState, String> {
+    service.activate(id).await
 }
 
 #[tauri::command]
@@ -43,6 +47,15 @@ pub fn set_remote_workspace_active(active: bool, service: State<'_, RemoteWorksp
 #[tauri::command]
 pub fn disconnect_remote_workspace(service: State<'_, RemoteWorkspaceService>) -> Result<(), String> {
     service.disconnect()
+}
+
+/// 从列表删除一个已保存的远程连接。
+#[tauri::command]
+pub fn remove_remote_workspace_connection(
+    id: String,
+    service: State<'_, RemoteWorkspaceService>,
+) -> Result<RemoteWorkspaceState, String> {
+    service.remove(&id)
 }
 
 #[tauri::command]

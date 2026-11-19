@@ -14,8 +14,9 @@ export async function initializeWorkspace(): Promise<RemoteWorkspaceState> {
   const state = await native.getRemoteWorkspaceState();
   if (!state.active || !state.connection) return state;
 
+  let activated: RemoteWorkspaceState;
   try {
-    await native.nativeInvoke('activate_remote_workspace');
+    activated = await native.nativeInvoke<RemoteWorkspaceState>('activate_remote_workspace', { id: null });
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : String(reason);
     if (message.includes('REMOTE_TOKEN_EXPIRED')) throw new RemoteTokenExpiredError();
@@ -24,14 +25,16 @@ export async function initializeWorkspace(): Promise<RemoteWorkspaceState> {
     throw reason;
   }
 
+  // 激活会刷新平台信息（平台、是否 Docker），以激活结果为准。
+  const connection = activated.connection ?? state.connection;
   const proxyOrigin = await native.getRemoteWorkspaceProxy();
   configureWorkspaceBackend({ backend: 'remote', proxyOrigin });
-  setServerPlatform(state.connection.platform);
-  setDockerRuntime(state.connection.isDocker);
-  setServerUsername(state.connection.username);
+  setServerPlatform(connection.platform);
+  setDockerRuntime(connection.isDocker);
+  setServerUsername(connection.username);
   document.documentElement.dataset.workspace = 'remote';
-  document.title = `${state.connection.name} — TerminalBuddy`;
-  return state;
+  document.title = `${connection.name} — TerminalBuddy`;
+  return activated;
 }
 
 export async function connectRemoteWorkspace(input: {
@@ -60,9 +63,9 @@ export class RemoteTokenExpiredError extends Error {
   }
 }
 
-export async function enterRemoteWorkspace(): Promise<void> {
+export async function enterRemoteWorkspace(id?: string): Promise<void> {
   try {
-    await native.nativeInvoke('activate_remote_workspace');
+    await native.nativeInvoke('activate_remote_workspace', { id: id ?? null });
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : String(reason);
     if (message.includes('REMOTE_TOKEN_EXPIRED')) throw new RemoteTokenExpiredError();
@@ -76,4 +79,9 @@ export function returnToLocalWorkspace(): Promise<void> {
 
 export function disconnectRemoteWorkspace(): Promise<void> {
   return native.disconnectRemoteWorkspace();
+}
+
+/** 从列表删除一个已保存的远程连接。 */
+export function removeRemoteWorkspaceConnection(id: string): Promise<RemoteWorkspaceState> {
+  return native.removeRemoteWorkspaceConnection(id);
 }

@@ -602,6 +602,7 @@ pub fn run() {
             set_remote_workspace_active,
             activate_remote_workspace,
             disconnect_remote_workspace,
+            remove_remote_workspace_connection,
             get_remote_workspace_quick_access_url,
             upload_remote_workspace_files,
             download_remote_workspace_file,

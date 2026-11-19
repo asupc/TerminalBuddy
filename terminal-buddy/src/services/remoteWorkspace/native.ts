@@ -13,7 +13,10 @@ export interface RemoteConnectionInfo {
 
 export interface RemoteWorkspaceState {
   active: boolean;
+  /** 当前选中的连接（可能尚未进入远程工作区）。 */
   connection: RemoteConnectionInfo | null;
+  /** 已保存的全部远程连接，供工作区切换列表展示。 */
+  connections: RemoteConnectionInfo[];
 }
 
 export function nativeInvoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
@@ -53,6 +56,11 @@ export function authenticateRemoteWorkspace(input: {
 
 export function disconnectRemoteWorkspace(): Promise<void> {
   return nativeInvoke('disconnect_remote_workspace');
+}
+
+/** 从列表删除一个已保存的远程连接。 */
+export function removeRemoteWorkspaceConnection(id: string): Promise<RemoteWorkspaceState> {
+  return nativeInvoke('remove_remote_workspace_connection', { id });
 }
 
 export function getRemoteWorkspaceQuickAccessUrl(): Promise<string> {

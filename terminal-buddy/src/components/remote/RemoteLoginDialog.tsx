@@ -30,8 +30,8 @@ export function RemoteLoginDialog({ username, onCancel }: { username?: string; o
       <label>密码<input type="password" autoFocus required value={password} onChange={event => setPassword(event.target.value)} disabled={busy} /></label>
       {error && <div className="remote-workspace-error" role="alert">{error}</div>}
       <div className="remote-workspace-actions">
-        <button type="button" className="dialog-button" disabled={busy} onClick={onCancel}>取消</button>
-        <button type="submit" className="dialog-button primary" disabled={busy}>
+        <button type="button" className="btn-secondary" disabled={busy} onClick={onCancel}>取消</button>
+        <button type="submit" className="btn-primary" disabled={busy}>
           {busy ? <LoaderCircle className="remote-workspace-spin" aria-hidden="true" /> : <LogIn aria-hidden="true" />}
           {busy ? '正在登录…' : '重新登录'}
         </button>

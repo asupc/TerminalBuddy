@@ -341,8 +341,8 @@ export const TitleBar: FC<TitleBarProps> = ({
           {!isBrowserClient() && <button
             type="button"
             className="titlebar-btn titlebar-action-btn"
-            title="连接远程 TerminalBuddy 服务或切换本机工作区"
-            aria-label="工作区连接"
+            title="切换本地 / 远程工作区，管理远程连接"
+            aria-label="工作区切换"
             onClick={() => window.dispatchEvent(new Event('terminal-buddy-open-workspace'))}
           ><Cloud aria-hidden="true" /></button>}
           <div

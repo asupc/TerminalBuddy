@@ -39,7 +39,10 @@ pub struct RemoteConnectionInfo {
 #[serde(rename_all = "camelCase")]
 pub struct RemoteWorkspaceState {
     pub active: bool,
+    /// 当前选中的连接（可能尚未进入远程工作区）。
     pub connection: Option<RemoteConnectionInfo>,
+    /// 已保存的全部远程连接，供「工作区切换」列表展示。
+    pub connections: Vec<RemoteConnectionInfo>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,17 +95,73 @@ impl From<StoredConnection> for RemoteConnectionInfo {
     }
 }
 
+impl From<RemoteConnectionInfo> for RemoteConnectionInfoStored {
+    fn from(value: RemoteConnectionInfo) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            server: value.server,
+            username: value.username,
+            platform: value.platform,
+            is_docker: value.is_docker,
+        }
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StoredWorkspace {
     #[serde(default)]
     active: bool,
+    /// 当前选中的连接 id（不一定已处于远程工作区）。
+    #[serde(default)]
+    current_id: Option<String>,
+    #[serde(default)]
+    connections: Vec<StoredConnection>,
+    /// 旧版单连接配置，仅用于读取后迁移进 `connections`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     connection: Option<StoredConnection>,
+}
+
+impl StoredWorkspace {
+    /// 兼容旧版单连接文件，并修正指向已删除连接的 `currentId`。
+    fn normalize(mut self) -> Self {
+        if let Some(legacy) = self.connection.take() {
+            let legacy_id = legacy.info.id.clone();
+            if !self.connections.iter().any(|item| item.info.id == legacy_id) {
+                self.connections.push(legacy);
+            }
+            if self.current_id.is_none() {
+                self.current_id = Some(legacy_id);
+            }
+        }
+        if self.current_id.as_ref().is_some_and(|id| !self.connections.iter().any(|item| &item.info.id == id)) {
+            self.current_id = None;
+        }
+        if self.current_id.is_none() {
+            self.current_id = self.connections.first().map(|item| item.info.id.clone());
+        }
+        self
+    }
 }
 
 #[derive(Clone)]
 struct ActiveConnection {
     info: RemoteConnectionInfo,
     token: String,
+}
+
+#[derive(Clone, Default)]
+struct WorkspaceStore {
+    current_id: Option<String>,
+    connections: Vec<ActiveConnection>,
+}
+
+impl WorkspaceStore {
+    fn current(&self) -> Option<ActiveConnection> {
+        let id = self.current_id.as_ref()?;
+        self.connections.iter().find(|item| &item.info.id == id).cloned()
+    }
 }
 
 #[derive(Clone)]
@@ -112,7 +171,7 @@ pub struct RemoteWorkspaceService {
 
 struct Inner {
     client: reqwest::Client,
-    connection: RwLock<Option<ActiveConnection>>,
+    store: RwLock<WorkspaceStore>,
     active: std::sync::atomic::AtomicBool,
     proxy_addr: OnceLock<SocketAddr>,
 }
@@ -123,22 +182,37 @@ impl RemoteWorkspaceService {
             .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        let stored = Self::load();
+        let stored = Self::load().normalize();
         let active = stored.active;
-        let connection = stored.connection.and_then(|stored| {
-            let token = crate::services::crypto_service::decrypt_secret_field(&stored.encrypted_token)
-                .map_err(|error| eprintln!("读取远程工作区登录凭据失败：{}", error))
-                .ok()?;
-            Some(ActiveConnection { info: stored.into(), token })
-        });
+        let store = Self::restore(stored);
         Self {
             inner: Arc::new(Inner {
                 client,
-                connection: RwLock::new(connection),
+                store: RwLock::new(store),
                 active: std::sync::atomic::AtomicBool::new(active),
                 proxy_addr: OnceLock::new(),
             }),
         }
+    }
+
+    /// 解密全部已保存连接的登录令牌；无法解密的条目会被跳过并记录日志。
+    fn restore(stored: StoredWorkspace) -> WorkspaceStore {
+        let mut store = WorkspaceStore { current_id: stored.current_id, connections: Vec::new() };
+        for item in stored.connections {
+            // 空令牌表示用户主动「删除登录」，保留条目让其在列表中重新登录。
+            if item.encrypted_token.is_empty() {
+                store.connections.push(ActiveConnection { info: item.into(), token: String::new() });
+                continue;
+            }
+            match crate::services::crypto_service::decrypt_secret_field(&item.encrypted_token) {
+                Ok(token) => store.connections.push(ActiveConnection { info: item.into(), token }),
+                Err(error) => eprintln!("读取远程工作区登录凭据失败：{}", error),
+            }
+        }
+        if store.current_id.as_ref().is_some_and(|id| !store.connections.iter().any(|item| &item.info.id == id)) {
+            store.current_id = store.connections.first().map(|item| item.info.id.clone());
+        }
+        store
     }
 
     fn storage_path() -> Result<PathBuf, String> {
@@ -158,35 +232,43 @@ impl RemoteWorkspaceService {
     }
 
     fn save(&self) -> Result<(), String> {
-        let connection = self.snapshot();
+        let (current_id, connections) = {
+            let store = self.inner.store.read().map_err(|_| "远程连接状态不可用".to_string())?;
+            (store.current_id.clone(), store.connections.clone())
+        };
+        let mut stored_connections = Vec::with_capacity(connections.len());
+        for active in connections {
+            // 令牌为空表示该连接的凭据已经失效，保留条目让用户重新登录，而不是直接丢弃。
+            let encrypted_token = if active.token.is_empty() {
+                String::new()
+            } else {
+                crate::services::crypto_service::encrypt_secret_field(&active.token)
+                    .map_err(|error| format!("无法加密保存远程登录凭据：{}", error))?
+            };
+            stored_connections.push(StoredConnection {
+                info: RemoteConnectionInfoStored::from(active.info),
+                encrypted_token,
+            });
+        }
         let stored = StoredWorkspace {
             active: self.inner.active.load(std::sync::atomic::Ordering::Acquire),
-            connection: connection.map(|active| {
-                let encrypted_token = crate::services::crypto_service::encrypt_secret_field(&active.token)
-                    .unwrap_or_default();
-                StoredConnection {
-                    info: RemoteConnectionInfoStored {
-                        id: active.info.id,
-                        name: active.info.name,
-                        server: active.info.server,
-                        username: active.info.username,
-                        platform: active.info.platform,
-                        is_docker: active.info.is_docker,
-                    },
-                    encrypted_token,
-                }
-            }),
+            current_id,
+            connections: stored_connections,
+            connection: None,
         };
-        if stored.connection.as_ref().is_some_and(|item| item.encrypted_token.is_empty()) {
-            return Err("无法加密保存远程登录凭据，请重新连接".into());
-        }
         let bytes = serde_json::to_vec_pretty(&stored).map_err(|error| error.to_string())?;
         crate::services::atomic_file::atomic_write(&Self::storage_path()?, &bytes)
             .map_err(|error| format!("保存远程工作区配置失败：{}", error))
     }
 
     fn snapshot(&self) -> Option<ActiveConnection> {
-        self.inner.connection.read().ok()?.clone()
+        self.inner.store.read().ok()?.current()
+    }
+
+    fn connection_infos(&self) -> Vec<RemoteConnectionInfo> {
+        self.inner.store.read()
+            .map(|store| store.connections.iter().map(|item| item.info.clone()).collect())
+            .unwrap_or_default()
     }
 
     pub fn state(&self) -> RemoteWorkspaceState {
@@ -194,6 +276,7 @@ impl RemoteWorkspaceService {
         RemoteWorkspaceState {
             active: self.inner.active.load(std::sync::atomic::Ordering::Acquire),
             connection: connection.map(|item| item.info),
+            connections: self.connection_infos(),
         }
     }
 
@@ -241,6 +324,7 @@ impl RemoteWorkspaceService {
         Ok(())
     }
 
+    /// 添加（或按服务地址更新）一个远程连接，并设为当前连接。
     pub async fn connect(&self, input: ConnectRemoteWorkspaceInput) -> Result<RemoteWorkspaceState, String> {
         let server = normalize_server(&input.server)?;
         let username = input.username.trim();
@@ -252,21 +336,34 @@ impl RemoteWorkspaceService {
         let name = input.name.as_deref().map(str::trim).filter(|value| !value.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| server.clone());
-        let info = RemoteConnectionInfo {
-            id: uuid::Uuid::new_v4().to_string(),
-            name,
-            server,
-            username: username.to_string(),
-            platform: runtime.0,
-            is_docker: runtime.1,
-        };
-        *self.inner.connection.write().map_err(|_| "远程连接状态不可用".to_string())? =
-            Some(ActiveConnection { info, token });
+        {
+            let mut store = self.inner.store.write().map_err(|_| "远程连接状态不可用".to_string())?;
+            // 同一服务地址视为同一个连接：更新其凭据与名称，避免列表里堆出重复项。
+            let existing = store.connections.iter().position(|item| item.info.server == server);
+            let id = existing
+                .map(|index| store.connections[index].info.id.clone())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let info = RemoteConnectionInfo {
+                id: id.clone(),
+                name,
+                server,
+                username: username.to_string(),
+                platform: runtime.0,
+                is_docker: runtime.1,
+            };
+            let connection = ActiveConnection { info, token };
+            match existing {
+                Some(index) => store.connections[index] = connection,
+                None => store.connections.push(connection),
+            }
+            store.current_id = Some(id);
+        }
         self.inner.active.store(true, std::sync::atomic::Ordering::Release);
         self.save()?;
         Ok(self.state())
     }
 
+    /// 重新登录当前选中的连接。
     pub async fn authenticate(&self, input: RemoteLoginInput) -> Result<RemoteWorkspaceState, String> {
         let current = self.snapshot().ok_or_else(|| "请先添加远程服务".to_string())?;
         let setup = input.setup.unwrap_or(false);
@@ -281,14 +378,19 @@ impl RemoteWorkspaceService {
             input.confirm_password.as_deref(),
         ).await?;
         let runtime = runtime_info(&self.inner.client, &current.info.server).await?;
-        let info = RemoteConnectionInfo {
-            username,
-            platform: runtime.0,
-            is_docker: runtime.1,
-            ..current.info
-        };
-        *self.inner.connection.write().map_err(|_| "远程连接状态不可用".to_string())? =
-            Some(ActiveConnection { info, token });
+        {
+            let mut store = self.inner.store.write().map_err(|_| "远程连接状态不可用".to_string())?;
+            let Some(index) = store.connections.iter().position(|item| item.info.id == current.info.id) else {
+                return Err("远程连接已被删除，请重新添加".into());
+            };
+            let info = RemoteConnectionInfo {
+                username,
+                platform: runtime.0,
+                is_docker: runtime.1,
+                ..current.info
+            };
+            store.connections[index] = ActiveConnection { info, token };
+        }
         self.inner.active.store(true, std::sync::atomic::Ordering::Release);
         self.save()?;
         Ok(self.state())
@@ -296,11 +398,57 @@ impl RemoteWorkspaceService {
 
     /// 进入远程工作区前确认令牌仍然有效；失效时保留连接信息并返回可识别错误，
     /// 前端据此打开重新登录，而不是进入后满屏 401。
-    pub async fn activate(&self) -> Result<RemoteWorkspaceState, String> {
-        let current = self.require_connection()?;
+    ///
+    /// `id` 为空表示进入当前选中的连接；传入其它连接 id 时先切换再校验，
+    /// 校验失败会回滚选择与 `active`，保证不会因为一次失败的切换丢掉正在用的远程工作区。
+    pub async fn activate(&self, id: Option<String>) -> Result<RemoteWorkspaceState, String> {
+        let (previous_id, previous_active) = {
+            let store = self.inner.store.read().map_err(|_| "远程连接状态不可用".to_string())?;
+            (store.current_id.clone(), self.inner.active.load(std::sync::atomic::Ordering::Acquire))
+        };
+        let current = match id.as_deref() {
+            Some(id) => {
+                let store = self.inner.store.read().map_err(|_| "远程连接状态不可用".to_string())?;
+                store.connections.iter().find(|item| item.info.id == id).cloned()
+                    .ok_or_else(|| "远程连接不存在，请重新添加".to_string())?
+            }
+            None => self.require_connection()?,
+        };
+        // 用户主动删除了登录凭据：直接引导重新登录，不发无令牌请求。
+        if current.token.is_empty() {
+            return Err("REMOTE_TOKEN_EXPIRED".into());
+        }
+        let checked = self.check_runtime(&current).await;
+        let (platform, is_docker) = match checked {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                self.restore_selection(previous_id, previous_active);
+                return Err(error);
+            }
+        };
+        {
+            let mut store = self.inner.store.write().map_err(|_| "远程连接状态不可用".to_string())?;
+            let Some(index) = store.connections.iter().position(|item| item.info.id == current.info.id) else {
+                drop(store);
+                self.restore_selection(previous_id, previous_active);
+                return Err("远程连接已被删除，请重新添加".into());
+            };
+            let mut info = current.info;
+            info.platform = platform;
+            info.is_docker = is_docker;
+            store.connections[index] = ActiveConnection { info, token: current.token };
+            store.current_id = Some(store.connections[index].info.id.clone());
+        }
+        self.inner.active.store(true, std::sync::atomic::Ordering::Release);
+        self.save()?;
+        Ok(self.state())
+    }
+
+    /// 校验远程服务可用且版本兼容，返回（平台, 是否 Docker）。
+    async fn check_runtime(&self, connection: &ActiveConnection) -> Result<(String, bool), String> {
         let response = self.inner.client
-            .get(endpoint(&current.info.server, "/api/runtime", None)?)
-            .bearer_auth(&current.token)
+            .get(endpoint(&connection.info.server, "/api/runtime", None)?)
+            .bearer_auth(&connection.token)
             .timeout(CONNECT_TIMEOUT)
             .send().await.map_err(network_error)?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -313,14 +461,18 @@ impl RemoteWorkspaceService {
         if !runtime.get("fullInterface").and_then(|value| value.as_bool()).unwrap_or(false) {
             return Err("服务端版本不支持完整远程工作区，请先升级 TerminalBuddy 服务端".into());
         }
-        let mut info = current.info;
-        info.platform = runtime.get("platform").and_then(|value| value.as_str()).unwrap_or("linux").to_string();
-        info.is_docker = runtime.get("isDocker").and_then(|value| value.as_bool()).unwrap_or(false);
-        *self.inner.connection.write().map_err(|_| "远程连接状态不可用".to_string())? =
-            Some(ActiveConnection { info, token: current.token });
-        self.inner.active.store(true, std::sync::atomic::Ordering::Release);
-        self.save()?;
-        Ok(self.state())
+        Ok((
+            runtime.get("platform").and_then(|value| value.as_str()).unwrap_or("linux").to_string(),
+            runtime.get("isDocker").and_then(|value| value.as_bool()).unwrap_or(false),
+        ))
+    }
+
+    /// 激活失败时回滚内存中的当前连接与远程状态（不落盘，磁盘上本来就没改）。
+    fn restore_selection(&self, current_id: Option<String>, active: bool) {
+        if let Ok(mut store) = self.inner.store.write() {
+            store.current_id = current_id;
+        }
+        self.inner.active.store(active, std::sync::atomic::Ordering::Release);
     }
 
     /// 仅切回本机。进入远程必须走 [`Self::activate`]，以便先校验令牌。
@@ -332,10 +484,34 @@ impl RemoteWorkspaceService {
         self.save()
     }
 
+    /// 只删除登录凭据，保留连接条目，方便用户稍后重新登录。
     pub fn disconnect(&self) -> Result<(), String> {
+        let current_id = self.snapshot().map(|item| item.info.id);
+        if let Some(id) = current_id {
+            let mut store = self.inner.store.write().map_err(|_| "远程连接状态不可用".to_string())?;
+            if let Some(item) = store.connections.iter_mut().find(|item| item.info.id == id) {
+                item.token.clear();
+            }
+        }
         self.inner.active.store(false, std::sync::atomic::Ordering::Release);
-        *self.inner.connection.write().map_err(|_| "远程连接状态不可用".to_string())? = None;
         self.save()
+    }
+
+    /// 删除一个已保存的远程连接。
+    pub fn remove(&self, id: &str) -> Result<RemoteWorkspaceState, String> {
+        let mut store = self.inner.store.write().map_err(|_| "远程连接状态不可用".to_string())?;
+        let Some(index) = store.connections.iter().position(|item| item.info.id == id) else {
+            return Err("远程连接不存在".into());
+        };
+        store.connections.remove(index);
+        if store.current_id.as_deref() == Some(id) {
+            store.current_id = store.connections.first().map(|item| item.info.id.clone());
+            // 删掉正在使用的连接必须回到本机，避免代理继续指向已删除的服务。
+            self.inner.active.store(false, std::sync::atomic::Ordering::Release);
+        }
+        drop(store);
+        self.save()?;
+        Ok(self.state())
     }
 
     pub fn quick_access_url(&self) -> Result<String, String> {
@@ -641,5 +817,51 @@ mod tests {
     fn rejects_credentials_and_non_http_addresses() {
         assert!(normalize_server("https://user:pass@example.com").is_err());
         assert!(normalize_server("file:///tmp/server").is_err());
+    }
+
+    fn stored_connection(id: &str, server: &str) -> StoredConnection {
+        StoredConnection {
+            info: RemoteConnectionInfoStored {
+                id: id.into(),
+                name: server.into(),
+                server: server.into(),
+                username: "admin".into(),
+                platform: "linux".into(),
+                is_docker: false,
+            },
+            encrypted_token: format!("token-{}", id),
+        }
+    }
+
+    /// 旧版单连接文件要能平滑迁移成列表，并把该连接设为当前连接。
+    #[test]
+    fn migrates_legacy_single_connection_into_list() {
+        let legacy = StoredWorkspace { active: true, current_id: None, connections: Vec::new(), connection: Some(stored_connection("a", "https://a.example")) };
+        let migrated = legacy.normalize();
+        assert_eq!(migrated.connections.len(), 1);
+        assert_eq!(migrated.current_id.as_deref(), Some("a"));
+        assert!(migrated.connection.is_none());
+        assert!(migrated.active);
+    }
+
+    /// currentId 指向不存在的连接时回落到第一个连接，避免列表为空指针。
+    #[test]
+    fn normalizes_current_id_to_existing_connection() {
+        let workspace = StoredWorkspace {
+            active: false,
+            current_id: Some("gone".into()),
+            connections: vec![stored_connection("a", "https://a.example"), stored_connection("b", "https://b.example")],
+            connection: None,
+        };
+        let normalized = workspace.normalize();
+        assert_eq!(normalized.current_id.as_deref(), Some("a"));
+        assert_eq!(normalized.connections.len(), 2);
+    }
+
+    /// 空列表时 currentId 必须清空，不留悬空引用。
+    #[test]
+    fn clears_current_id_when_no_connections() {
+        let workspace = StoredWorkspace { active: false, current_id: Some("gone".into()), connections: Vec::new(), connection: None };
+        assert!(workspace.normalize().current_id.is_none());
     }
 }

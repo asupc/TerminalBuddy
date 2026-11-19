@@ -55,10 +55,20 @@ export function RemoteWorkspaceEntry() {
   </>;
 }
 
-function RemoteWorkspaceHost({ state, initialOverlay }: { state: RemoteWorkspaceState; initialOverlay: Overlay }) {
+function RemoteWorkspaceHost({ state: initialState, initialOverlay }: { state: RemoteWorkspaceState; initialOverlay: Overlay }) {
+  const [state, setState] = useState(initialState);
+  // 弹框内的增删改不会通知父级，这里用递增 key 在每次打开时按后端最新状态重挂载。
+  const [dialogKey, setDialogKey] = useState(0);
   const [overlay, setOverlay] = useState<Overlay>(initialOverlay);
   useEffect(() => {
-    const openWorkspace = () => setOverlay('workspace');
+    const openWorkspace = () => {
+      // 先同步一次连接列表，避免重新打开时展示已删除或已改名的旧条目。
+      void getRemoteWorkspaceState().then(next => {
+        setState(next);
+        setDialogKey(key => key + 1);
+        setOverlay('workspace');
+      }).catch(() => setOverlay('workspace'));
+    };
     const loginRequired = () => setOverlay('login');
     window.addEventListener('terminal-buddy-open-workspace', openWorkspace);
     window.addEventListener('terminal-buddy-auth-expired', loginRequired);
@@ -70,7 +80,7 @@ function RemoteWorkspaceHost({ state, initialOverlay }: { state: RemoteWorkspace
     };
   }, []);
   return <>
-    {overlay === 'workspace' && <RemoteWorkspaceDialog state={state} onClose={() => setOverlay(null)} />}
+    {overlay === 'workspace' && <RemoteWorkspaceDialog key={dialogKey} state={state} onClose={() => setOverlay(null)} />}
     {overlay === 'login' && <RemoteLoginDialog username={state.connection?.username} onCancel={() => setOverlay(null)} />}
   </>;
 }
