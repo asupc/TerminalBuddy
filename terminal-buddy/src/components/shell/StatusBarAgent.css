@@ -61,6 +61,7 @@
 /* 品牌色与状态栏里的 Agent 标志保持一致。 */
 .agent-stats-logo.provider-claude { color: #d97757; }
 .agent-stats-logo.provider-codex { color: #10a37f; }
+.agent-stats-logo.provider-antigravity { color: #4285f4; }
 
 .agent-stats-title {
   font-size: 12px;

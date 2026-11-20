@@ -1,4 +1,4 @@
-export type SessionHistoryProvider = 'claude' | 'codex';
+export type SessionHistoryProvider = 'claude' | 'codex' | 'antigravity';
 
 /** 终端与 AI 会话的统一绑定：避免为每个 Agent 增加一个 xxxSessionId 字段。 */
 export interface AgentSessionBinding {
@@ -20,6 +20,7 @@ export type ExtraParamMode = 'append' | 'independent';
 export interface EnabledAgents {
   claude: boolean;
   codex: boolean;
+  antigravity?: boolean;
 }
 
 export interface Project {
@@ -33,6 +34,7 @@ export function projectEnabledAgents(project: Project | undefined | null): Requi
   return {
     claude: project?.enabledAgents?.claude ?? true,
     codex: project?.enabledAgents?.codex ?? true,
+    antigravity: project?.enabledAgents?.antigravity ?? true,
   };
 }
 

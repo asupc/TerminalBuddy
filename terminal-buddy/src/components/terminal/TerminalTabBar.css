@@ -139,6 +139,14 @@
   stroke-width: 1.8;
 }
 
+.terminal-tab-agent-icon {
+  width: 13px;
+  height: 13px;
+  font-size: 13px;
+  flex-shrink: 0;
+  color: #4285f4;
+}
+
 .terminal-tab-dot.working {
   animation: working-pulse 1.2s ease-in-out infinite;
 }

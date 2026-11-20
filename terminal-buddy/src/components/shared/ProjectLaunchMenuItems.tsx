@@ -1,9 +1,10 @@
 import { FC, useEffect } from 'react';
 import { useAppStore } from '../../stores/appStore';
-import { openTerminalInDir } from '../../utils/openTerminalInDir';
+import { openProjectAntigravityTerminal, openTerminalInDir } from '../../utils/openTerminalInDir';
 import { openNewAgentSession } from '../../utils/openAgentChat';
-import { projectModelSources, type Project } from '../../types';
+import { projectEnabledAgents, projectModelSources, type Project } from '../../types';
 import { useAgentAvailability } from '../../hooks/useAgentAvailability';
+import { AntigravityModelMenuSection } from './AntigravityModelMenuSection';
 import { ClaudeModelMenuSection } from './ClaudeModelMenuSection';
 
 interface ProjectLaunchMenuItemsProps {
@@ -14,7 +15,7 @@ interface ProjectLaunchMenuItemsProps {
 }
 
 /**
- * 项目右键菜单的「启动」区：命令行 / Claude·Codex 模型。
+ * 项目右键菜单的「启动」区：命令行 / Claude·Codex 模型 / Antigravity CLI。
  * 「项目与命令」面板的项目右键和会话标签栏「新建配置终端」的项目悬停菜单共用，
  * 保证两处的启动行为与菜单内容始终同步。
  * 已有的原生会话不在这里列出：聊天标签会持久化并归在项目的标签分组下。
@@ -22,17 +23,22 @@ interface ProjectLaunchMenuItemsProps {
 export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ project, onLaunched }) => {
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
+  const refreshAntigravityProviderConfig = useAppStore(s => s.refreshAntigravityProviderConfig);
   // 环境检测结果：未安装的 Agent 不出现在项目右键菜单里（检测返回前视为可用）。
   const agentAvailability = useAgentAvailability();
+  const showAntigravity = projectEnabledAgents(project).antigravity && (agentAvailability?.antigravity ?? true);
 
   // 模型菜单数据源：首次打开时加载，之后用缓存（与 HistoryPanel 一致）。
   useEffect(() => {
     const state = useAppStore.getState();
     if (!state.claudeLaunchTargetsLoaded) void refreshClaudeLaunchTargets();
     if (!state.codexProviderState) void refreshCodexLaunchTargets();
-  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
+    if (showAntigravity && !state.antigravityProviderConfigLoaded) {
+      void refreshAntigravityProviderConfig?.();
+    }
+  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets, refreshAntigravityProviderConfig, showAntigravity]);
 
-  const gotoProvidersSettings = (source: 'claude' | 'codex') => {
+  const gotoProvidersSettings = (source: 'claude' | 'codex' | 'antigravity') => {
     useAppStore.getState().setProviderSettingsTab(source);
     useAppStore.getState().openSettingsDialog('llm-providers');
     onLaunched();
@@ -64,6 +70,18 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
           onGotoProviders={() => gotoProvidersSettings(source)}
         />
       ))}
+      {showAntigravity && (
+        <AntigravityModelMenuSection
+          itemClassName="context-menu-item"
+          separatorClassName="context-menu-separator"
+          mode="launch"
+          onPickModel={(modelId, effort) => {
+            onLaunched();
+            void openProjectAntigravityTerminal(project, modelId, effort);
+          }}
+          onGotoProviders={() => gotoProvidersSettings('antigravity')}
+        />
+      )}
     </>
   );
 };

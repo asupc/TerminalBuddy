@@ -2,17 +2,18 @@ import { parseClaudeRef } from './claudeLaunch';
 import { parseCodexRef } from './codexLaunch';
 
 export interface TaskLaunchInfo {
-  provider: 'claude' | 'codex';
+  provider: 'claude' | 'codex' | 'antigravity';
   model?: string;
+  effort?: string;
 }
 
 /** 引用标记前缀（工具名在首段）。 */
 const REF_PREFIX_RE = /^__TB_(CLAUDE|CODEX)_REF__:/;
 
-/** 命令里直接跑 claude/codex 的可执行文件。 */
-const EXECUTABLE_RE = /(?:^|[\s"'=/\\;&|])(claude|codex)(?:\.(?:cmd|exe|bat|ps1))?(?=$|[\s"';&|])/i;
+/** 命令里直接跑 claude / codex / agy 的可执行文件。 */
+const EXECUTABLE_RE = /(?:^|[\s"'=/\\;&|])(claude|codex|agy)(?:\.(?:cmd|exe|bat|ps1))?(?=$|[\s"';&|])/i;
 
-/** 摘要尚未返回时，从实际启动命令识别工具和模型；独立命令不继承配置。 */
+/** 摘要尚未返回时，从实际启动命令识别工具、模型与推理等级；独立命令不继承配置。 */
 export function getTaskLaunchInfo(
   extraParams = '',
   startupCommands: string[] = [],
@@ -39,7 +40,17 @@ export function getTaskLaunchInfo(
     for (const option of command.matchAll(/(?:^|\s)(?:--model|-m)(?:=|\s+)(?:"([^"]+)"|'([^']+)'|([^\s]+))/g)) {
       model = option.slice(1).find(Boolean);
     }
-    return { provider: tool.toLowerCase() === 'codex' ? 'codex' : 'claude', model };
+    let effort: string | undefined;
+    for (const option of command.matchAll(/(?:^|\s)--effort(?:=|\s+)(?:"([^"]+)"|'([^']+)'|([^\s]+))/g)) {
+      effort = option.slice(1).find(Boolean);
+    }
+    const lower = tool.toLowerCase();
+    const provider: TaskLaunchInfo['provider'] = lower === 'codex'
+      ? 'codex'
+      : lower === 'agy'
+        ? 'antigravity'
+        : 'claude';
+    return { provider, model, effort };
   }
   return undefined;
 }

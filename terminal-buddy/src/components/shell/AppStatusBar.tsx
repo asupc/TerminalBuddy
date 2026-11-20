@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import type { Profile, SessionHistoryProvider, TerminalType } from '../../types';
 import { useAppStore } from '../../stores/appStore';
+import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { useActiveAgentStats, useAgentEffort, useTerminalAgentUsage } from '../../hooks/useActiveAgentStats';
 import { useAgentAvailability } from '../../hooks/useAgentAvailability';
 import { useSystemResources } from '../../hooks/useSystemResources';
@@ -25,16 +26,25 @@ import { isBrowserClient } from '../../services/platform';
 import { isClaudeLaunchProfile } from '../../utils/claudeLaunch';
 import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
 import { projectForDirectory } from '../../utils/projectPath';
-import { APP_VERSION } from '../../version';
 import './AppStatusBar.css';
 
 const browserClient = isBrowserClient();
 
-/** 历史入口固定按 Claude / Codex 排序，切换标签时位置不会跳动。 */
-const AGENT_KINDS: readonly SessionHistoryProvider[] = ['claude', 'codex'];
+/** 历史入口固定按 Claude / Codex / Antigravity 排序，切换标签时位置不会跳动。 */
+const AGENT_KINDS: readonly SessionHistoryProvider[] = ['claude', 'codex', 'antigravity'];
+
+function agentProviderLabel(provider: string): string {
+  if (provider === 'codex') return 'Codex';
+  if (provider === 'antigravity') return 'Antigravity CLI';
+  return 'Claude Code';
+}
+
+function terminalProviderName(provider: string): string | null {
+  return provider === 'antigravity' ? 'Google 账号' : null;
+}
 
 function agentHistoryLabel(provider: SessionHistoryProvider): string {
-  return provider === 'codex' ? 'Codex' : 'Claude Code';
+  return agentProviderLabel(provider);
 }
 
 /** 只有本地 Shell 的启动目录才是本地路径，SSH / 容器路径不能拿来检测本地 Git。 */
@@ -209,6 +219,8 @@ const StatusBarResources = memo(function StatusBarResources() {
   const projects = useAppStore(s => s.projects);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
   const agentSessionBindings = useAppStore(s => s.agentSessionBindings);
+  const taskSummaries = useTaskSummaryStore(s => s.summaries);
+  const taskProviders = useTaskSummaryStore(s => s.providers);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
   const agentTabs = useAppStore(s => s.agentTabs);
@@ -260,10 +272,15 @@ const StatusBarResources = memo(function StatusBarResources() {
   const agentStats = useActiveAgentStats(activeNativeAgentTab?.sessionId ?? null);
   const agentModel = agentStats?.model ?? activeNativeAgentTab?.model ?? null;
   const agentEffort = useAgentEffort(agentStats?.providerId, agentModel);
-  // 终端里启动的 Agent 没有推送通道：按终端轮询 transcript 快照。绑定、claude
-  // 会话 ID 或 hook 活动任一存在就说明这是 Agent 终端，而不仅是普通 shell。
+  const terminalLaunch = session && isTerminal
+    ? getTaskLaunchInfo(session.extraParams, profile?.startupCommands, session.extraParamMode)
+    : undefined;
+  // 终端里启动的 Agent 没有推送通道：按终端轮询 transcript 快照。服务端发现的 provider、
+  // 任务摘要、绑定、claude 会话 ID 或 hook 活动任一存在就说明这是 Agent 终端，而不仅是普通 shell。
   const terminalAgentProvider = session && isTerminal ? (
-    agentSessionBindings[session.id]?.provider
+    taskProviders[session.id]
+    ?? taskSummaries[session.id]?.provider
+    ?? agentSessionBindings[session.id]?.provider
     ?? (terminalActivities[session.id] && terminalActivities[session.id].runtimeKind !== 'shell'
       ? terminalActivities[session.id].runtimeKind
       : undefined)
@@ -286,10 +303,10 @@ const StatusBarResources = memo(function StatusBarResources() {
     updatedAt: null,
   } : terminalUsage ? {
     provider: terminalUsage.provider,
-    providerLabel: terminalUsage.provider === 'codex' ? 'Codex' : 'Claude Code',
-    providerName: null,
-    model: terminalUsage.model,
-    effort: terminalUsage.effort,
+    providerLabel: agentProviderLabel(terminalUsage.provider),
+    providerName: terminalProviderName(terminalUsage.provider),
+    model: terminalUsage.model ?? (terminalLaunch?.provider === terminalUsage.provider ? terminalLaunch.model ?? null : null),
+    effort: terminalUsage.effort ?? (terminalLaunch?.provider === terminalUsage.provider ? terminalLaunch.effort ?? null : null),
     status: null,
     context: terminalUsage.contextUsedTokens != null || terminalUsage.contextWindowTokens != null ? {
       usedTokens: terminalUsage.contextUsedTokens,
@@ -303,10 +320,10 @@ const StatusBarResources = memo(function StatusBarResources() {
     updatedAt: terminalUsage.updatedAt,
   } : terminalAgentProvider ? {
     provider: terminalAgentProvider,
-    providerLabel: terminalAgentProvider === 'codex' ? 'Codex' : 'Claude Code',
-    providerName: null,
-    model: null,
-    effort: null,
+    providerLabel: agentProviderLabel(terminalAgentProvider),
+    providerName: terminalProviderName(terminalAgentProvider),
+    model: terminalLaunch?.provider === terminalAgentProvider ? terminalLaunch.model ?? null : null,
+    effort: terminalLaunch?.provider === terminalAgentProvider ? terminalLaunch.effort ?? null : null,
     status: null,
     context: null,
     sessionTotal: null,
@@ -353,7 +370,9 @@ const StatusBarResources = memo(function StatusBarResources() {
     const activity = terminalActivities[session.id];
     const binding = agentSessionBindings[session.id];
     const launch = getTaskLaunchInfo(session.extraParams, profile?.startupCommands, session.extraParamMode);
-    const provider = binding?.provider
+    const provider = taskProviders[session.id]
+      ?? taskSummaries[session.id]?.provider
+      ?? binding?.provider
       ?? activity?.provider
       ?? (activity && activity.runtimeKind !== 'shell' ? activity.runtimeKind : undefined)
       ?? launch?.provider
@@ -364,8 +383,8 @@ const StatusBarResources = memo(function StatusBarResources() {
     return dir ? { provider, projectDir: dir } : null;
   }, [
     activeSpecialTab, agentTabs, activeAgentTabKey, sessions, sessionDirectories,
-    terminalActivities, agentSessionBindings, claudeReplayTab, session, directory,
-    profile, projects, claudeSessionIds,
+    terminalActivities, agentSessionBindings, taskProviders, taskSummaries, claudeReplayTab,
+    session, directory, profile, projects, claudeSessionIds,
   ]);
 
   const agentProvider = agentTarget?.provider;
@@ -544,10 +563,6 @@ const StatusBarResources = memo(function StatusBarResources() {
         <StatusBarResources />
 
         <StatusBarClock />
-
-        <span className="app-statusbar-item" title={`当前版本 v${APP_VERSION}`}>
-          <span className="app-statusbar-mono">v{APP_VERSION}</span>
-        </span>
       </span>
 
       {directory && (

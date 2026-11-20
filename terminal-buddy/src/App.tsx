@@ -268,10 +268,11 @@ function App() {
           agentIdleRecycleHours: backend.agentIdleRecycleHours ?? settings.agentIdleRecycleHours,
         };
         // Agent 基础启动命令（后端为数据源；浏览器模式在 WebEntry 里经 /api/runtime 提前写入）
-        const commands = backend.agentCommands ?? { claude: '', codex: '' };
+        const commands = backend.agentCommands ?? { claude: '', codex: '', antigravity: '' };
         useAppStore.getState().setAgentCommands({
           claude: commands.claude ?? '',
           codex: commands.codex ?? '',
+          antigravity: commands.antigravity ?? '',
         });
         saveAppSettings(synced);
         setEnableTabNav(synced.enableTabNavigation);

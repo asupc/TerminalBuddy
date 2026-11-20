@@ -10,7 +10,7 @@ import { createTransfersSlice } from "./slices/transfersSlice";
 import { createWindowSlice } from "./slices/windowSlice";
 import { createClaudeLaunchSlice } from "./slices/claudeLaunchSlice";
 import { createAgentChatSlice } from "./slices/agentChatSlice";
-import type { CodexProviderState, LlmLaunchTarget } from "../services/tauri";
+import type { AntigravityModel, AntigravityProviderConfig, CodexProviderState, LlmLaunchTarget } from "../services/tauri";
 
 interface SavedTab {
 	profileId: string;
@@ -557,17 +557,26 @@ export interface AppState {
 
 	// Claude 模型启动：右键菜单数据源（挂载 + 供应商变更时刷新，右键打开时用缓存）
 	/** Agent 管理的基础启动命令（空串 = 内置默认），供项目模型启动与历史恢复继承参数。 */
-	agentCommands: { claude: string; codex: string };
-	setAgentCommands: (commands: { claude: string; codex: string }) => void;
+	agentCommands: { claude: string; codex: string; antigravity: string };
+	setAgentCommands: (commands: { claude: string; codex: string; antigravity: string }) => void;
 	codexProviderState: CodexProviderState | null;
 	refreshCodexLaunchTargets: () => Promise<void>;
 	setCodexProviderState: (state: CodexProviderState) => void;
-	providerSettingsTab: "claude" | "codex";
-	setProviderSettingsTab: (tab: "claude" | "codex") => void;
+	providerSettingsTab: "claude" | "codex" | "antigravity";
+	setProviderSettingsTab: (tab: "claude" | "codex" | "antigravity") => void;
 	claudeLaunchTargets: LlmLaunchTarget[];
 	claudeLaunchTargetsLoaded: boolean;
 	refreshClaudeLaunchTargets: () => Promise<void>;
 	setClaudeLaunchTargets: (targets: LlmLaunchTarget[]) => void;
+	antigravityModels: AntigravityModel[];
+	antigravityModelsLoaded: boolean;
+	antigravityModelsLoading: boolean;
+	antigravityModelsError: string | null;
+	refreshAntigravityModels: (force?: boolean) => Promise<void>;
+	antigravityProviderConfig: AntigravityProviderConfig | null;
+	antigravityProviderConfigLoaded: boolean;
+	refreshAntigravityProviderConfig: () => Promise<void>;
+	setAntigravityProviderConfig: (config: AntigravityProviderConfig) => void;
 }
 
 // 各 slice 只声明自己管辖的字段（Partial<AppState>），

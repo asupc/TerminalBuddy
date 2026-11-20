@@ -35,12 +35,29 @@ export function stripCodexResumeArgs(params: string): StrippedCodexResumeArgs {
   };
 }
 
-/** 剥除所有 Agent 的会话恢复参数（Claude `--resume`、Codex `resume <id>`）
+const SAVED_ANTIGRAVITY_COMMAND_RE =
+  /(?:^|[\s"'=])agy(?:\.cmd|\.exe|\.bat)?(?=$|[\s"'=])/i;
+
+const ANTIGRAVITY_CONVERSATION_RE =
+  /\s*--conversation(?:=(?:"[^"]*"|'[^']*'|[^\s;&|]+)|\s+(?:"[^"]*"|'[^']*'|[^\s;&|]+))/g;
+
+/** 剥除 Antigravity CLI 的 `--conversation <id>`（以及 `-c` / `--continue`）。 */
+export function stripAntigravityResumeArgs(params: string): string {
+  if (!SAVED_ANTIGRAVITY_COMMAND_RE.test(params)) {
+    return params.replace(ANTIGRAVITY_CONVERSATION_RE, '');
+  }
+  return params
+    .replace(ANTIGRAVITY_CONVERSATION_RE, '')
+    .replace(/\s*(?:--continue|-c)(?=$|[\s;&|])/g, '');
+}
+
+/** 剥除所有 Agent 的会话恢复参数（Claude `--resume`、Codex `resume <id>`、Antigravity `--conversation <id>`）
  * 并压缩多余空格；入参为空或剥空后返回 undefined。「以此配置新建终端」等场景要的是
  * 全新会话，恢复页签 extraParams 里的旧会话引用必须全部剥除。 */
 export function withoutResumeArgs(params: string | undefined | null): string | undefined {
   if (!params) return undefined;
-  const stripped = stripCodexResumeArgs(stripResumeArgs(params).params).params
-    .replace(/\s+/g, ' ').trim();
+  const stripped = stripAntigravityResumeArgs(
+    stripCodexResumeArgs(stripResumeArgs(params).params).params,
+  ).replace(/\s+/g, ' ').trim();
   return stripped || undefined;
 }

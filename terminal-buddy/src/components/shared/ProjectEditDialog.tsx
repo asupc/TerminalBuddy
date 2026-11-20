@@ -102,6 +102,10 @@ export const ProjectEditDialog: FC<ProjectEditDialogProps> = ({ targetName, onCl
               <input type="checkbox" checked={projectAgents.codex} onChange={event => setProjectAgents(value => ({ ...value, codex: event.target.checked }))} />
               Codex
             </label>
+            <label className="project-edit-agent-toggle">
+              <input type="checkbox" checked={projectAgents.antigravity} onChange={event => setProjectAgents(value => ({ ...value, antigravity: event.target.checked }))} />
+              Antigravity CLI
+            </label>
           </div>
           <small>右键项目时可按启用的 Agent 展开供应商与模型启动；基础命令在设置 → Agent 管理中配置。</small>
         </div>

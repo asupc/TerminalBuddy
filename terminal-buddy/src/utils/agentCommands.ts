@@ -1,5 +1,6 @@
 import { DEFAULT_CLAUDE_COMMAND } from './claudeLaunch';
 import { DEFAULT_CODEX_COMMAND } from './codexLaunch';
+import { DEFAULT_ANTIGRAVITY_COMMAND } from './antigravityLaunch';
 import { useAppStore } from '../stores/appStore';
 
 /**
@@ -14,6 +15,10 @@ export function effectiveCodexCommand(configured?: string | null): string {
   return configured?.trim() || DEFAULT_CODEX_COMMAND;
 }
 
+export function effectiveAntigravityCommand(configured?: string | null): string {
+  return configured?.trim() || DEFAULT_ANTIGRAVITY_COMMAND;
+}
+
 /** 从 store 读取当前生效的 Agent 基础命令（App 初始化时由后端设置同步，浏览器模式经 /api/runtime）。 */
 export function currentClaudeCommand(): string {
   return effectiveClaudeCommand(useAppStore.getState().agentCommands.claude);
@@ -21,4 +26,8 @@ export function currentClaudeCommand(): string {
 
 export function currentCodexCommand(): string {
   return effectiveCodexCommand(useAppStore.getState().agentCommands.codex);
+}
+
+export function currentAntigravityCommand(): string {
+  return effectiveAntigravityCommand(useAppStore.getState().agentCommands.antigravity);
 }

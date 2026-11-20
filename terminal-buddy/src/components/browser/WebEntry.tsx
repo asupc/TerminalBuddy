@@ -37,7 +37,7 @@ export default function WebEntry() {
     const runtimeRequest = fetch('/api/runtime').then(async response => {
       if (!response.ok) throw new Error('无法连接服务端，请先启动独立 Web 服务');
       if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('当前后端版本不支持完整网页界面，请启动此分支的独立服务端');
-      const runtime = await response.json() as { platform: string; fullInterface?: boolean; windowsBuildNumber?: number | null; isDocker?: boolean; agentCommands?: { claude: string; codex: string } };
+      const runtime = await response.json() as { platform: string; fullInterface?: boolean; windowsBuildNumber?: number | null; isDocker?: boolean; agentCommands?: { claude: string; codex: string; antigravity?: string } };
       if (!runtime.fullInterface) throw new Error('服务端版本不支持完整网页界面，请启动此分支的服务端');
       setServerPlatform(runtime.platform);
       setWindowsBuildNumber(runtime.windowsBuildNumber ?? null);
@@ -46,6 +46,7 @@ export default function WebEntry() {
       if (runtime.agentCommands) useAppStore.getState().setAgentCommands({
         claude: runtime.agentCommands.claude ?? '',
         codex: runtime.agentCommands.codex ?? '',
+        antigravity: runtime.agentCommands.antigravity ?? '',
       });
     });
     const statusRequest = fetch('/api/auth/status').then(async response => {

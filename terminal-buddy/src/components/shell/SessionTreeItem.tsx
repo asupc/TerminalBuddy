@@ -69,6 +69,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
   const sessions = useAppStore(s => s.sessions);
   const profiles = useAppStore(s => s.profiles);
   const taskSummaries = useTaskSummaryStore(s => s.summaries);
+  const taskProviders = useTaskSummaryStore(s => s.providers);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const terminalActivities = useAppStore(s => s.terminalActivities);
@@ -289,7 +290,9 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
         const launchInfo = childSession?.sessionType !== 'editor'
           ? getTaskLaunchInfo(childSession?.extraParams, profile?.startupCommands, childSession?.extraParamMode)
           : undefined;
-        const provider = task?.provider ?? launchInfo?.provider;
+        const provider = task?.provider
+          ?? (childSession?.sessionType !== 'editor' ? taskProviders[child.id] : undefined)
+          ?? launchInfo?.provider;
         // 手动重命名过的会话固定显示手动名称；未取得摘要时回落到会话名。
         // 项目名只在分组标题展示，会话行不重复。
         const fallbackName = childSession?.manualTitle

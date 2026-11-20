@@ -124,3 +124,42 @@
   max-height: calc(100vh - 32px);
   overflow-y: auto;
 }
+
+.antigravity-model-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.antigravity-model-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.antigravity-model-refresh-btn:hover:not(:disabled) {
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
+}
+
+.antigravity-model-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.antigravity-model-spin {
+  animation: antigravity-model-spin 1s linear infinite;
+}
+
+@keyframes antigravity-model-spin {
+  to { transform: rotate(360deg); }
+}

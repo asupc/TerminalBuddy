@@ -12,6 +12,7 @@ export interface VsCodeTerminalSupport {
 export interface AgentCommands {
   claude: string;
   codex: string;
+  antigravity: string;
 }
 
 export type AgentDownloadSource = 'npmmirror' | 'official';
@@ -51,8 +52,8 @@ export async function getBackendAppSettings(): Promise<{
   return invoke('get_app_settings');
 }
 
-export async function saveAgentCommands(claude: string, codex: string): Promise<void> {
-  return invoke('save_agent_commands', { claude, codex });
+export async function saveAgentCommands(claude: string, codex: string, antigravity: string): Promise<void> {
+  return invoke('save_agent_commands', { claude, codex, antigravity });
 }
 
 /** 新会话形态：true = 原生会话，false = 终端接力（默认）。只影响之后新建的会话。 */

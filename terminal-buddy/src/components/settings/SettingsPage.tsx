@@ -138,8 +138,8 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
     id: 'ai',
     label: 'Agent & LLM',
     sections: [
-      { id: 'agent-cli', label: 'Agent 管理', icon: Container, description: 'Claude Code 与 Codex CLI 的安装、更新与基础启动命令', keywords: ['agent', 'claude', 'codex', 'cli', '安装', '环境', '版本', '更新', '启动命令'] },
-      { id: 'llm-providers', label: '模型供应商', icon: Boxes, description: 'Claude 与 Codex 供应商的端点、密钥与模型配置', keywords: ['ai', 'provider', 'model', 'deepseek', 'anthropic', 'codex', 'api'] },
+      { id: 'agent-cli', label: 'Agent 管理', icon: Container, description: 'Claude Code、Codex CLI 与 Antigravity CLI 的安装、更新与基础启动命令', keywords: ['agent', 'claude', 'codex', 'antigravity', 'agy', 'cli', '安装', '环境', '版本', '更新', '启动命令'] },
+      { id: 'llm-providers', label: '模型供应商', icon: Boxes, description: 'Claude、Codex 与 Antigravity 的模型启用清单、默认推理等级及供应商端点配置', keywords: ['ai', 'provider', 'model', 'deepseek', 'anthropic', 'codex', 'antigravity', 'agy', 'effort', '推理', 'api'] },
       { id: 'claude-settings', label: 'Claude 默认配置', icon: FileJson, description: '用户级 settings.json 图形化配置、官方说明与快照备份', keywords: ['claude', 'settings.json', 'effort', 'token', 'context'] },
       { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit, description: '配置各厂商控制台 API Key 或 Cookie，用于顶部工具栏实时查询套餐余量', keywords: ['usage', 'token', 'cost', 'stats', 'apikey', 'cookie', '用量'] },
     ],

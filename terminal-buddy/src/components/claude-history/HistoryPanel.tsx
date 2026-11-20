@@ -36,12 +36,14 @@ import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { supportsSystemExplorerOpen } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
+import { AntigravityModelMenuSection } from '../shared/AntigravityModelMenuSection';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { ClaudeExportDialog } from './ClaudeExportDialog';
 import { type ClaudeVendorRef } from './resumeClaudeSession';
 import type { Project, SessionHistoryProvider } from '../../types';
 import { AGENT_HISTORY_AUTO_ARCHIVED_EVENT, sessionHistory } from '../../services/sessionHistory';
 import { getAgentCliEnvironment } from '../../services/agentCli';
+import { resumedAntigravitySessionId } from '../../utils/antigravityLaunch';
 import { resumedCodexSessionId } from '../../utils/codexLaunch';
 import { openExistingAgentSession } from '../../utils/openAgentChat';
 import { getAppSettings } from '../../utils/settings';
@@ -126,24 +128,30 @@ export const HistoryPanel: FC<HistoryPanelProps> = props => {
     if (requestedProvider) setProvider(requestedProvider);
   }, [requestedProvider, focusToken]);
   const [codexAvailable, setCodexAvailable] = useState(false);
-  // 环境探测完成前不要因为 providers 暂时只有 Claude 就把外部请求切回的 Codex 打回去。
+  const [antigravityAvailable, setAntigravityAvailable] = useState(false);
+  // 环境探测完成前不要因为 providers 暂时只有 Claude 就把外部请求切回的 Codex / Antigravity 打回去。
   const [environmentChecked, setEnvironmentChecked] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    const apply = (environment: { codex?: { status: string } }) => {
+    const isCliReady = (status?: string) =>
+      status === 'installed' || status === 'updating' || status === 'installing';
+    const apply = (environment: {
+      codex?: { status: string };
+      antigravity?: { status: string };
+    }) => {
       if (cancelled) return;
-      setCodexAvailable(
-        environment.codex?.status === 'installed'
-        || environment.codex?.status === 'updating'
-        || environment.codex?.status === 'installing',
-      );
+      setCodexAvailable(isCliReady(environment.codex?.status));
+      setAntigravityAvailable(isCliReady(environment.antigravity?.status));
       setEnvironmentChecked(true);
     };
     void getAgentCliEnvironment().then(apply).catch(() => {
       if (!cancelled) setEnvironmentChecked(true);
     });
     const onChange = (event: Event) => {
-      const detail = (event as CustomEvent<{ codex?: { status: string } }>).detail;
+      const detail = (event as CustomEvent<{
+        codex?: { status: string };
+        antigravity?: { status: string };
+      }>).detail;
       if (detail) apply(detail);
     };
     window.addEventListener('agent-cli-status-changed', onChange);
@@ -155,7 +163,8 @@ export const HistoryPanel: FC<HistoryPanelProps> = props => {
   const providers = useMemo<SessionHistoryProvider[]>(() => [
     'claude',
     ...(codexAvailable ? ['codex' as const] : []),
-  ], [codexAvailable]);
+    ...(antigravityAvailable ? ['antigravity' as const] : []),
+  ], [codexAvailable, antigravityAvailable]);
   useEffect(() => {
     if (environmentChecked && !providers.includes(provider)) setProvider('claude');
   }, [providers, provider, environmentChecked]);
@@ -182,6 +191,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
+  const refreshAntigravityProviderConfig = useAppStore(s => s.refreshAntigravityProviderConfig);
   const sessions = useAppStore(s => s.sessions);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
@@ -235,8 +245,10 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
 
   // 模型菜单数据源：挂载时加载，右键打开时用缓存。
   useEffect(() => {
-    void (provider === 'claude' ? refreshClaudeLaunchTargets() : refreshCodexLaunchTargets());
-  }, [provider, refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
+    if (provider === 'claude') void refreshClaudeLaunchTargets();
+    else if (provider === 'codex') void refreshCodexLaunchTargets();
+    else void refreshAntigravityProviderConfig();
+  }, [provider, refreshClaudeLaunchTargets, refreshCodexLaunchTargets, refreshAntigravityProviderConfig]);
 
   useEffect(() => {
     searchRequestRef.current += 1;
@@ -378,15 +390,21 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
     return () => document.removeEventListener('mousedown', track, true);
   }, []);
 
-  // 会话 → 运行中终端映射（terminalId → claudeSessionId 反查）
+  // 会话 → 运行中终端映射（terminalId → 会话 ID 反查）
   const liveTerminalBySession = useMemo(() => {
     const map = new Map<string, string>();
     if (provider === 'claude') {
       for (const [terminalId, claudeId] of Object.entries(claudeSessionIds)) map.set(claudeId, terminalId);
-    } else {
+    } else if (provider === 'codex') {
       for (const session of sessions) {
         if (session.extraParamMode !== 'independent') continue;
         const id = resumedCodexSessionId(session.extraParams);
+        if (id) map.set(id, session.id);
+      }
+    } else {
+      for (const session of sessions) {
+        if (session.extraParamMode !== 'independent') continue;
+        const id = resumedAntigravitySessionId(session.extraParams);
         if (id) map.set(id, session.id);
       }
     }
@@ -450,6 +468,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
   // 「新会话形态」为原生会话时，历史恢复走原生聊天标签（独立 CLI 进程 + --resume/thread 续接），
   // 与项目模型启动共用同一开关；会话仍活在某个终端里时保持终端路径（聚焦原终端）。
   const resumeNative = useCallback(async (item: ClaudeSessionItem, vendorRef?: ClaudeVendorRef) => {
+    if (provider === 'antigravity') return;
     const session = await aiSessionResumeHistory(
       provider,
       item.sessionId,
@@ -460,7 +479,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
   }, [provider]);
 
   const handleResume = useCallback((item: ClaudeSessionItem) => {
-    if (getAppSettings().nativeChatSessions && !liveTerminalBySession.has(item.sessionId)) {
+    if (provider !== 'antigravity' && getAppSettings().nativeChatSessions && !liveTerminalBySession.has(item.sessionId)) {
       void resumeNative(item).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
       return;
     }
@@ -469,10 +488,10 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
     }).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
-  }, [history, liveTerminalBySession, resumeNative, showToast]);
+  }, [history, liveTerminalBySession, provider, resumeNative, showToast]);
 
   const handleResumeWithModel = useCallback((item: ClaudeSessionItem, vendorRef: ClaudeVendorRef) => {
-    if (getAppSettings().nativeChatSessions && !liveTerminalBySession.has(item.sessionId)) {
+    if (provider !== 'antigravity' && getAppSettings().nativeChatSessions && !liveTerminalBySession.has(item.sessionId)) {
       void resumeNative(item, vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
       return;
     }
@@ -481,7 +500,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
     }, vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
-  }, [history, liveTerminalBySession, resumeNative, showToast]);
+  }, [history, liveTerminalBySession, provider, resumeNative, showToast]);
 
   const handleReplay = useCallback((sessionId: string, title: string, projectDir: string, focusSeq?: number) => {
     openClaudeReplayTab({ sessionId, title, projectDir, focusSeq, provider });
@@ -871,18 +890,37 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
             hint="（双击）"
             onClick={() => { handleResume(contextMenuItem); setContextMenu(null); }}
           />
-          <ClaudeModelMenuSection
-            source={provider}
-            itemClassName="claude-hist-context-item"
-            separatorClassName="claude-hist-context-sep"
-            title="指定模型恢复"
-            onPickModel={(providerId, modelId) => {
-              const item = contextMenuItem;
-              setContextMenu(null);
-              handleResumeWithModel(item, { providerId, modelId });
-            }}
-            onGotoProviders={() => { setContextMenu(null); useAppStore.getState().setProviderSettingsTab(provider); openSettingsDialog('llm-providers'); }}
-          />
+          {provider === 'antigravity' ? (
+            <AntigravityModelMenuSection
+              itemClassName="claude-hist-context-item"
+              separatorClassName="claude-hist-context-sep"
+              mode="resume"
+              title="指定模型恢复"
+              onPickModel={(modelId, effort) => {
+                const item = contextMenuItem;
+                setContextMenu(null);
+                handleResumeWithModel(item, { providerId: '', modelId: modelId ?? '', effort });
+              }}
+              onGotoProviders={() => {
+                setContextMenu(null);
+                useAppStore.getState().setProviderSettingsTab('antigravity');
+                openSettingsDialog('llm-providers');
+              }}
+            />
+          ) : (
+            <ClaudeModelMenuSection
+              source={provider}
+              itemClassName="claude-hist-context-item"
+              separatorClassName="claude-hist-context-sep"
+              title="指定模型恢复"
+              onPickModel={(providerId, modelId) => {
+                const item = contextMenuItem;
+                setContextMenu(null);
+                handleResumeWithModel(item, { providerId, modelId });
+              }}
+              onGotoProviders={() => { setContextMenu(null); useAppStore.getState().setProviderSettingsTab(provider); openSettingsDialog('llm-providers'); }}
+            />
+          )}
           <MenuItem
             icon={Eye}
             label="查看详情 / 回放"

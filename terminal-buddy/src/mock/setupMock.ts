@@ -181,6 +181,48 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
     // console.log(`[Mock Invoke] ${cmd}`, args);
 
     switch (cmd) {
+      // ===== Agent CLI =====
+      case 'get_agent_cli_environment':
+        return {
+          claude: { status: 'installed', version: '2.1.10', message: null, update: null, updatedVersion: null },
+          codex: { status: 'installed', version: '0.116.0', message: null, update: null, updatedVersion: null },
+          antigravity: { status: 'installed', version: '1.5.10', message: null, update: null, updatedVersion: null },
+        };
+      case 'list_antigravity_models':
+        return [
+          { id: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)' },
+          { id: 'gemini-pro-orchestrator-neon', name: 'Orchestrator (Neon)' },
+          { id: 'claude-sonnet-5-5-medium', name: 'Claude Sonnet 5.5 (Medium)' },
+        ];
+      case 'get_antigravity_provider_config':
+        return {
+          defaultEffortLevel: 'high',
+          availableModels: [
+            { id: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)' },
+            { id: 'gemini-pro-orchestrator-neon', name: 'Orchestrator (Neon)' },
+            { id: 'claude-sonnet-5-5-medium', name: 'Claude Sonnet 5.5 (Medium)' },
+          ],
+          enabledModels: [
+            { id: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)', effortLevel: '' },
+          ],
+        };
+      case 'save_antigravity_provider_config':
+        return args.config ?? null;
+      case 'fetch_antigravity_provider_models':
+        return {
+          defaultEffortLevel: 'high',
+          availableModels: [
+            { id: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)' },
+            { id: 'gemini-pro-orchestrator-neon', name: 'Orchestrator (Neon)' },
+            { id: 'claude-sonnet-5-5-medium', name: 'Claude Sonnet 5.5 (Medium)' },
+          ],
+          enabledModels: [
+            { id: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)', effortLevel: '' },
+          ],
+        };
+      case 'save_agent_commands':
+        return null;
+
       // ===== Profiles =====
       case 'get_all_profiles':
         return [...MOCK_PROFILES];
@@ -330,6 +372,21 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
         return [];
       case 'codex_history_rescan':
         return { scanned: 0, updated: 0, total: 0, pending: 0 };
+
+      // Antigravity CLI 演示模式保持空列表，各命令均有兜底响应。
+      case 'antigravity_history_list':
+      case 'antigravity_history_search':
+        return [];
+      case 'antigravity_history_rescan':
+        return { scanned: 0, updated: 0, total: 0, pending: 0 };
+      case 'antigravity_history_get_replay':
+        return { total: 0, messages: [], title: '', projectDir: '', model: null, inputTokens: 0, outputTokens: 0, startedAt: null, updatedAt: 0 };
+      case 'antigravity_history_rename':
+      case 'antigravity_history_set_flags':
+      case 'antigravity_history_delete':
+      case 'antigravity_history_delete_many':
+      case 'antigravity_history_export':
+        return null;
 
       // ===== Claude History =====
       case 'claude_history_list':
@@ -547,6 +604,16 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
         }
         return null;
       }
+
+      case 'get_terminal_task_summaries':
+        return {
+          enabled: false,
+          summaries: {},
+          activities: {},
+          providers: {},
+        };
+      case 'terminal_agent_usage':
+        return null;
 
       default:
         console.warn(`[Mock Unhandled Cmd] ${cmd}`, args);

@@ -334,7 +334,7 @@
   white-space: nowrap;
 }
 
-/* 品牌标底衬：Claude 星芒内嵌官方原色，仅配淡色底衬；Codex 六瓣结用 currentColor 染 OpenAI 绿。 */
+/* 品牌标底衬：Claude 星芒内嵌官方原色，仅配淡色底衬；Codex 六瓣结用 currentColor 染 OpenAI 绿；Antigravity 使用 Google 蓝。 */
 .agent-cli-list .agent-cli-claude .container-environment-tool-icon {
   background: color-mix(in srgb, #d97757 12%, transparent);
 }
@@ -342,6 +342,11 @@
 .agent-cli-list .agent-cli-codex .container-environment-tool-icon {
   color: #10a37f;
   background: color-mix(in srgb, #10a37f 12%, transparent);
+}
+
+.agent-cli-list .agent-cli-antigravity .container-environment-tool-icon {
+  color: #4285f4;
+  background: color-mix(in srgb, #4285f4 12%, transparent);
 }
 
 .agent-cli-list .container-environment-tool-icon svg {

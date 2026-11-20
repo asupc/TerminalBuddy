@@ -3,8 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { applyTerminalEvent } from '../services/claudeNotification';
 import type { ClaudeHookTerminalEvent } from '../services/tauri/claudeHook';
 
+export type TaskSummaryProvider = 'claude' | 'codex' | 'antigravity';
+
 export interface TerminalTaskSummary {
-  provider: 'claude' | 'codex';
+  provider: TaskSummaryProvider;
   sessionId: string;
   summary: string;
   model?: string;
@@ -13,6 +15,7 @@ export interface TerminalTaskSummary {
 interface TaskSummaryState {
   enabled: boolean;
   summaries: Record<string, TerminalTaskSummary>;
+  providers: Record<string, TaskSummaryProvider>;
   saving: boolean;
   error: string | null;
 }
@@ -20,6 +23,7 @@ interface TaskSummaryState {
 export const useTaskSummaryStore = create<TaskSummaryState>(() => ({
   enabled: false,
   summaries: {},
+  providers: {},
   saving: false,
   error: null,
 }));
@@ -28,15 +32,26 @@ let settingsRevision = 0;
 
 export async function refreshTaskSummaries(terminalIds: string[]): Promise<void> {
   const revision = settingsRevision;
-  const result = await invoke<Pick<TaskSummaryState, 'enabled' | 'summaries'> & { activities?: Record<string, ClaudeHookTerminalEvent> }>('get_terminal_task_summaries', { terminalIds });
+  const result = await invoke<
+    Pick<TaskSummaryState, 'enabled' | 'summaries'> & {
+      activities?: Record<string, ClaudeHookTerminalEvent>;
+      providers?: Record<string, TaskSummaryProvider>;
+    }
+  >('get_terminal_task_summaries', { terminalIds });
   // 状态恢复独立于摘要设置；快照只恢复灯态，不重发历史完成通知。
   for (const event of Object.values(result.activities ?? {})) {
     if (terminalIds.includes(event.terminalId)) applyTerminalEvent(event, false);
   }
   if (revision !== settingsRevision || useTaskSummaryStore.getState().saving) return;
   const previous = useTaskSummaryStore.getState();
-  if (previous.enabled !== result.enabled || JSON.stringify(previous.summaries) !== JSON.stringify(result.summaries)) {
-    useTaskSummaryStore.setState({ enabled: result.enabled, summaries: result.enabled ? result.summaries : {} });
+  const nextSummaries = result.enabled ? result.summaries : {};
+  const nextProviders = result.providers ?? {};
+  if (
+    previous.enabled !== result.enabled
+    || JSON.stringify(previous.summaries) !== JSON.stringify(nextSummaries)
+    || JSON.stringify(previous.providers) !== JSON.stringify(nextProviders)
+  ) {
+    useTaskSummaryStore.setState({ enabled: result.enabled, summaries: nextSummaries, providers: nextProviders });
   }
 }
 

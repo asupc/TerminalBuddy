@@ -5,7 +5,8 @@ import { defaultShellType } from '../services/platform';
 import { projectForDirectory } from './projectPath';
 import { inheritableClaudeArgs } from './claudeLaunch';
 import { buildCodexRefCommand } from './codexLaunch';
-import { currentClaudeCommand, currentCodexCommand } from './agentCommands';
+import { buildAntigravityLaunchCommand } from './antigravityLaunch';
+import { currentAntigravityCommand, currentClaudeCommand, currentCodexCommand } from './agentCommands';
 
 /**
  * 打开一个 PowerShell 终端标签到指定目录，行为等同“文件与 Git”面板右键菜单中的“在当前目录打开命令窗口”。
@@ -84,5 +85,19 @@ export async function openProjectAgentTerminal(
   } catch (error) {
     const label = source === 'claude' ? '模型' : 'Codex 模型';
     useAppStore.getState().showToast(`${label}启动失败：${String(error)}`, 'error');
+  }
+}
+
+/** 项目 Antigravity CLI 启动：使用内置或自定义的 `agy` 基础命令（可选追加 `--model` / `--effort`）在项目终端启动。 */
+export async function openProjectAntigravityTerminal(
+  project: Project,
+  modelId?: string,
+  effort?: string,
+): Promise<void> {
+  try {
+    const command = buildAntigravityLaunchCommand(currentAntigravityCommand(), modelId, effort);
+    await openTerminalInDir(project.path, { command, name: project.name, groupName: project.name });
+  } catch (error) {
+    useAppStore.getState().showToast(`Antigravity CLI 启动失败：${String(error)}`, 'error');
   }
 }

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { listen } from '@tauri-apps/api/event';
 import { Play, RefreshCw, Star, X } from 'lucide-react';
 import { AgentIcon } from '../agent-chat/AgentIcon';
+import { AntigravityModelMenuSection } from '../shared/AntigravityModelMenuSection';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { AGENT_HISTORY_AUTO_ARCHIVED_EVENT, sessionHistory } from '../../services/sessionHistory';
 import {
@@ -11,6 +12,7 @@ import {
   type ClaudeSessionItem,
 } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
+import { resumedAntigravitySessionId } from '../../utils/antigravityLaunch';
 import { getAppSettings } from '../../utils/settings';
 import { openExistingAgentSession } from '../../utils/openAgentChat';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
@@ -79,10 +81,12 @@ export function AgentHistoryPopover({
 }: AgentHistoryPopoverProps) {
   const history = useMemo(() => sessionHistory(provider), [provider]);
   const projects = useAppStore(s => s.projects);
+  const sessions = useAppStore(s => s.sessions);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
   const agentSessionBindings = useAppStore(s => s.agentSessionBindings);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
+  const refreshAntigravityProviderConfig = useAppStore(s => s.refreshAntigravityProviderConfig);
   const showToast = useAppStore(s => s.showToast);
 
   const [items, setItems] = useState<ClaudeSessionItem[]>([]);
@@ -229,8 +233,10 @@ export function AgentHistoryPopover({
   // 右键菜单里的「指定模型恢复」需要供应商/模型目录：打开菜单时刷新一次。
   useEffect(() => {
     if (!contextMenu) return;
-    void (provider === 'claude' ? refreshClaudeLaunchTargets() : refreshCodexLaunchTargets());
-  }, [contextMenu, provider, refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
+    if (provider === 'claude') void refreshClaudeLaunchTargets();
+    else if (provider === 'codex') void refreshCodexLaunchTargets();
+    else void refreshAntigravityProviderConfig();
+  }, [contextMenu, provider, refreshClaudeLaunchTargets, refreshCodexLaunchTargets, refreshAntigravityProviderConfig]);
 
   // 首帧按鼠标位置渲染，量出真实尺寸后再贴边修正（模型数量决定菜单高度，不能预估）。
   // 供应商目录异步到达会让菜单变高，用 ResizeObserver 再校正一次。
@@ -256,12 +262,18 @@ export function AgentHistoryPopover({
     const set = new Set<string>();
     if (provider === 'claude') {
       for (const id of Object.values(claudeSessionIds)) set.add(id);
+    } else if (provider === 'antigravity') {
+      for (const session of sessions) {
+        if (session.extraParamMode !== 'independent') continue;
+        const id = resumedAntigravitySessionId(session.extraParams);
+        if (id) set.add(id);
+      }
     }
     for (const binding of Object.values(agentSessionBindings)) {
       if (binding.provider === provider) set.add(binding.sessionId);
     }
     return set;
-  }, [provider, claudeSessionIds, agentSessionBindings]);
+  }, [provider, claudeSessionIds, agentSessionBindings, sessions]);
 
   const visibleItems = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -272,8 +284,8 @@ export function AgentHistoryPopover({
   const resumeItem = useCallback(async (item: ClaudeSessionItem) => {
     const title = item.customTitle || item.title;
     try {
-      // 原生会话形态下优先续接 CLI 线程；会话已在终端里时仍走终端恢复路径（聚焦原终端）。
-      if (!liveSessionIds.has(item.sessionId) && getAppSettings().nativeChatSessions) {
+      // 原生会话形态下优先续接 CLI 线程；会话已在终端里或 Antigravity 走终端恢复路径。
+      if (provider !== 'antigravity' && !liveSessionIds.has(item.sessionId) && getAppSettings().nativeChatSessions) {
         const session = await aiSessionResumeHistory(provider, item.sessionId, null, null);
         openExistingAgentSession(session);
       } else {
@@ -291,11 +303,11 @@ export function AgentHistoryPopover({
    */
   const resumeWithModel = useCallback(async (
     item: ClaudeSessionItem,
-    vendorRef: { providerId: string; modelId: string },
+    vendorRef: { providerId: string; modelId: string; effort?: string },
   ) => {
     const title = item.customTitle || item.title;
     try {
-      if (!liveSessionIds.has(item.sessionId) && getAppSettings().nativeChatSessions) {
+      if (provider !== 'antigravity' && !liveSessionIds.has(item.sessionId) && getAppSettings().nativeChatSessions) {
         const session = await aiSessionResumeHistory(
           provider, item.sessionId, vendorRef.providerId, vendorRef.modelId,
         );
@@ -327,7 +339,11 @@ export function AgentHistoryPopover({
     rows[nextIndex]?.focus();
   }, []);
 
-  const agentLabel = provider === 'codex' ? 'Codex' : 'Claude Code';
+  const agentLabel = provider === 'codex'
+    ? 'Codex'
+    : provider === 'antigravity'
+      ? 'Antigravity CLI'
+      : 'Claude Code';
   // 索引刷新后列表对象会被替换：右键操作始终取最新条目，避免用旧数据恢复。
   const contextMenuItem = contextMenu
     ? items.find(item => item.sessionId === contextMenu.item.sessionId) ?? contextMenu.item
@@ -498,24 +514,44 @@ export function AgentHistoryPopover({
             <span className="agent-history-context-label">恢复会话</span>
             <span className="agent-history-context-hint">默认</span>
           </div>
-          <ClaudeModelMenuSection
-            source={provider}
-            itemClassName="agent-history-context-item"
-            separatorClassName="agent-history-context-sep"
-            submenuClassName="agent-history-model-submenu"
-            title="指定模型恢复"
-            onPickModel={(providerId, modelId) => {
-              const item = contextMenuItem;
-              setContextMenu(null);
-              void resumeWithModel(item, { providerId, modelId });
-            }}
-            onGotoProviders={() => {
-              setContextMenu(null);
-              onClose();
-              useAppStore.getState().setProviderSettingsTab(provider);
-              useAppStore.getState().openSettingsDialog('llm-providers');
-            }}
-          />
+          {provider === 'antigravity' ? (
+            <AntigravityModelMenuSection
+              itemClassName="agent-history-context-item"
+              separatorClassName="agent-history-context-sep"
+              mode="resume"
+              title="指定模型恢复"
+              onPickModel={(modelId, effort) => {
+                const item = contextMenuItem;
+                setContextMenu(null);
+                void resumeWithModel(item, { providerId: '', modelId: modelId ?? '', effort });
+              }}
+              onGotoProviders={() => {
+                setContextMenu(null);
+                onClose();
+                useAppStore.getState().setProviderSettingsTab('antigravity');
+                useAppStore.getState().openSettingsDialog('llm-providers');
+              }}
+            />
+          ) : (
+            <ClaudeModelMenuSection
+              source={provider}
+              itemClassName="agent-history-context-item"
+              separatorClassName="agent-history-context-sep"
+              submenuClassName="agent-history-model-submenu"
+              title="指定模型恢复"
+              onPickModel={(providerId, modelId) => {
+                const item = contextMenuItem;
+                setContextMenu(null);
+                void resumeWithModel(item, { providerId, modelId });
+              }}
+              onGotoProviders={() => {
+                setContextMenu(null);
+                onClose();
+                useAppStore.getState().setProviderSettingsTab(provider);
+                useAppStore.getState().openSettingsDialog('llm-providers');
+              }}
+            />
+          )}
         </div>,
         document.body,
       )}

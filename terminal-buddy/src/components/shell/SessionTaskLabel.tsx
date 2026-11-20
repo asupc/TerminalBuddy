@@ -13,7 +13,11 @@ interface SessionTaskLabelProps {
 /** 与原生会话标签一致的单行布局：Agent Logo 在前，摘要或会话名随后。 */
 export function SessionTaskLabel({ task, fallbackName, fallbackProvider, color, manualTitle }: SessionTaskLabelProps) {
   const provider = task?.provider ?? fallbackProvider;
-  const providerName = provider === 'codex' ? 'Codex' : 'Claude';
+  const providerName = provider === 'codex'
+    ? 'Codex'
+    : provider === 'antigravity'
+      ? 'Antigravity CLI'
+      : 'Claude';
   const summary = (!manualTitle && task?.summary?.trim()) || fallbackName;
   return (
     <span className="tab-nav-task-label" style={color ? { color } : undefined}>

@@ -5,8 +5,10 @@ import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../store
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName, getNativeAgentLight } from '../../utils/claudeIndicator';
-import { AgentIcon } from '../agent-chat/AgentIcon';import { parseClaudeRef } from '../../utils/claudeLaunch';
+import { AgentIcon } from '../agent-chat/AgentIcon';
+import { parseClaudeRef } from '../../utils/claudeLaunch';
 import { parseCodexRef } from '../../utils/codexLaunch';
+import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
 import { isDockerClient } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
 import { AgentTabContextMenu } from '../shell/AgentTabContextMenu';
@@ -14,7 +16,9 @@ import './TerminalTabBar.css';
 
 export const TerminalTabBar: FC = () => {
   const sessions = useAppStore(s => s.sessions);
+  const profiles = useAppStore(s => s.profiles);
   const taskSummaries = useTaskSummaryStore(s => s.summaries);
+  const taskProviders = useTaskSummaryStore(s => s.providers);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const removeSession = useAppStore(s => s.removeSession);
   const removeSessions = useAppStore(s => s.removeSessions);
@@ -317,9 +321,25 @@ export const TerminalTabBar: FC = () => {
               {session.sessionType !== 'editor' && (() => {
                 const params = session.extraParams ?? '';
                 const modelRef = parseCodexRef(params) ?? parseClaudeRef(params);
-                return modelRef ? (
-                  <span className="terminal-tab-model-chip" title="供应商模型">{modelRef.modelId}</span>
-                ) : null;
+                const profile = profiles.find(item => item.id === session.profileId);
+                const launchInfo = getTaskLaunchInfo(params, profile?.startupCommands, session.extraParamMode);
+                const taskSummary = taskSummaries[session.id];
+                const detectedProvider = taskSummary?.provider ?? taskProviders[session.id] ?? launchInfo?.provider;
+                const antigravityModel = detectedProvider === 'antigravity'
+                  ? (taskSummary?.model ?? (launchInfo?.provider === 'antigravity' ? launchInfo.model : undefined))
+                  : undefined;
+                return (
+                  <>
+                    {detectedProvider === 'antigravity' && (
+                      <AgentIcon provider="antigravity" className="terminal-tab-agent-icon" />
+                    )}
+                    {modelRef ? (
+                      <span className="terminal-tab-model-chip" title="供应商模型">{modelRef.modelId}</span>
+                    ) : antigravityModel ? (
+                      <span className="terminal-tab-model-chip" title="Antigravity 模型">{antigravityModel}</span>
+                    ) : null}
+                  </>
+                );
               })()}
               <span className="terminal-tab-name" title={terminalTabTitle(session.profileName, taskSummaries[session.id], session.manualTitle)} style={session.tabColor ? { color: session.tabColor } : undefined}>{terminalTabTitle(session.profileName, taskSummaries[session.id], session.manualTitle)}</span>
               {/* Docker 端所有会话都来自网页端，Web 标签没有区分度，故隐藏 */}
@@ -476,7 +496,7 @@ export const TerminalTabBar: FC = () => {
             }
           }}
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-          title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}>
+          title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'antigravity' ? 'Antigravity CLI' : 'Claude Code'} · ${tab.title}`}>
           <History className="terminal-tab-history-icon" aria-hidden="true" />
           <span className="terminal-tab-name">{tab.title}</span>
           <button className="terminal-tab-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId, tab.provider); }}

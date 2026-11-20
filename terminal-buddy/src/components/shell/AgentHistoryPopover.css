@@ -33,9 +33,10 @@
   color: var(--accent);
 }
 
-/* 与状态栏入口保持一致：Claude 橙色、Codex 绿色。 */
+/* 与状态栏入口保持一致：Claude 橙色、Codex 绿色、Antigravity 蓝色。 */
 .agent-history-agent-logo.provider-claude { color: #d97757; }
 .agent-history-agent-logo.provider-codex { color: #10a37f; }
+.agent-history-agent-logo.provider-antigravity { color: #4285f4; }
 
 .agent-history-title {
   flex: none;

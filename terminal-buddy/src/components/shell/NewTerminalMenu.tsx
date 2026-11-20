@@ -179,7 +179,12 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
         <div
           className={`context-menu-item has-submenu${hoveredProject ? ' submenu-active' : ''}`}
           onMouseEnter={handleSubmenuAnchor}
-          onMouseLeave={clearHoverMenus}
+          onMouseLeave={event => {
+            if (event.relatedTarget instanceof Element && event.relatedTarget.closest('.claude-model-submenu')) {
+              return;
+            }
+            clearHoverMenus();
+          }}
         >
           <span>新建配置终端</span>
           <span className="submenu-arrow">›</span>

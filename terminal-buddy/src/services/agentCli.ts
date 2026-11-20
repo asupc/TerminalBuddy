@@ -10,10 +10,11 @@ import {
 import {
   getAgentCliEnvironment as invokeGetEnvironment, getAgentCliStatus as invokeGetStatus,
   installAgentCli as invokeInstall, updateAgentCli as invokeUpdate,
-  type AgentCli, type AgentCliEnvironment, type AgentCliStatus,
+  listAntigravityModels as invokeListAntigravityModels,
+  type AgentCli, type AgentCliEnvironment, type AgentCliStatus, type AntigravityModel,
 } from './tauri/agentCli';
 
-export type { AgentCli, AgentCliEnvironment, AgentCliStatus };
+export type { AgentCli, AgentCliEnvironment, AgentCliStatus, AntigravityModel };
 export type { ContainerCli, ContainerCliStatus, ContainerEnvironment };
 
 export function getAgentCliEnvironment(): Promise<AgentCliEnvironment> {
@@ -30,4 +31,8 @@ export function installAgentCli(tool: AgentCli): Promise<AgentCliStatus> {
 
 export function updateAgentCli(tool: AgentCli): Promise<AgentCliStatus> {
   return isBrowserClient() ? updateContainerCli(tool) : invokeUpdate(tool);
+}
+
+export function listAntigravityModels(refresh = false): Promise<AntigravityModel[]> {
+  return invokeListAntigravityModels(refresh);
 }

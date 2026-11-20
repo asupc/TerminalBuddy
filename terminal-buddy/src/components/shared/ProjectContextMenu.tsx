@@ -49,14 +49,23 @@ export const ProjectContextMenu: FC<ProjectContextMenuProps> = ({
 
   useEffect(() => {
     const close = () => onClose();
-    document.addEventListener('mousedown', close);
+    const closeOnOutside = (event: Event) => {
+      if (
+        event.target instanceof Element
+        && (menuRef.current?.contains(event.target) || event.target.closest('.claude-model-submenu'))
+      ) {
+        return;
+      }
+      onClose();
+    };
+    document.addEventListener('mousedown', closeOnOutside);
     document.addEventListener('keydown', close);
-    document.addEventListener('wheel', close);
+    document.addEventListener('wheel', closeOnOutside);
     window.addEventListener('resize', close);
     return () => {
-      document.removeEventListener('mousedown', close);
+      document.removeEventListener('mousedown', closeOnOutside);
       document.removeEventListener('keydown', close);
-      document.removeEventListener('wheel', close);
+      document.removeEventListener('wheel', closeOnOutside);
       window.removeEventListener('resize', close);
     };
   }, [onClose]);

@@ -8,24 +8,42 @@ import { saveAgentCommands, getBackendAppSettings, saveAgentDownloadSource, type
 import { useAppStore } from '../../stores/appStore';
 import { DEFAULT_CLAUDE_COMMAND } from '../../utils/claudeLaunch';
 import { DEFAULT_CODEX_COMMAND } from '../../utils/codexLaunch';
+import { DEFAULT_ANTIGRAVITY_COMMAND } from '../../utils/antigravityLaunch';
 import './AgentManagementSettings.css';
 
 const tools = [
-  { id: 'claude', name: 'Claude Code', defaultCommand: DEFAULT_CLAUDE_COMMAND },
-  { id: 'codex', name: 'Codex CLI', defaultCommand: DEFAULT_CODEX_COMMAND },
+  { id: 'claude', name: 'Claude Code', defaultCommand: DEFAULT_CLAUDE_COMMAND, usesNpmSource: true },
+  { id: 'codex', name: 'Codex CLI', defaultCommand: DEFAULT_CODEX_COMMAND, usesNpmSource: true },
+  { id: 'antigravity', name: 'Antigravity CLI', defaultCommand: DEFAULT_ANTIGRAVITY_COMMAND, usesNpmSource: false },
 ] as const;
 type ToolAction = 'check' | 'install' | 'update';
 
+const createToolRecord = <T,>(initial: T): Record<AgentCli, T> => ({
+  claude: initial,
+  codex: initial,
+  antigravity: initial,
+});
+
 /**
- * 各 Agent 的品牌标，均取自官方资源而非手绘：
+ * 各 Agent 的品牌标，均取自官方资源或几何标识：
  * Claude 星芒取自 claude.ai 的 favicon（原色 #D97757）；
- * Codex 用 ChatGPT 六瓣结（取自 chatgpt-guides.com/logo.svg，currentColor 染色）。
+ * Codex 用 ChatGPT 六瓣结（取自 chatgpt-guides.com/logo.svg，currentColor 染色）；
+ * Antigravity CLI 使用 Google 蓝升空 A 形几何标识。
  */
 function AgentBrandMark({ id }: { id: AgentCli }) {
   if (id === 'claude') {
     return (
       <svg viewBox="0 0 248 248" aria-hidden="true">
         <path fill="#D97757" d="M52.4285 162.873L98.7844 136.879L99.5485 134.602L98.7844 133.334H96.4921L88.7237 132.862L62.2346 132.153L39.3113 131.207L17.0249 130.026L11.4214 128.844L6.2 121.873L6.7094 118.447L11.4214 115.257L18.171 115.847L33.0711 116.911L55.485 118.447L71.6586 119.392L95.728 121.873H99.5485L100.058 120.337L98.7844 119.392L97.7656 118.447L74.5877 102.732L49.4995 86.1905L36.3823 76.62L29.3779 71.7757L25.8121 67.2858L24.2839 57.3608L30.6515 50.2716L39.3113 50.8623L41.4763 51.4531L50.2636 58.1879L68.9842 72.7209L93.4357 90.6804L97.0015 93.6343L98.4374 92.6652L98.6571 91.9801L97.0015 89.2625L83.757 65.2772L69.6214 40.8192L63.2534 30.6579L61.5978 24.632C60.9565 22.1032 60.579 20.0111 60.579 17.4246L67.8381 7.49965L71.9133 6.19995L81.7193 7.49965L85.7946 11.0443L91.9074 24.9865L101.714 46.8451L116.996 76.62L121.453 85.4816L123.873 93.6343L124.764 96.1155H126.292V94.6976L127.566 77.9197L129.858 57.3608L132.15 30.8942L132.915 23.4505L136.608 14.4708L143.994 9.62643L149.725 12.344L154.437 19.0788L153.8 23.4505L150.998 41.6463L145.522 70.1215L141.957 89.2625H143.994L146.414 86.7813L156.093 74.0206L172.266 53.698L179.398 45.6635L187.803 36.802L193.152 32.5484H203.34L210.726 43.6549L207.415 55.1159L196.972 68.3492L188.312 79.5739L175.896 96.2095L168.191 109.585L168.882 110.689L170.738 110.53L198.755 104.504L213.91 101.787L231.994 98.7149L240.144 102.496L241.036 106.395L237.852 114.311L218.495 119.037L195.826 123.645L162.07 131.592L161.696 131.893L162.137 132.547L177.36 133.925L183.855 134.279H199.774L229.447 136.524L237.215 141.605L241.8 147.867L241.036 152.711L229.065 158.737L213.019 154.956L175.45 145.977L162.587 142.787H160.805V143.85L171.502 154.366L191.242 172.089L215.82 195.011L217.094 200.682L213.91 205.172L210.599 204.699L188.949 188.394L180.544 181.069L161.696 165.118H160.422V166.772L164.752 173.152L187.803 207.771L188.949 218.405L187.294 221.832L181.308 223.959L174.813 222.777L161.187 203.754L147.305 182.486L136.098 163.345L134.745 164.2L128.075 235.42L125.019 239.082L117.887 241.8L111.902 237.31L108.718 229.984L111.902 215.452L115.722 196.547L118.779 181.541L121.58 162.873L123.291 156.636L123.14 156.219L121.773 156.449L107.699 175.752L86.304 204.699L69.3663 222.777L65.291 224.431L58.2867 220.768L58.9235 214.27L62.8713 208.48L86.304 178.705L100.44 160.155L109.551 149.507L109.462 147.967L108.959 147.924L46.6977 188.512L35.6182 189.93L30.7788 185.44L31.4156 178.115L33.7079 175.752L52.4285 162.873Z" />
+      </svg>
+    );
+  }
+  if (id === 'antigravity') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="#4285F4" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M12 3.5L4.5 20.5" />
+        <path d="M12 3.5L19.5 20.5" />
+        <path d="M7.5 14.5C9.8 11.8 14.2 11.8 16.5 14.5" />
       </svg>
     );
   }
@@ -56,8 +74,8 @@ interface AgentManagementSettingsProps {
 export function AgentManagementSettings({ active }: AgentManagementSettingsProps) {
   const [environment, setEnvironment] = useState<AgentCliEnvironment | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [actions, setActions] = useState<Record<AgentCli, ToolAction | null>>({ claude: null, codex: null });
-  const [errors, setErrors] = useState<Record<AgentCli, string>>({ claude: '', codex: '' });
+  const [actions, setActions] = useState<Record<AgentCli, ToolAction | null>>(() => createToolRecord<ToolAction | null>(null));
+  const [errors, setErrors] = useState<Record<AgentCli, string>>(() => createToolRecord(''));
   const [error, setError] = useState('');
   const [downloadSource, setDownloadSource] = useState<AgentDownloadSource | null>(null);
   const [savingSource, setSavingSource] = useState(false);
@@ -65,20 +83,21 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
   const sourcePending = useRef(false);
   const refreshPending = useRef(false);
   const busyTools = useRef(new Set<AgentCli>());
-  const revisions = useRef<Record<AgentCli, number>>({ claude: 0, codex: 0 });
+  const revisions = useRef<Record<AgentCli, number>>(createToolRecord(0));
 
   const agentCommands = useAppStore(state => state.agentCommands);
   const setAgentCommands = useAppStore(state => state.setAgentCommands);
-  const [commands, setCommands] = useState<Record<AgentCli, string>>({ claude: '', codex: '' });
-  const [commandsDirty, setCommandsDirty] = useState<Record<AgentCli, boolean>>({ claude: false, codex: false });
+  const [commands, setCommands] = useState<Record<AgentCli, string>>(() => createToolRecord(''));
+  const [commandsDirty, setCommandsDirty] = useState<Record<AgentCli, boolean>>(() => createToolRecord(false));
   const [savingCommand, setSavingCommand] = useState<AgentCli | null>(null);
-  const [commandsMessage, setCommandsMessage] = useState<Record<AgentCli, string>>({ claude: '', codex: '' });
+  const [commandsMessage, setCommandsMessage] = useState<Record<AgentCli, string>>(() => createToolRecord(''));
 
   useEffect(() => {
     // 只同步未编辑的条目，避免覆盖另一个工具正在输入的内容。
     setCommands(current => ({
       claude: commandsDirty.claude ? current.claude : agentCommands.claude,
       codex: commandsDirty.codex ? current.codex : agentCommands.codex,
+      antigravity: commandsDirty.antigravity ? current.antigravity : agentCommands.antigravity,
     }));
   }, [agentCommands, commandsDirty]);
 
@@ -141,7 +160,8 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
   }, [working, refresh]);
 
   const runAction = async (tool: AgentCli, action: ToolAction) => {
-    if (!downloadSource || sourcePending.current || busyTools.current.has(tool) || isRunning(environment?.[tool])) return;
+    const usesNpmSource = tools.find(item => item.id === tool)?.usesNpmSource ?? true;
+    if ((usesNpmSource && (!downloadSource || sourcePending.current)) || busyTools.current.has(tool) || isRunning(environment?.[tool])) return;
     busyTools.current.add(tool);
     revisions.current[tool] += 1;
     setActions(value => ({ ...value, [tool]: action }));
@@ -179,13 +199,17 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
     try {
       await saveAgentDownloadSource(source);
       setDownloadSource(source);
-      for (const tool of tools) revisions.current[tool.id] += 1;
-      setErrors({ claude: '', codex: '' });
+      for (const tool of tools) {
+        if (tool.usesNpmSource) revisions.current[tool.id] += 1;
+      }
+      setErrors(current => ({ ...current, claude: '', codex: '' }));
       setEnvironment(current => {
         if (!current) return null;
         const next = { ...current };
         for (const tool of tools) {
-          next[tool.id] = { ...current[tool.id], update: null, message: null, updatedVersion: null };
+          if (tool.usesNpmSource) {
+            next[tool.id] = { ...current[tool.id], update: null, message: null, updatedVersion: null };
+          }
         }
         return next;
       });
@@ -204,10 +228,10 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
     setCommandsMessage(value => ({ ...value, [tool]: '' }));
     try {
       const command = commands[tool].trim();
-      // save_agent_commands 一次写两个值：当前工具用草稿，另一个工具沿用已保存值，
-      // 避免把用户尚未保存的另一侧编辑一并写回。
+      // save_agent_commands 一次写全量基础命令：当前工具用草稿，其它工具沿用已保存值，
+      // 避免把用户尚未保存的其它编辑项一并写回。
       const next = { ...agentCommands, [tool]: command };
-      await saveAgentCommands(next.claude, next.codex);
+      await saveAgentCommands(next.claude, next.codex, next.antigravity);
       setAgentCommands(next);
       setCommands(value => ({ ...value, [tool]: command }));
       setCommandsDirty(value => ({ ...value, [tool]: false }));
@@ -233,10 +257,10 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
             <label className="settings-row-title" htmlFor="agent-download-source">版本检查与安装源</label>
             <p className="settings-row-desc">
               {downloadSource === 'npmmirror'
-                ? 'registry.npmmirror.com · 检查、安装和更新均使用国内镜像。安装需要 Node.js（建议 ≥ 22.19）；镜像同步可能稍有延迟。'
+                ? 'registry.npmmirror.com · 仅用于 Claude Code 与 Codex CLI 的检查、安装和更新（国内镜像）。安装需要 Node.js（建议 ≥ 22.19）；镜像同步可能稍有延迟。'
                 : downloadSource === 'official'
-                  ? 'registry.npmjs.org · 使用官方版本源和安装渠道，需要能访问国外下载站点。'
-                  : '下载源用于版本检查、安装和更新，选择后自动保存。'}
+                  ? 'registry.npmjs.org · 仅用于 Claude Code 与 Codex CLI，使用官方版本源和安装渠道，需要能访问国外下载站点。'
+                  : '仅用于 Claude Code 与 Codex CLI 的版本检查、安装和更新，选择后自动保存。'}
             </p>
             {sourceError && <p className="container-environment-error" role="alert">{sourceError}</p>}
           </div>
@@ -303,9 +327,17 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
                   {update?.latestVersion && cli?.version !== update.latestVersion && <span className="agent-cli-version-muted">→ v{update.latestVersion}</span>}
                 </div>
                 <p className="container-environment-hint">
-                  {updating || installing ? `正在通过${downloadSource === 'npmmirror' ? '国内镜像' : '官方源'}下载安装，离开设置页不会中断。`
-                    : cli && cli.status !== 'installed' ? (downloadSource === 'npmmirror' ? '通过国内 npm 镜像安装（需要 Node.js）' : '通过官方渠道安装')
-                      : null}
+                  {updating || installing
+                    ? (tool.usesNpmSource
+                      ? `正在通过${downloadSource === 'npmmirror' ? '国内镜像' : '官方源'}下载安装，离开设置页不会中断。`
+                      : '正在通过 Google 官方源下载安装，离开设置页不会中断。')
+                    : cli && cli.status !== 'installed'
+                      ? (tool.usesNpmSource
+                        ? (downloadSource === 'npmmirror' ? '通过国内 npm 镜像安装（需要 Node.js）' : '通过官方渠道安装')
+                        : '通过 Google 官方发布源安装（需可访问 Google 服务）')
+                      : cli && !tool.usesNpmSource
+                        ? '使用 Google 官方发布源检查更新（不受 npm 下载源影响）'
+                        : null}
                 </p>
                 {updateText && <p className={`container-environment-update ${checking ? 'checking' : updated && update?.state !== 'available' ? 'upToDate' : update?.state}`} role="status" aria-live="polite">
                   {checking ? <LoaderCircle size={13} className="container-environment-spin" aria-hidden="true" />
@@ -323,7 +355,7 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
                 </span>
                 {cli && <button
                   type="button" className={`container-environment-action${nextAction === 'check' && !updating ? '' : ' primary'}`}
-                  disabled={busy || savingSource || !downloadSource} onClick={() => { void runAction(tool.id, nextAction); }}
+                  disabled={busy || (tool.usesNpmSource && (savingSource || !downloadSource))} onClick={() => { void runAction(tool.id, nextAction); }}
                   aria-label={`${buttonText} ${tool.name}`}
                 >
                   {busy ? <LoaderCircle size={14} className="container-environment-spin" aria-hidden="true" />

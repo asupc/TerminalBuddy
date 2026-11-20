@@ -3,9 +3,12 @@ import {
   renameClaudeSessionRecord, setClaudeSessionFlags, deleteClaudeSessionRecord, deleteClaudeSessionRecords, exportClaudeSession,
   listCodexHistory, rescanCodexHistory, searchCodexHistory, getCodexReplay,
   renameCodexSessionRecord, setCodexSessionFlags, deleteCodexSessionRecord, deleteCodexSessionRecords, exportCodexSession,
+  listAntigravityHistory, rescanAntigravityHistory, searchAntigravityHistory, getAntigravityReplay,
+  renameAntigravitySessionRecord, setAntigravitySessionFlags, deleteAntigravitySessionRecord, deleteAntigravitySessionRecords, exportAntigravitySession,
 } from './tauri';
 import { pickClaudeProfile, resumeClaudeSession } from '../components/claude-history/resumeClaudeSession';
 import { pickCodexProfile, resumeCodexSession } from '../components/claude-history/resumeCodexSession';
+import { pickAntigravityProfile, resumeAntigravitySession } from '../components/claude-history/resumeAntigravitySession';
 import type { SessionHistoryProvider } from '../types';
 
 /** 服务端自动归档完成后的广播：打开着的历史列表据此重取（归档状态已变化）。 */
@@ -23,6 +26,12 @@ const providers = {
     list: listCodexHistory, rescan: rescanCodexHistory, search: searchCodexHistory, replay: getCodexReplay,
     rename: renameCodexSessionRecord, setFlags: setCodexSessionFlags, delete: deleteCodexSessionRecord,
     deleteMany: deleteCodexSessionRecords, export: exportCodexSession, pickProfile: pickCodexProfile, resume: resumeCodexSession,
+  },
+  antigravity: {
+    label: 'Antigravity', home: '~/.gemini/antigravity-cli', indexedEvent: 'antigravity-history-indexed',
+    list: listAntigravityHistory, rescan: rescanAntigravityHistory, search: searchAntigravityHistory, replay: getAntigravityReplay,
+    rename: renameAntigravitySessionRecord, setFlags: setAntigravitySessionFlags, delete: deleteAntigravitySessionRecord,
+    deleteMany: deleteAntigravitySessionRecords, export: exportAntigravitySession, pickProfile: pickAntigravityProfile, resume: resumeAntigravitySession,
   },
 };
 

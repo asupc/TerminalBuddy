@@ -612,6 +612,10 @@
   color: var(--warning, #d9a35f);
 }
 
+.tab-nav-task-provider[data-provider="antigravity"] {
+  color: #4285f4;
+}
+
 .tab-nav-task-summary {
   display: block;
   flex: 1;
