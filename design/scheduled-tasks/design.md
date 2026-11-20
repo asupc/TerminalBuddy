@@ -11,7 +11,7 @@
 在 TerminalBuddy 内新增「定时任务」，让用户按计划自动做两类事情：
 
 1. **项目配置任务**：到点启动某个项目下已经配置好的终端（Profile），例如每天 09:30 启动 `项目 A / 开发环境`。
-2. **Agent 任务**：指定 Agent（Claude Code / Codex）+ 供应商 + 模型 + 项目目录，把一段任务描述交给它执行。例如「工作日 18:00 用 DeepSeek Flash 打开 Claude，汇总今天项目里的提交」。
+2. **Agent 任务**：指定 Agent（Claude Code / Codex / Antigravity CLI）+ 供应商 + 模型 + 项目目录，把一段任务描述交给它执行。例如「工作日 18:00 用 DeepSeek Flash 打开 Claude，汇总今天项目里的提交」。Antigravity CLI 使用 Google 账号登录，不需要供应商 / 模型，固定以终端接力执行。
 
 ### 1.2 MVP 范围
 
@@ -586,7 +586,7 @@ pub struct ScheduledTaskInput {
 - Cron 可解析且未来 5 年内至少有一次触发（`Schedule::after(now).next().is_some()`）。
 - `Once.runAt` 可被 `NaiveDateTime` 解析，且不早于当前时刻 1 分钟。
 - `ProjectProfile`：项目存在；Profile 存在；`profile.group` 与项目名一致。
-- `AgentPrompt`：项目存在；`agent` ∈ {claude, codex}；`selection(agent, providerId, model)` 成功；Prompt 非空 ≤ 8000 字符。
+- `AgentPrompt`：项目存在；`agent` ∈ {claude, codex, antigravity}；Claude / Codex 需 `selection(agent, providerId, model)` 成功，Antigravity 固定清空供应商与模型；Prompt 非空 ≤ 8000 字符。
 - `timeoutMinutes` 1–240；`autoCloseMinutes` 0–1440。
 
 项目范围：不接受任意绝对路径，只接受 `projects.json` 里的项目名。这样 Web 端即使拿到登录态，也不能把 Agent 指到任意目录。
@@ -652,8 +652,9 @@ pub struct ScheduledTaskInput {
      - 自动关闭：0 = 保持运行 / 30 / 60 / 120 分钟。
    - **Agent 任务**
      - 项目下拉。
-     - Agent 分段选择（Claude / Codex），按项目 `enabledAgents` 过滤。
+     - Agent 分段选择（Claude / Codex / Antigravity），按项目 `enabledAgents` 过滤。
      - 供应商下拉 + 模型下拉：来自 `catalog`，Agent 过滤；包含「服务端默认配置」。
+     - Antigravity 不显示供应商 / 模型，固定使用 Google 账号与「Agent 管理」中的基础启动命令，按终端接力执行。
      - 任务描述 textarea（带字数）。
      - 超时分钟（默认 30）。
      - 提示：定时任务会以当前 Agent 基础启动命令运行；若该命令需要确认，任务会停在「等待确认」。
