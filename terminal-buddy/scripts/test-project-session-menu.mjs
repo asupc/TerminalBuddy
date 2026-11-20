@@ -20,6 +20,7 @@ const tauri = {
     return 'terminal-' + ++nextId;
   },
   writeToTerminal: async () => {},
+  listTerminals: async () => [],
   readClientData: async () => storedTabs,
   writeClientData: async (_key, value) => { storedTabs = value; },
 };

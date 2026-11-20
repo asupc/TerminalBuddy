@@ -42,6 +42,7 @@ function load(file, mocks = {}) {
 
 const platformMock = {
   isBrowserClient: () => isBrowser,
+  isWebBackend: () => isBrowser,
   isDockerClient: () => false,
   clientTerminalOwner: () => (isBrowser ? 'web' : 'pc'),
   defaultShellType: () => 'powershell',
@@ -417,6 +418,42 @@ assert.equal(state.activeSessionId, r2);
 state.removeSession(r2);
 assert.equal(state.activeSessionId, r0);
 console.log('PASS: 桌面端重启恢复激活历史顺序');
+
+// 模拟页面重载（切换本地 / 远程工作区）：本机 Rust 进程未退出，PTY 仍存活
+// 命中 terminalId 的页签必须直接接回，不能按快照重复创建终端。
+resetStore();
+storedClientData.saved_tabs = JSON.stringify({
+  tabs: [
+    { profileId: 'p0', profileName: 'R0', terminalType: 'powershell', colorTheme: { background: '#1e1e1e', foreground: '#d4d4d4' }, tabColor: null, groupId: 'proj', groupName: '项目 A', owner: 'pc', terminalId: 'live-r0', directory: 'D:/saved' },
+    { profileId: 'p1', profileName: 'R1', terminalType: 'powershell', colorTheme: { background: '#1e1e1e', foreground: '#d4d4d4' }, tabColor: null, groupId: 'default', owner: 'pc', terminalId: 'live-r1' },
+  ],
+  activeIndex: 1,
+  agentTabs: [],
+  activeAgentTabKey: null,
+  agentChatActive: false,
+  recentTabs: ['s:0', 's:1'],
+});
+liveTerminals = [
+  { id: 'live-r0', profileId: 'p0', profileName: 'R0', group: '项目 A', terminalType: 'powershell', loadingMode: 'default', owner: 'pc', directory: 'D:/live' },
+  { id: 'live-r1', profileId: 'p1', profileName: 'R1', group: '', terminalType: 'powershell', loadingMode: 'default', owner: 'pc' },
+];
+state = {
+  currentDirectory: '',
+  terminalLayoutVersion: 0,
+  showToast: () => {},
+  ...createTabsSlice(storeApi.setState),
+  ...createProfilesSlice(storeApi.setState),
+  ...createSessionsSlice(storeApi.setState, storeApi.getState),
+  ...createAgentChatSlice(storeApi.setState, storeApi.getState),
+};
+const startsBeforeReload = nextTerminalSeq;
+await restoreModule.restoreTabs();
+assert.deepEqual(state.sessions.map(s => s.id), ['live-r0', 'live-r1']);
+assert.equal(nextTerminalSeq, startsBeforeReload, '存活终端不应被重复创建');
+assert.equal(state.activeSessionId, 'live-r1');
+assert.equal(state.sessions[0].groupName, '项目 A');
+assert.equal(state.sessionDirectories['live-r0'], 'D:/live');
+console.log('PASS: 页面重载按存活终端接回，不重复创建 PTY');
 
 // 模拟浏览器刷新（后端终端仍存活，reconcileBackendSessions 接回）
 resetStore();
