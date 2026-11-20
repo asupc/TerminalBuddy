@@ -86,6 +86,13 @@ data class AiThinking(
     val totalChars: Long = 0,
 )
 
+/** 发送确认：手机只消费请求标识与版本，正文统一由实时 WebSocket 或 GET 合并。 */
+data class AiSendResult(
+    val id: String = "",
+    val requestId: String = "",
+    val revision: Long = 0,
+)
+
 @Serializable
 data class AiSession(
     val id: String, val title: String, val provider: String, val projectPath: String,

@@ -1140,6 +1140,24 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         clearOutgoing(restoreDraft = true)
     }
 
+    /** 发送确认后按 requestId 替换本地占位，避免等待完整历史回包。 */
+    private fun confirmedUserMessage(sessionId: String, requestId: String) {
+        val message = outgoing?.takeIf { it.sessionId == sessionId && it.requestId == requestId } ?: return
+        outgoing = null
+        mutable.update { current ->
+            val selected = current.selected
+            if (selected == null || selected.id != sessionId) current
+            else current.copy(selected = selected.copy(
+                messages = selected.messages.map { item ->
+                    if (item.id == message.message.id) item.copy(id = requestId) else item
+                },
+                pendingInputs = selected.pendingInputs.map { item ->
+                    if (item.requestId == message.message.id) item.copy(requestId = requestId) else item
+                },
+            ))
+        }
+    }
+
     private fun clearOutgoing(restoreDraft: Boolean) {
         val message = outgoing ?: return
         outgoing = null
@@ -1225,15 +1243,24 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 repository.accounts.activeId?.let { taskNotifications.expectTask(it, target) }
                 startRealtime()
                 // 回复进行中：排队模式等当前回合任务完成后由服务端续发；插话模式直接交给当前 CLI 进程。
-                val result = repository.send(
-                    target.id, text, request.second, ui.sendSteer,
-                    attachments.map { AiSendImage(it.data, it.mediaType, it.name) },
-                )
+                // 发送只负责“服务端已接纳”：服务端确认最多等 60 秒。长文本/图片仍可完整上传，
+                // 但不会再因一次半开连接把发送按钮永远锁在转圈状态。
+                val result = withTimeout(60_000) {
+                    repository.send(
+                        target.id, text, request.second, ui.sendSteer,
+                        attachments.map { AiSendImage(it.data, it.mediaType, it.name) },
+                    )
+                }
                 if (epoch != generation || mutable.value.selected?.id != target.id) return@launch
                 requests.remove(target.id)
-                // 幂等重试可能返回历史消息；成功响应本身即可确认，不能只按新增消息判断。
-                clearOutgoing(restoreDraft = false)
-                receive(result)
+                // 服务端已确认该 requestId；本地占位无需再等完整快照回来。
+                // 旧服务端返回完整会话时，后续实时帧会按版本合并。
+                confirmedUserMessage(target.id, request.second)
+                mutable.update { current ->
+                    val selected = current.selected
+                    if (selected == null || selected.id != target.id) current
+                    else current.copy(selected = selected.copy(revision = maxOf(selected.revision, result.revision)))
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -1255,6 +1282,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteQueuedMessage(requestId: String) {
+        // 当前发送就绪后可删除；占位 ID 只存在于本地，提交时会被服务端拒绝，因此直接忽略。
+        if (requestId.startsWith("local-")) return
         action { repository.deletePendingInput(it.id, requestId) }
     }
 
@@ -1264,7 +1293,30 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(sendSteer = value) }
     }
 
-    fun stop() = action { repository.stop(it.id) }
+    fun stop() {
+        val session = mutable.value.selected ?: return
+        if (actionJob?.isActive == true || session.status == "stopping") return
+        val epoch = generation
+        // 点击即反馈，不等网络返回；失败时恢复原状态并展示原因。
+        mutable.update { it.copy(working = true, error = null, selected = it.selected?.copy(status = "stopping")) }
+        actionJob = viewModelScope.launch {
+            try {
+                repository.stop(session.id)
+                if (epoch == generation) {
+                    withTimeoutOrNull(3_000) { repository.session(session.id) }?.let(::receive)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (epoch == generation) {
+                    mutable.update { it.copy(selected = it.selected?.takeIf { item -> item.id == session.id }?.copy(status = session.status) ?: it.selected) }
+                    failure(e)
+                }
+            } finally {
+                if (epoch == generation) mutable.update { it.copy(working = false) }
+            }
+        }
+    }
 
     /** 点击后立即收起卡片；旧快照不能让已提交的请求重新出现，提交失败时恢复。 */
     fun answer(approval: AiApproval, decision: String, answers: JsonObject = JsonObject(emptyMap())) {
@@ -1278,7 +1330,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 repository.answer(session.id, approval, decision, answers)
                 submitted = true
-                if (epoch == generation) receive(repository.session(session.id))
+                if (epoch == generation) withTimeoutOrNull(3_000) { repository.session(session.id) }?.let(::receive)
             } catch (e: CancellationException) {
                 if (epoch == generation && !submitted) mutable.update {
                     it.copy(answeringApprovalIds = it.answeringApprovalIds - approval.id)
@@ -1389,7 +1441,11 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(working = true, error = null) }
             try {
                 block(session)
-                if (epoch == generation) receive(repository.session(session.id))
+                if (epoch == generation) {
+                    // 停止、插话等动作已由服务端实时推送最终状态；这里只在 3 秒内补拉一次，
+                    // 避免长会话在动作完成后又被完整 GET 拖住，让按钮长时间显示“处理中”。
+                    withTimeoutOrNull(3_000) { repository.session(session.id) }?.let(::receive)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -1415,6 +1471,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         if (pending?.id == session.id) pending = null
         val message = outgoing?.takeIf { it.sessionId == session.id }
         // 入队也算发送确认；按请求标识匹配，连续发送相同正文仍是独立消息。
+        // 服务端现在会先回传轻量确认，这里仍保留快照兜底，兼容尚未升级的服务端。
         val accepted = message != null && (
             session.messages.any { it.role == "user" && it.id == message.requestId } ||
                 session.pendingInputs.any { it.requestId == message.requestId }

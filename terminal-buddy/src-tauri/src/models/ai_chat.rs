@@ -295,6 +295,16 @@ pub struct SendAiMessage {
     pub images: Vec<SendAiImage>,
 }
 
+/// 发送确认：正文通过 WS 与 GET 同步。为兼容旧客户端，首层保留完整会话字段，
+/// 新客户端只读取 `requestId` / `revision`，不会再解析冗长历史。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendAiMessageResult {
+    #[serde(flatten)]
+    pub session: AiSession,
+    pub request_id: String,
+}
+
 /// 把指定排队消息立即插话到当前回合（worker 已退出时按选中消息启动新回合）。
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]

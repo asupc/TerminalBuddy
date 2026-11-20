@@ -12,11 +12,35 @@ use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
     process::{Child, ChildStdin, Command, Stdio}, sync::{Arc, Mutex, OnceLock, mpsc, atomic::{AtomicBool, AtomicUsize, Ordering}},
     thread, time::{Duration, Instant}};
+use tokio::sync::watch;
 use uuid::Uuid;
 
 type Result<T> = std::result::Result<T, String>;
 // 仅记录运行任务以便退出时收尾，不限制任务并发数。
 static RUNNING: AtomicUsize = AtomicUsize::new(0);
+
+/// 会话变化广播：WS 订阅者收到一次唤醒后读取内存快照。
+/// 这里只传递“有变化”的信号，不复制完整会话，避免每次流式增量都产生大对象。
+/// 使用 watch 而非容量有限的队列：慢订阅者只需追赶最新版本，不会被历史帧拖住。
+static SESSION_CHANGES: OnceLock<Mutex<HashMap<String, watch::Sender<u64>>>> = OnceLock::new();
+
+fn session_change_registry() -> &'static Mutex<HashMap<String, watch::Sender<u64>>> {
+    SESSION_CHANGES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 订阅一个会话的变化；注册表由会话服务持有，因此 receiver 的生命周期独立于单次 WS 请求。
+pub fn subscribe_session_changes(id: &str) -> watch::Receiver<u64> {
+    let mut changes = session_change_registry().lock().expect("AI 会话变化锁不可用");
+    let sender = changes.entry(id.to_string()).or_insert_with(|| watch::channel(0).0);
+    sender.subscribe()
+}
+
+fn notify_session_change(id: &str, revision: u64) {
+    let mut changes = session_change_registry().lock().expect("AI 会话变化锁不可用");
+    if let Some(sender) = changes.get(id) {
+        sender.send_replace(revision);
+    }
+}
 
 /// 桌面端当前打开着的原生会话标签（由桌面端实时上报，服务重启即清空）。
 /// 只用于给会话元数据打 `desktopOpen` 标记，不参与会话持久化。
@@ -79,11 +103,16 @@ fn touch(data: &mut AiSession) {
 /// 实时推送会话变化：载荷与 HTTP WS 的 `update` 帧同构（session 元数据 + 变化的消息），
 /// 桌面 webview 与浏览器事件通道共用同一套解析逻辑。
 fn emit_update(cell: &Cell) {
-    let Some(app) = APP.get() else { return; };
     if cell.deleted.load(Ordering::Acquire) { return; }
-    let data = match cell.data.lock() { Ok(data) => data, Err(_) => return };
+    let Some(app) = APP.get() else { return; };
+    let mut data = match cell.data.lock() { Ok(data) => data, Err(_) => return };
     let mut emitted = match cell.emitted.lock() { Ok(emitted) => emitted, Err(_) => return };
-    if emitted.revision == data.revision { return; }
+    if emitted.revision == data.revision {
+        // 桌面事件基线已追上，但 WS 订阅者可能刚建立；仍广播一次唤醒，
+        // 由其用 revision 判断是否需要取快照，不会重复发送正文。
+        notify_session_change(&data.id, data.revision);
+        return;
+    }
     // 增量维护已发射内容：只克隆本次变化的消息，未触及的消息仅做哈希查找。
     // 旧实现每帧全量重建 id→text 表，长会话流式期间每秒克隆整段对话文本数十次。
     let mut changed: Vec<AiMessage> = Vec::new();
@@ -105,9 +134,13 @@ fn emit_update(cell: &Cell) {
         emitted.messages.retain(|id, _| alive.contains(id.as_str()));
     }
     emitted.revision = data.revision;
-    drop(emitted);
+    // metadata 只复制轻量状态，不复制 messages；先释放锁再序列化/发送。
     let metadata = data.metadata();
+    let session_id = data.id.clone();
+    let session_revision = data.revision;
+    drop(emitted);
     drop(data);
+    notify_session_change(&session_id, session_revision);
     let _ = app.emit("ai-session-update", json!({"type":"update","session":metadata,"messages":changed}));
 }
 fn persist(cell: &Cell) -> Result<()> {
@@ -173,6 +206,12 @@ pub fn get(id: &str, owner: &str) -> Result<AiSession> {
     let mut snapshot = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     snapshot.desktop_open = is_desktop_open(&snapshot.id);
     Ok(snapshot)
+}
+
+/// 实时推送只读取当前 revision；没有变化时不必锁会话、克隆正文。
+pub fn revision(id: &str, owner: &str) -> Result<u64> {
+    let cell = load(id, owner)?;
+    cell.data.lock().map(|data| data.revision).map_err(|_| "AI 会话状态不可用".into())
 }
 pub fn list(owner: &str) -> Result<Vec<AiSession>> {
     let mut sessions = Vec::new();
@@ -703,6 +742,16 @@ fn codex_user_input(text: &str, images: &[AiImage]) -> Value {
     Value::Array(input)
 }
 
+/// 发送消息并附加确认标识；会话正文仍返回以兼容旧客户端，新手机只读取轻量字段。
+pub fn send_result(id: &str, owner: &str, input: SendAiMessage) -> Result<SendAiMessageResult> {
+    let cell = load(id, owner)?;
+    let request_id = input.request_id.clone();
+    let outcome = send_locked(&cell, input);
+    emit_update(&cell);
+    outcome.map(|session| SendAiMessageResult { session, request_id })
+}
+
+/// 兼容桌面 Tauri 命令与旧调用方：返回完整快照的既有语义不变。
 pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     let cell = load(id, owner)?;
     let outcome = send_locked(&cell, input);
