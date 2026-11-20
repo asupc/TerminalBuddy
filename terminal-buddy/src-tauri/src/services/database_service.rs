@@ -159,6 +159,12 @@ impl DatabaseService {
             Self::complete_migration(&transaction, "codex-history-v2")?;
             transaction.commit().map_err(|error| format!("提交 Codex 自动归档列迁移失败: {error}"))?;
         }
+        if !Self::has_migration(connection, "antigravity-history-v1")? {
+            let transaction = connection.transaction().map_err(|error| format!("开始 Antigravity 历史迁移失败: {error}"))?;
+            crate::services::antigravity_history_service::init_antigravity_schema(&transaction)?;
+            Self::complete_migration(&transaction, "antigravity-history-v1")?;
+            transaction.commit().map_err(|error| format!("提交 Antigravity 历史迁移失败: {error}"))?;
+        }
 
         Ok(())
     }

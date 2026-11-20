@@ -4,7 +4,10 @@
 //! 只能读 CLI 自己写的 transcript。这里只做只读解析，并把结果按文件 mtime/size 缓存，
 //! 供状态栏按终端轮询。
 use crate::models::ai_chat::AiTokenUsage;
-use crate::services::{ai_catalog_service, claude_hook_settings, llm_provider_service, terminal_task_service};
+use crate::services::{
+    ai_catalog_service, antigravity_provider_service, claude_hook_settings, llm_provider_service,
+    terminal_task_service,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -194,6 +197,58 @@ fn parse_codex(content: &str) -> ParsedUsage {
     result
 }
 
+/// Antigravity CLI transcript：`PLANNER_RESPONSE` 行中的 `input_tokens` 为未缓存输入，
+/// `cache_read_tokens` 为缓存命中输入；两者之和才是该步总输入与上下文占用。
+fn parse_antigravity(content: &str) -> ParsedUsage {
+    let mut result = ParsedUsage::default();
+    let mut by_step: HashMap<String, AiTokenUsage> = HashMap::new();
+    for (index, line) in content.lines().enumerate() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
+        if value.get("type").and_then(Value::as_str) != Some("PLANNER_RESPONSE") {
+            continue;
+        }
+        let source = value.get("source").and_then(Value::as_str).unwrap_or("");
+        if !matches!(source, "" | "MODEL") {
+            continue;
+        }
+        if let Some(model) = value
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        {
+            result.model = Some(model.to_string());
+        }
+        let fresh = number(&value, "input_tokens");
+        let cached = number(&value, "cache_read_tokens");
+        let output = number(&value, "output_tokens");
+        if fresh.is_none() && cached.is_none() && output.is_none() {
+            continue;
+        }
+        let input = add(fresh, cached);
+        let tokens = AiTokenUsage {
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_input_tokens: cached,
+            cache_creation_input_tokens: None,
+            reasoning_output_tokens: None,
+        };
+        let key = value
+            .get("step_index")
+            .and_then(Value::as_u64)
+            .map(|step| format!("step-{step}"))
+            .unwrap_or_else(|| format!("line-{index}"));
+        merge_max(by_step.entry(key).or_default(), &tokens);
+        if let Some(used) = input.filter(|used| *used > 0) {
+            result.context_used = Some(used);
+        }
+    }
+    for tokens in by_step.values() {
+        result.total = plus(&result.total, tokens);
+    }
+    result
+}
+
 fn file_stamp(path: &Path) -> Option<(u64, u64)> {
     let metadata = fs::metadata(path).ok()?;
     let mtime = metadata
@@ -217,10 +272,10 @@ fn parse_file(path: &Path, provider: &str) -> Result<ParsedUsage, String> {
     }
     let content = fs::read_to_string(path)
         .map_err(|error| format!("读取会话文件失败：{}", error))?;
-    let parsed = if provider == "codex" {
-        parse_codex(&content)
-    } else {
-        parse_claude(&content)
+    let parsed = match provider {
+        "codex" => parse_codex(&content),
+        "antigravity" => parse_antigravity(&content),
+        _ => parse_claude(&content),
     };
     if let Ok(mut map) = cache().lock() {
         // 会话数量有限；超过上限时整体清空，避免长期运行后无界增长。
@@ -307,16 +362,111 @@ fn default_claude_window(model: Option<&str>) -> Option<u64> {
     None
 }
 
+fn antigravity_model_effort_suffix(model: Option<&str>) -> Option<String> {
+    let lower = model?.trim().to_ascii_lowercase();
+    for (suffix, level) in [
+        ("-xhigh", "xhigh"),
+        ("-medium", "medium"),
+        ("-high", "high"),
+        ("-low", "low"),
+        ("-max", "max"),
+    ] {
+        if lower.ends_with(suffix) {
+            return Some(level.to_string());
+        }
+    }
+    None
+}
+
+fn antigravity_config_effort_from(
+    config: &antigravity_provider_service::AntigravityProviderConfig,
+    model: Option<&str>,
+) -> Option<String> {
+    if let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) {
+        if let Some(entry) = config
+            .enabled_models
+            .iter()
+            .find(|entry| entry.id.eq_ignore_ascii_case(model))
+        {
+            let own = entry.effort_level.trim();
+            if !own.is_empty() {
+                return Some(own.to_ascii_lowercase());
+            }
+        }
+    }
+    let fallback = config.default_effort_level.trim();
+    (!fallback.is_empty()).then(|| fallback.to_ascii_lowercase())
+}
+
+fn antigravity_config_effort(model: Option<&str>) -> Option<String> {
+    let config = antigravity_provider_service::get_config().ok()?;
+    antigravity_config_effort_from(&config, model)
+}
+
+fn resolve_antigravity_effort(launch_effort: Option<&str>, model: Option<&str>) -> Option<String> {
+    launch_effort
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+        .or_else(|| antigravity_model_effort_suffix(model))
+        .or_else(|| antigravity_config_effort(model))
+}
+
+fn default_antigravity_window(model: Option<&str>, context_used: Option<u64>) -> Option<u64> {
+    let lower = model?.to_ascii_lowercase();
+    if lower.contains("gemini") {
+        return Some(1_000_000);
+    }
+    if ["claude", "opus", "sonnet", "haiku", "fable", "mythos"]
+        .iter()
+        .any(|key| lower.contains(key))
+    {
+        if lower.contains("[1m]")
+            || lower.contains("-1m")
+            || context_used.is_some_and(|used| used > 200_000)
+        {
+            return Some(1_000_000);
+        }
+        return Some(200_000);
+    }
+    None
+}
+
 /// 当前选中终端背后的 Agent 用量；终端尚未绑定 Agent 时返回 None。
 pub fn usage(terminal_id: &str) -> Result<Option<TerminalAgentUsage>, String> {
     let launch = llm_provider_service::terminal_launch_config(terminal_id);
+    let task_hints = terminal_task_service::launch_hints(terminal_id);
     let Some(location) = terminal_task_service::locate_transcript(terminal_id) else {
-        // 绑定已经建立、但 transcript 还没落盘（Claude 首轮对话之前 / Codex 刚启动）
+        // 绑定已经建立、但 transcript 还没落盘（Claude 首轮对话之前 / Codex 或 agy 刚启动）
         // 或暂时找不到文件时，先用启动配置给状态栏一个快照，避免整条 Agent 信息
         // 在会话最初几秒里消失；用量留空，下一轮轮询会补齐。
-        let Some((provider, _session_id)) = terminal_task_service::current_binding(terminal_id) else {
+        let Some(provider) = terminal_task_service::current_binding(terminal_id)
+            .map(|(provider, _)| provider)
+            .or_else(|| {
+                task_hints
+                    .as_ref()
+                    .and_then(|hints| hints.provider.clone())
+                    .filter(|provider| provider == "antigravity")
+            })
+        else {
             return Ok(None);
         };
+        if provider == "antigravity" {
+            let model = task_hints.as_ref().and_then(|hints| hints.model.clone());
+            let effort = resolve_antigravity_effort(
+                task_hints.as_ref().and_then(|hints| hints.effort.as_deref()),
+                model.as_deref(),
+            );
+            let context_window_tokens = default_antigravity_window(model.as_deref(), None);
+            return Ok(Some(TerminalAgentUsage {
+                provider,
+                model,
+                effort,
+                context_window_tokens,
+                updated_at: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
+            }));
+        }
         return Ok(Some(TerminalAgentUsage {
             provider,
             model: launch.as_ref().and_then(|config| config.model.clone()),
@@ -327,26 +477,43 @@ pub fn usage(terminal_id: &str) -> Result<Option<TerminalAgentUsage>, String> {
         }));
     };
     let parsed = parse_file(&location.path, &location.provider)?;
-    let model = parsed
-        .model
-        .clone()
-        .or_else(|| launch.as_ref().and_then(|config| config.model.clone()));
+    let is_antigravity = location.provider == "antigravity";
     let is_claude = location.provider == "claude";
+    let model = parsed.model.clone().or_else(|| {
+        if is_antigravity {
+            task_hints.as_ref().and_then(|hints| hints.model.clone())
+        } else {
+            launch.as_ref().and_then(|config| config.model.clone())
+        }
+    });
     let (settings_window, settings_effort) = if is_claude {
         claude_settings(terminal_task_service::current_cwd(terminal_id).as_deref())
     } else {
         (None, None)
     };
-    let effort = launch
-        .as_ref()
-        .and_then(|config| config.effort.clone())
-        .or(settings_effort)
-        .or_else(|| catalog_effort(&location.provider, model.as_deref()));
-    let context_window = parsed
-        .context_window
-        .or_else(|| launch.as_ref().and_then(|config| config.context_window))
-        .or(settings_window)
-        .or_else(|| if is_claude { default_claude_window(model.as_deref()) } else { None });
+    let effort = if is_antigravity {
+        resolve_antigravity_effort(
+            task_hints.as_ref().and_then(|hints| hints.effort.as_deref()),
+            model.as_deref(),
+        )
+    } else {
+        launch
+            .as_ref()
+            .and_then(|config| config.effort.clone())
+            .or(settings_effort)
+            .or_else(|| catalog_effort(&location.provider, model.as_deref()))
+    };
+    let context_window = if is_antigravity {
+        parsed
+            .context_window
+            .or_else(|| default_antigravity_window(model.as_deref(), parsed.context_used))
+    } else {
+        parsed
+            .context_window
+            .or_else(|| launch.as_ref().and_then(|config| config.context_window))
+            .or(settings_window)
+            .or_else(|| if is_claude { default_claude_window(model.as_deref()) } else { None })
+    };
     Ok(Some(TerminalAgentUsage {
         provider: location.provider,
         model,
@@ -428,5 +595,94 @@ mod tests {
         assert_eq!(snapshot.context_used_tokens, Some(100));
         assert_eq!(snapshot.total.input_tokens, Some(100));
         assert_eq!(snapshot.total.cache_read_input_tokens, Some(90));
+    }
+
+    #[test]
+    fn antigravity_usage_sums_fresh_and_cached_and_dedupes_steps() {
+        let content = jsonl(vec![
+            json!({"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"hi"}),
+            json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","model":"gemini-3.1-pro-low","input_tokens":100,"cache_read_tokens":900,"output_tokens":20}),
+            // 同一步骤重复写入时按字段取高水位，不能重复累加。
+            json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","model":"gemini-3.1-pro-low","input_tokens":100,"cache_read_tokens":900,"output_tokens":25}),
+            json!({"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE","model":"claude-opus-4-6-thinking","input_tokens":150,"cache_read_tokens":1850,"output_tokens":30}),
+        ]);
+        let parsed = parse_antigravity(&content);
+        assert_eq!(parsed.model.as_deref(), Some("claude-opus-4-6-thinking"));
+        assert_eq!(parsed.context_used, Some(2000));
+        assert_eq!(parsed.total.input_tokens, Some(3000));
+        assert_eq!(parsed.total.output_tokens, Some(55));
+        assert_eq!(parsed.total.cache_read_input_tokens, Some(2750));
+    }
+
+    #[test]
+    fn antigravity_window_and_effort_resolution() {
+        assert_eq!(default_antigravity_window(Some("gemini-3.1-pro-high"), None), Some(1_000_000));
+        assert_eq!(default_antigravity_window(Some("claude-sonnet-4-6"), Some(50_000)), Some(200_000));
+        assert_eq!(default_antigravity_window(Some("claude-opus-4-6-thinking"), Some(250_000)), Some(1_000_000));
+        assert_eq!(default_antigravity_window(Some("gpt-oss-120b-medium"), None), None);
+
+        assert_eq!(antigravity_model_effort_suffix(Some("gemini-3.1-pro-high")).as_deref(), Some("high"));
+        assert_eq!(antigravity_model_effort_suffix(Some("gpt-oss-120b-medium")).as_deref(), Some("medium"));
+        assert_eq!(antigravity_model_effort_suffix(Some("claude-opus-4-6-thinking")), None);
+
+        let cfg = antigravity_provider_service::AntigravityProviderConfig {
+            default_effort_level: "medium".into(),
+            available_models: Vec::new(),
+            enabled_models: vec![antigravity_provider_service::AntigravityModelEntry {
+                id: "claude-opus-4-6-thinking".into(),
+                name: "Claude Opus 4.6".into(),
+                effort_level: "xhigh".into(),
+            }],
+        };
+        assert_eq!(antigravity_config_effort_from(&cfg, Some("claude-opus-4-6-thinking")).as_deref(), Some("xhigh"));
+        assert_eq!(antigravity_config_effort_from(&cfg, Some("other-model")).as_deref(), Some("medium"));
+        assert_eq!(
+            resolve_antigravity_effort(Some("MAX"), Some("gemini-3.1-pro-low")).as_deref(),
+            Some("max")
+        );
+    }
+
+    #[test]
+    fn tracked_antigravity_terminal_returns_usage_snapshot() {
+        let dir = std::env::temp_dir().join(format!("tb-agy-usage-{}", uuid::Uuid::new_v4()));
+        let conv_id = uuid::Uuid::new_v4().to_string();
+        let logs_dir = dir.join("brain").join(&conv_id).join(".system_generated").join("logs");
+        fs::create_dir_all(&logs_dir).expect("创建临时日志目录");
+        fs::write(
+            logs_dir.join("transcript_full.jsonl"),
+            jsonl(vec![json!({
+                "step_index": 1,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "model": "gemini-3.1-pro-high",
+                "input_tokens": 15000,
+                "cache_read_tokens": 420000,
+                "output_tokens": 800
+            })]),
+        )
+        .expect("写入 Antigravity 转录");
+
+        let terminal_id = format!("agy-usage-test-{}", uuid::Uuid::new_v4());
+        terminal_task_service::prepare_launch(
+            &terminal_id,
+            "powershell",
+            None,
+            &[("ANTIGRAVITY_CLI_HOME".to_string(), dir.to_string_lossy().into_owned())],
+            vec![format!(
+                "agy --dangerously-skip-permissions --model gemini-3.1-pro-high --effort high --conversation {conv_id}"
+            )],
+        );
+        let snapshot = usage(&terminal_id).expect("读取 Antigravity 用量").expect("应返回快照");
+        terminal_task_service::forget_terminal(&terminal_id);
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(snapshot.provider, "antigravity");
+        assert_eq!(snapshot.model.as_deref(), Some("gemini-3.1-pro-high"));
+        assert_eq!(snapshot.effort.as_deref(), Some("high"));
+        assert_eq!(snapshot.context_used_tokens, Some(435_000));
+        assert_eq!(snapshot.context_window_tokens, Some(1_000_000));
+        assert_eq!(snapshot.total.input_tokens, Some(435_000));
+        assert_eq!(snapshot.total.output_tokens, Some(800));
+        assert_eq!(snapshot.total.cache_read_input_tokens, Some(420_000));
     }
 }

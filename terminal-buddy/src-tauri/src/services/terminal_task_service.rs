@@ -9,7 +9,12 @@ use std::time::{Duration, Instant, SystemTime};
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 
-use super::{claude_history_service, codex_history_service, codex_transcript, DatabaseService, PathService};
+use super::{
+    antigravity_history_service, antigravity_transcript, claude_history_service,
+    codex_history_service, codex_transcript, DatabaseService, PathService,
+};
+
+const ANTIGRAVITY_STARTUP_GRACE: Duration = Duration::from_secs(12);
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +27,13 @@ pub struct TerminalTaskSummary {
 }
 
 #[derive(Clone, Default)]
+pub struct TerminalLaunchHints {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+#[derive(Clone, Default)]
 struct TrackedTerminal {
     revision: u64,
     started_at: Option<SystemTime>,
@@ -29,9 +41,14 @@ struct TrackedTerminal {
     cwd: Option<String>,
     claude_root: PathBuf,
     codex_root: PathBuf,
+    antigravity_root: PathBuf,
     codex_log_dir: Option<PathBuf>,
     log_offset: u64,
     log_pending: String,
+    launch_provider: Option<String>,
+    launch_model: Option<String>,
+    launch_effort: Option<String>,
+    antigravity_seen_alive: bool,
     binding: Option<(String, String)>,
     prompt: Option<String>,
     transcript: Option<PathBuf>,
@@ -85,8 +102,8 @@ pub fn is_agent_session_active(session_id: &str) -> bool {
         .any(|tracked| tracked.binding.as_ref().is_some_and(|(_, id)| id == session_id))
 }
 
-// 只识别启动命令的可执行文件，避免误改提示词、echo、管道或脚本中的 codex 字样。
-fn codex_executable_end(command: &str) -> Option<usize> {
+// 只识别启动命令的可执行文件，避免误改提示词、echo、管道或脚本中的 codex / agy 字样。
+fn leading_executable(command: &str) -> Option<(String, usize)> {
     let mut start = command.len() - command.trim_start().len();
     if command[start..].starts_with("& ") { start += 2; }
     if command[start..].get(..5).is_some_and(|s| s.eq_ignore_ascii_case("call ")) { start += 5; }
@@ -100,7 +117,102 @@ fn codex_executable_end(command: &str) -> Option<usize> {
         (&command[start..end], end)
     };
     let name = token.rsplit(['/', '\\']).next()?.to_ascii_lowercase();
+    Some((name, end))
+}
+
+fn codex_executable_end(command: &str) -> Option<usize> {
+    let (name, end) = leading_executable(command)?;
     matches!(name.as_str(), "codex" | "codex.exe" | "codex.cmd" | "codex.bat").then_some(end)
+}
+
+fn agy_executable_end(command: &str) -> Option<usize> {
+    let (name, end) = leading_executable(command)?;
+    matches!(name.as_str(), "agy" | "agy.exe" | "agy.cmd" | "agy.bat" | "agy.ps1").then_some(end)
+}
+
+fn tokenize_cli_args(rest: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut chars = rest.chars().peekable();
+    while let Some(&ch) = chars.peek() {
+        if ch.is_whitespace() {
+            chars.next();
+            continue;
+        }
+        if matches!(ch, ';' | '|') {
+            break;
+        }
+        if ch == '&' {
+            let mut lookahead = chars.clone();
+            lookahead.next();
+            if lookahead.peek() == Some(&'&') {
+                break;
+            }
+        }
+        let mut token = String::new();
+        let mut quote: Option<char> = None;
+        while let Some(&c) = chars.peek() {
+            if let Some(q) = quote {
+                chars.next();
+                if c == q {
+                    quote = None;
+                } else {
+                    token.push(c);
+                }
+                continue;
+            }
+            if c.is_whitespace() || matches!(c, ';' | '|') {
+                break;
+            }
+            if c == '&' {
+                let mut lookahead = chars.clone();
+                lookahead.next();
+                if lookahead.peek() == Some(&'&') {
+                    break;
+                }
+            }
+            chars.next();
+            if matches!(c, '\'' | '"') {
+                quote = Some(c);
+            } else {
+                token.push(c);
+            }
+        }
+        if !token.is_empty() {
+            tokens.push(token);
+        }
+    }
+    tokens
+}
+
+fn extract_cli_option(rest: &str, flags: &[&str]) -> Option<String> {
+    let tokens = tokenize_cli_args(rest);
+    let mut found = None;
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if flags.contains(&token.as_str()) {
+            if let Some(next) = tokens.get(index + 1) {
+                let trimmed = next.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with('-') {
+                    found = Some(trimmed.to_string());
+                    index += 2;
+                    continue;
+                }
+            }
+            index += 1;
+            continue;
+        }
+        if let Some((name, value)) = token.split_once('=') {
+            if flags.contains(&name) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    found = Some(trimmed.to_string());
+                }
+            }
+        }
+        index += 1;
+    }
+    found
 }
 
 fn bind(tracked: &mut TrackedTerminal, provider: &str, session_id: &str) {
@@ -127,11 +239,29 @@ pub fn prepare_launch(
         cwd: cwd.map(str::to_string),
         claude_root: env_root(env, "CLAUDE_CONFIG_DIR", home.join(".claude"), cwd),
         codex_root: env_root(env, "CODEX_HOME", home.join(".codex"), cwd),
+        antigravity_root: env_root(env, "ANTIGRAVITY_CLI_HOME", home.join(".gemini").join("antigravity-cli"), cwd),
         ..Default::default()
     };
     let local = matches!(terminal_type, "cmd" | "powershell" | "pwsh" | "bash" | "sh" | "zsh");
     let commands = commands.into_iter().map(|command| {
         if !local { return command; }
+        if let Some(end) = agy_executable_end(&command) {
+            let rest = &command[end..];
+            tracked.launch_provider = Some("antigravity".to_string());
+            if let Some(model) = extract_cli_option(rest, &["--model", "-m"]) {
+                tracked.launch_model = Some(model);
+            }
+            if let Some(effort) = extract_cli_option(rest, &["--effort"]) {
+                let lower = effort.to_ascii_lowercase();
+                if matches!(lower.as_str(), "low" | "medium" | "high" | "xhigh" | "max") {
+                    tracked.launch_effort = Some(lower);
+                }
+            }
+            if let Some(id) = extract_cli_option(rest, &["--conversation"]) {
+                bind(&mut tracked, "antigravity", &id);
+            }
+            return command;
+        }
         let Some(end) = codex_executable_end(&command) else { return command; };
         let args: Vec<_> = command[end..].split_whitespace().collect();
         if let Some(id) = args.windows(2).find(|pair| pair[0] == "resume").map(|pair| pair[1]) {
@@ -236,6 +366,34 @@ pub fn current_binding(terminal_id: &str) -> Option<(String, String)> {
         .clone()
 }
 
+/// 启动命令中解析出的工具、模型与思考强度提示。
+pub fn launch_hints(terminal_id: &str) -> Option<TerminalLaunchHints> {
+    let all = terminals().lock().unwrap_or_else(|e| e.into_inner());
+    let tracked = all.get(terminal_id)?;
+    Some(TerminalLaunchHints {
+        provider: tracked.launch_provider.clone(),
+        model: tracked.launch_model.clone(),
+        effort: tracked.launch_effort.clone(),
+    })
+}
+
+/// 批量返回当前已识别的 terminal_id -> provider（不受 showTaskSummary 开关影响）。
+pub fn current_providers(terminal_ids: &[String]) -> HashMap<String, String> {
+    let all = terminals().lock().unwrap_or_else(|e| e.into_inner());
+    terminal_ids
+        .iter()
+        .filter_map(|id| {
+            let tracked = all.get(id)?;
+            let provider = tracked
+                .binding
+                .as_ref()
+                .map(|(provider, _)| provider.clone())
+                .or_else(|| tracked.launch_provider.clone())?;
+            Some((id.clone(), provider))
+        })
+        .collect()
+}
+
 /// 终端最近一次记录的 cwd；用于定位项目级 `.claude/settings*.json`。
 pub fn current_cwd(terminal_id: &str) -> Option<String> {
     terminals()
@@ -262,6 +420,7 @@ pub fn locate_transcript(terminal_id: &str) -> Option<TranscriptLocation> {
         let (provider, session_id) = tracked.binding.clone()?;
         let root = match provider.as_str() {
             "claude" => tracked.claude_root.clone(),
+            "antigravity" => tracked.antigravity_root.clone(),
             _ => tracked.codex_root.clone(),
         };
         (provider, session_id, tracked.transcript.clone(), root)
@@ -315,6 +474,16 @@ fn read_codex_binding(tracked: &mut TrackedTerminal) {
 }
 
 fn find_transcript(root: &Path, provider: &str, id: &str) -> Option<PathBuf> {
+    if provider == "antigravity" {
+        let logs = root.join("brain").join(id).join(".system_generated").join("logs");
+        for name in ["transcript_full.jsonl", "transcript.jsonl"] {
+            let candidate = logs.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        return None;
+    }
     let wanted = if provider == "claude" { format!("{}.jsonl", id) } else { format!("-{}.jsonl", id) };
     let mut dirs = vec![root.join(if provider == "claude" { "projects" } else { "sessions" })];
     while let Some(dir) = dirs.pop() {
@@ -354,17 +523,19 @@ fn transcript_excerpt(path: &Path) -> Option<String> {
 
 fn resolve_title(
     tracked: &mut TrackedTerminal,
-    registries: &mut HashMap<PathBuf, HashMap<String, String>>,
+    registries: &mut HashMap<(String, PathBuf), HashMap<String, String>>,
 ) -> Option<TerminalTaskSummary> {
     let (provider, id) = tracked.binding.clone()?;
     let root = match provider.as_str() {
         "claude" => &tracked.claude_root,
+        "antigravity" => &tracked.antigravity_root,
         _ => &tracked.codex_root,
     };
     let conn = DatabaseService::open().ok();
     let custom = conn.as_ref().and_then(|conn| {
         let sql = match provider.as_str() {
             "claude" => "SELECT custom_title FROM claude_session_meta WHERE session_id=?1",
+            "antigravity" => "SELECT custom_title FROM antigravity_session_meta WHERE session_id=?1",
             _ => "SELECT custom_title FROM codex_session_meta WHERE session_id=?1",
         };
         conn.query_row(sql, [&id], |row| row.get::<_, Option<String>>(0)).optional().ok().flatten().flatten()
@@ -382,6 +553,10 @@ fn resolve_title(
                         let title = claude_history_service::display_title(None, analysis.title.as_deref(), analysis.first_prompt.as_deref(), "");
                         (compact_title(&title), analysis.model)
                     }
+                    "antigravity" => {
+                        let transcript = antigravity_transcript::parse(&content);
+                        (compact_title(&transcript.first_prompt), transcript.model)
+                    }
                     _ => {
                         let transcript = codex_transcript::parse(&content);
                         (transcript.title.and_then(|value| compact_title(&value)), transcript.model)
@@ -393,11 +568,40 @@ fn resolve_title(
             }
         }
     }
-    let registry = if provider == "codex" {
-        registries.entry(root.clone()).or_insert_with(|| codex_history_service::thread_names(root)).get(&id).cloned()
-    } else { None };
+    let registry = match provider.as_str() {
+        "codex" => registries
+            .entry(("codex".to_string(), root.clone()))
+            .or_insert_with(|| codex_history_service::thread_names(root))
+            .get(&id)
+            .cloned(),
+        "antigravity" => registries
+            .entry(("antigravity".to_string(), root.clone()))
+            .or_insert_with(|| antigravity_history_service::summary_titles(root))
+            .get(&id)
+            .cloned()
+            .and_then(|value| compact_title(&value)),
+        _ => None,
+    };
     let summary = custom.or(registry).or_else(|| tracked.title.clone()).or_else(|| tracked.prompt.clone())?;
     Some(TerminalTaskSummary { provider, session_id: id, summary, model: tracked.model.clone() })
+}
+
+fn clear_antigravity_state(tracked: &mut TrackedTerminal) {
+    tracked.antigravity_seen_alive = false;
+    if tracked.binding.as_ref().is_some_and(|(provider, _)| provider == "antigravity") {
+        tracked.revision = tracked.revision.wrapping_add(1);
+        tracked.binding = None;
+        tracked.transcript = None;
+        tracked.stamp = None;
+        tracked.title = None;
+        tracked.model = None;
+        tracked.prompt = None;
+    }
+    if tracked.launch_provider.as_deref() == Some("antigravity") {
+        tracked.launch_provider = None;
+        tracked.launch_model = None;
+        tracked.launch_effort = None;
+    }
 }
 
 /// 原生 AI 会话复用桌面端的摘要来源，缓存确切会话的文件位置与修改时间。
@@ -449,11 +653,35 @@ pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalT
         })
     }).collect();
     let codex_sessions = super::terminal_task_process::discover(scopes);
+    let agy_scopes = terminal_pids.iter().filter_map(|(id, pid)| {
+        let tracked = all.get(id)?;
+        Some(super::terminal_task_process::AntigravityProcessScope {
+            terminal_id: id.clone(),
+            process_id: *pid,
+            root: tracked.antigravity_root.clone(),
+        })
+    }).collect();
+    let agy_discovery = super::terminal_task_process::discover_antigravity(agy_scopes);
     let mut registries = HashMap::new();
     let mut result = HashMap::new();
     for (terminal_id, _) in terminal_pids {
         let Some(tracked) = all.get_mut(&terminal_id) else { continue; };
         tracked.last_process_scan = Some(SystemTime::now());
+        if agy_discovery.live_terminals.contains(&terminal_id) {
+            tracked.antigravity_seen_alive = true;
+            if let Some(id) = agy_discovery.sessions.get(&terminal_id) {
+                bind(tracked, "antigravity", id);
+            } else if tracked.binding.is_none() && tracked.launch_provider.is_none() {
+                tracked.launch_provider = Some("antigravity".to_string());
+            }
+        } else {
+            let past_grace = tracked.started_at.is_none_or(|started| {
+                started.elapsed().unwrap_or_default() >= ANTIGRAVITY_STARTUP_GRACE
+            });
+            if tracked.antigravity_seen_alive || past_grace {
+                clear_antigravity_state(tracked);
+            }
+        }
         read_codex_binding(tracked);
         if let Some((id, path)) = codex_sessions.get(&terminal_id) {
             bind(tracked, "codex", id);
@@ -482,5 +710,49 @@ mod tests {
     fn identifies_codex_commands_without_touching_shell_fragments() {
         assert!(codex_executable_end("codex resume x").is_some());
         assert!(codex_executable_end("echo codex").is_none());
+    }
+
+    #[test]
+    fn identifies_agy_commands_and_extracts_launch_hints() {
+        assert!(agy_executable_end("echo agy").is_none());
+        assert!(agy_executable_end("agy --dangerously-skip-permissions").is_some());
+        assert!(agy_executable_end("& 'C:\\Program Files\\agy.cmd' --help").is_some());
+
+        let conv_id = uuid::Uuid::new_v4().to_string();
+        let terminal_id = format!("agy-launch-test-{}", uuid::Uuid::new_v4());
+        prepare_launch(
+            &terminal_id,
+            "powershell",
+            None,
+            &[],
+            vec![format!(
+                "agy --dangerously-skip-permissions --model gemini-3.1-pro-high --effort HIGH --conversation {conv_id}"
+            )],
+        );
+        let hints = launch_hints(&terminal_id).expect("应记录 launch_hints");
+        let binding = current_binding(&terminal_id).expect("应立即绑定 conversation");
+        let providers = current_providers(&[terminal_id.clone()]);
+        forget_terminal(&terminal_id);
+
+        assert_eq!(hints.provider.as_deref(), Some("antigravity"));
+        assert_eq!(hints.model.as_deref(), Some("gemini-3.1-pro-high"));
+        assert_eq!(hints.effort.as_deref(), Some("high"));
+        assert_eq!(binding, ("antigravity".to_string(), conv_id));
+        assert_eq!(providers.get(&terminal_id).map(String::as_str), Some("antigravity"));
+    }
+
+    #[test]
+    fn locates_antigravity_transcript_preferring_full() {
+        let root = std::env::temp_dir().join(format!("tb-agy-loc-{}", uuid::Uuid::new_v4()));
+        let conv_id = uuid::Uuid::new_v4().to_string();
+        let logs = root.join("brain").join(&conv_id).join(".system_generated").join("logs");
+        fs::create_dir_all(&logs).expect("创建临时 logs 目录");
+        let fallback = logs.join("transcript.jsonl");
+        let full = logs.join("transcript_full.jsonl");
+        fs::write(&fallback, "{}\n").expect("写入 transcript.jsonl");
+        assert_eq!(find_transcript(&root, "antigravity", &conv_id), Some(fallback));
+        fs::write(&full, "{}\n").expect("写入 transcript_full.jsonl");
+        assert_eq!(find_transcript(&root, "antigravity", &conv_id), Some(full));
+        let _ = fs::remove_dir_all(&root);
     }
 }

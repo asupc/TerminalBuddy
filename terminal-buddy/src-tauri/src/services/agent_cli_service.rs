@@ -1,6 +1,8 @@
-//! Agent CLI（Claude Code / Codex）检测、安装与更新。国内源通过 npm 安装官方包，
-//! 官方源保留原生安装器；版本检查与 npm 安装使用同一个 registry。
+//! Agent CLI（Claude Code / Codex / Antigravity CLI）检测、安装与更新。
+//! Claude / Codex 国内源通过 npm 安装官方包，官方源保留原生安装器；
+//! Antigravity CLI 使用 Google 官方发布清单下载并校验 SHA-512。
 use std::{
+    collections::HashSet,
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -12,7 +14,10 @@ use std::{
 use crate::models::AgentDownloadSource;
 use crate::services::process_tree::ProcessTree;
 use crate::services::SettingsService;
-use crate::services::cli_update_service::{check_update, compare_versions, refresh_update_state, CliUpdate};
+use crate::services::cli_update_service::{
+    check_antigravity_update, check_update, compare_versions, fetch_antigravity_manifest,
+    is_valid_sha512, refresh_update_state, AntigravityManifest, CliUpdate,
+};
 
 #[derive(Debug)]
 pub enum AgentCliError {
@@ -34,6 +39,7 @@ impl AgentCliError {
 pub enum CliTool {
     Claude,
     Codex,
+    Antigravity,
 }
 
 impl CliTool {
@@ -41,6 +47,7 @@ impl CliTool {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Antigravity => "agy",
         }
     }
 
@@ -48,13 +55,15 @@ impl CliTool {
         match self {
             Self::Claude => "Claude",
             Self::Codex => "Codex CLI",
+            Self::Antigravity => "Antigravity CLI",
         }
     }
 
-    fn package(self) -> &'static str {
+    fn package(self) -> Option<&'static str> {
         match self {
-            Self::Claude => "@anthropic-ai/claude-code",
-            Self::Codex => "@openai/codex",
+            Self::Claude => Some("@anthropic-ai/claude-code"),
+            Self::Codex => Some("@openai/codex"),
+            Self::Antigravity => None,
         }
     }
 
@@ -62,6 +71,7 @@ impl CliTool {
         match self {
             Self::Claude => &["next"],
             Self::Codex => &[],
+            Self::Antigravity => &[],
         }
     }
 }
@@ -84,14 +94,17 @@ struct Installation {
 fn installation(tool: CliTool) -> &'static Mutex<Installation> {
     static CLAUDE: OnceLock<Mutex<Installation>> = OnceLock::new();
     static CODEX: OnceLock<Mutex<Installation>> = OnceLock::new();
+    static ANTIGRAVITY: OnceLock<Mutex<Installation>> = OnceLock::new();
     let state = match tool {
         CliTool::Claude => &CLAUDE,
         CliTool::Codex => &CODEX,
+        CliTool::Antigravity => &ANTIGRAVITY,
     };
     state.get_or_init(|| Mutex::new(Installation::default()))
 }
 
 /// 固定顺序持有各工具锁，防止切换源与启动安装交错；不打断已开始的下载。
+/// Antigravity CLI 不走 npm 下载源，无需参与锁定或重置更新状态。
 pub fn save_download_source(source: AgentDownloadSource) -> Result<(), String> {
     let mut states = [CliTool::Claude, CliTool::Codex].into_iter()
         .map(|tool| installation(tool).lock().map_err(|_| "工具状态不可用".to_string()))
@@ -113,6 +126,7 @@ pub fn save_download_source(source: AgentDownloadSource) -> Result<(), String> {
 pub struct Environment {
     pub claude: CliStatus,
     pub codex: CliStatus,
+    pub antigravity: CliStatus,
 }
 
 #[derive(serde::Serialize)]
@@ -136,6 +150,9 @@ fn home() -> Result<PathBuf, String> {
 /// 三段式 semver（可带预发布/构建后缀），返回原始 token。
 fn semver_token(value: &str) -> Option<&str> {
     let token = value.trim();
+    if token.is_empty() || token.chars().any(char::is_whitespace) {
+        return None;
+    }
     let core = token.split(['-', '+']).next()?;
     let parts: Vec<_> = core.split('.').collect();
     (parts.len() == 3 && parts.iter().all(|part| !part.is_empty() && part.parse::<u32>().is_ok()))
@@ -149,6 +166,15 @@ fn version_from_output(tool: CliTool, output: &Output) -> Option<String> {
         let version = match tool {
             CliTool::Claude if line.contains("(Claude Code)") => line.split_whitespace().next()?,
             CliTool::Codex => line.trim().strip_prefix("codex-cli ")?.trim(),
+            CliTool::Antigravity => {
+                let trimmed = line.trim();
+                let raw = trimmed
+                    .strip_prefix("agy ")
+                    .or_else(|| trimmed.strip_prefix("antigravity "))
+                    .unwrap_or(trimmed)
+                    .trim();
+                raw.strip_prefix('v').unwrap_or(raw)
+            }
             _ => return None,
         };
         semver_token(version).map(str::to_string)
@@ -272,6 +298,7 @@ fn windows_install_dirs() -> Vec<PathBuf> {
     }
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
         let local = PathBuf::from(local);
+        push(local.join("agy/bin"));
         push(local.join("Microsoft/WinGet/Links"));
         push(local.join("Microsoft/WinGet/Packages"));
         push(local.join("Programs"));
@@ -396,6 +423,10 @@ fn detect_cli(tool: CliTool) -> Option<String> {
 }
 
 fn detect_candidates(tool: CliTool, candidates: Vec<PathBuf>) -> Option<String> {
+    detect_executable_candidates(tool, candidates).map(|(_, version)| version)
+}
+
+fn detect_executable_candidates(tool: CliTool, candidates: Vec<PathBuf>) -> Option<(PathBuf, String)> {
     for path in candidates.into_iter().filter(|path| path.is_file()) {
         let mut command = version_command(&path);
         prepare_command(&mut command);
@@ -404,11 +435,15 @@ fn detect_candidates(tool: CliTool, candidates: Vec<PathBuf>) -> Option<String> 
         if wait_for_child(&mut child, &mut tree, Duration::from_secs(5)).is_err() { continue; }
         if let Ok(output) = child.wait_with_output() {
             if let Some(version) = version_from_output(tool, &output) {
-                return Some(version);
+                return Some((path, version));
             }
         }
     }
     None
+}
+
+pub(crate) fn find_executable(tool: CliTool) -> Option<PathBuf> {
+    detect_executable_candidates(tool, candidate_paths(tool)).map(|(path, _)| path)
 }
 
 fn status_from_snapshot(
@@ -442,6 +477,7 @@ pub fn environment() -> Result<Environment, String> {
     Ok(Environment {
         claude: cli_status(CliTool::Claude)?,
         codex: cli_status(CliTool::Codex)?,
+        antigravity: cli_status(CliTool::Antigravity)?,
     })
 }
 
@@ -453,8 +489,22 @@ pub async fn load_status(tool: CliTool, check_updates: bool) -> Result<CliStatus
     if matches!(status.status, "installing" | "updating") {
         return Err(AgentCliError::Conflict(format!("{} 正在安装或更新，请等待完成", tool.name())));
     }
+    if tool == CliTool::Antigravity {
+        let update = check_antigravity_update(status.version.as_deref()).await;
+        return tokio::task::spawn_blocking(move || {
+            {
+                let mut state = installation(tool).lock().map_err(|_| "工具状态不可用".to_string())?;
+                if state.operation.is_none() {
+                    state.update = Some(update);
+                }
+            }
+            cli_status(tool)
+        }).await.map_err(|error| AgentCliError::Failure(error.to_string()))?
+            .map_err(AgentCliError::Failure);
+    }
     let source = SettingsService::get_settings().agent_download_source;
-    let update = check_update(tool.package(), status.version.as_deref(), tool.preview_tags(), source.registry()).await;
+    let package = tool.package().ok_or_else(|| AgentCliError::Failure("该工具不支持 npm 版本源".into()))?;
+    let update = check_update(package, status.version.as_deref(), tool.preview_tags(), source.registry()).await;
     tokio::task::spawn_blocking(move || {
         {
             let mut state = installation(tool).lock().map_err(|_| "工具状态不可用".to_string())?;
@@ -497,8 +547,22 @@ pub async fn start_operation(tool: CliTool, operation: Operation) -> Result<CliS
     }).await.map_err(|error| AgentCliError::Failure(error.to_string()))??;
     // HTTP 立即返回，各工具使用独立任务锁，下载与安装均在阻塞线程池中运行。
     tokio::spawn(async move {
-        let result = tokio::task::spawn_blocking(move || run_install(tool, target.as_deref(), source)).await
-            .unwrap_or_else(|error| Err(format!("工具任务异常：{error}")));
+        let result = if tool == CliTool::Antigravity {
+            match fetch_antigravity_manifest().await {
+                Ok(manifest) => {
+                    let result = tokio::task::spawn_blocking(move || run_antigravity_install(&manifest, target.as_deref())).await
+                        .unwrap_or_else(|error| Err(format!("工具任务异常：{error}")));
+                    if result.is_ok() {
+                        clear_antigravity_models_cache();
+                    }
+                    result
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            tokio::task::spawn_blocking(move || run_install(tool, target.as_deref(), source)).await
+                .unwrap_or_else(|error| Err(format!("工具任务异常：{error}")))
+        };
         if let Ok(mut state) = installation(tool).lock() {
             state.operation = None;
             match result {
@@ -709,7 +773,7 @@ fn run_install_npm(tool: CliTool, target: Option<&str>, source: AgentDownloadSou
     let dir = InstallDirectory::create(tool.binary())?;
     let log = dir.0.join("install.log");
     let mut installer = npm_install_command(&npm);
-    installer.arg(npm_package(tool, target))
+    installer.arg(npm_package(tool, target)?)
         .arg("--prefix").arg(&prefix)
         .arg("--registry").arg(source.registry())
         // Claude 的 postinstall 必须执行，不能跳过安装脚本。
@@ -735,6 +799,7 @@ fn run_install_unix(tool: CliTool, target: Option<&str>) -> Result<String, Strin
     let installer_url = match tool {
         CliTool::Claude => "https://claude.ai/install.sh",
         CliTool::Codex => "https://chatgpt.com/codex/install.sh",
+        CliTool::Antigravity => return Err("Antigravity CLI 请通过 Google 官方发布清单安装".into()),
     };
     let home = home()?;
     fs::create_dir_all(home.join(".local/bin")).map_err(|error| format!("安装目录不可写：{error}"))?;
@@ -759,6 +824,7 @@ fn run_install_unix(tool: CliTool, target: Option<&str>) -> Result<String, Strin
             if let Some(version) = target { command.arg("--release").arg(version); }
             command
         }
+        CliTool::Antigravity => unreachable!(),
     };
     run_logged(tool.name(), &mut installer, &log, Duration::from_secs(600))?;
     // 只核验安装目录中的入口，避免从 PATH 中读到另一份旧安装而误报成功。
@@ -775,6 +841,7 @@ fn run_install_windows(tool: CliTool, target: Option<&str>) -> Result<String, St
     match tool {
         CliTool::Claude => run_claude_install_windows(target, &home, &npm_dir),
         CliTool::Codex => run_install_npm(tool, target, AgentDownloadSource::Official),
+        CliTool::Antigravity => Err("Antigravity CLI 请通过 Google 官方发布清单安装".into()),
     }
 }
 
@@ -844,11 +911,496 @@ fn npm_command() -> Result<PathBuf, String> {
         .ok_or_else(|| "未检测到 npm，请先安装 Node.js（https://nodejs.org）后重试".to_string())
 }
 
-fn npm_package(tool: CliTool, target: Option<&str>) -> String {
-    match target {
-        Some(version) => format!("{}@{version}", tool.package()),
-        None => tool.package().to_string(),
+fn npm_package(tool: CliTool, target: Option<&str>) -> Result<String, String> {
+    let package = tool.package().ok_or_else(|| format!("{} 不支持 npm 安装包", tool.name()))?;
+    Ok(match target {
+        Some(version) => format!("{package}@{version}"),
+        None => package.to_string(),
+    })
+}
+
+// ==================== Antigravity CLI（agy）：Google 官方发布清单 + SHA-512 ====================
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AntigravityModel {
+    pub id: String,
+    pub name: String,
+}
+
+const ANTIGRAVITY_MODELS_CACHE_TTL: Duration = Duration::from_secs(600);
+const ANTIGRAVITY_MODELS_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn antigravity_models_cache() -> &'static Mutex<Option<(Instant, Vec<AntigravityModel>)>> {
+    static CACHE: OnceLock<Mutex<Option<(Instant, Vec<AntigravityModel>)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+pub(crate) fn clear_antigravity_models_cache() {
+    if let Ok(mut guard) = antigravity_models_cache().lock() {
+        *guard = None;
     }
+}
+
+fn default_antigravity_target_path() -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    {
+        let local = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or(home()?.join("AppData/Local"));
+        Ok(local.join("agy/bin/agy.exe"))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(home()?.join(".local/bin/agy"))
+    }
+}
+
+fn resolve_antigravity_target_path(is_update: bool) -> Result<PathBuf, String> {
+    if is_update {
+        if let Some(existing) = find_executable(CliTool::Antigravity) {
+            #[cfg(windows)]
+            {
+                let is_exe = existing
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("exe"));
+                if is_exe {
+                    return Ok(existing);
+                }
+            }
+            #[cfg(not(windows))]
+            return Ok(existing);
+        }
+    }
+    default_antigravity_target_path()
+}
+
+#[cfg(unix)]
+fn find_in_path(binary: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(binary))
+        .find(|candidate| candidate.is_file())
+}
+
+fn download_antigravity_payload(url: &str, dest: &Path, log: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let mut download = Command::new("curl.exe");
+        download
+            .args([
+                "--fail", "--silent", "--show-error", "--location",
+                "--connect-timeout", "15", "--max-time", "600", "--retry", "2", "--output",
+            ])
+            .arg(dest)
+            .arg(url);
+        if run_logged("Antigravity CLI", &mut download, log, Duration::from_secs(600)).is_ok() {
+            return Ok(());
+        }
+        let quoted_url = url.replace('\'', "''");
+        let quoted_dest = dest.display().to_string().replace('\'', "''");
+        let script = format!(
+            "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; \
+             $ProgressPreference = 'SilentlyContinue'; \
+             Invoke-WebRequest -Uri '{quoted_url}' -OutFile '{quoted_dest}' -UseBasicParsing"
+        );
+        let mut fallback = Command::new("powershell.exe");
+        fallback.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]).arg(script);
+        run_logged("Antigravity CLI", &mut fallback, log, Duration::from_secs(600))
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(curl) = find_in_path("curl") {
+            let mut download = Command::new(curl);
+            download
+                .args([
+                    "--fail", "--silent", "--show-error", "--location", "--proto", "=https",
+                    "--connect-timeout", "15", "--max-time", "600", "--retry", "2", "--output",
+                ])
+                .arg(dest)
+                .arg(url);
+            return run_logged("Antigravity CLI", &mut download, log, Duration::from_secs(600));
+        }
+        if let Some(wget) = find_in_path("wget") {
+            let mut download = Command::new(wget);
+            download.args(["-q", "--timeout=30", "-O"]).arg(dest).arg(url);
+            return run_logged("Antigravity CLI", &mut download, log, Duration::from_secs(600));
+        }
+        Err("Antigravity CLI 安装失败（未检测到 curl 或 wget，无法下载安装包）".into())
+    }
+}
+
+fn run_capture_output(mut command: Command, timeout: Duration) -> Result<Output, String> {
+    prepare_command(&mut command);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| format!("无法启动进程：{error}"))?;
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stdout_pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stderr_pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let mut tree = ProcessTree::attach(&child);
+    let waited = wait_for_child(&mut child, &mut tree, timeout);
+    let status = child.wait().map_err(|error| format!("等待进程结束失败：{error}"))?;
+    let stdout = stdout_handle.join().unwrap_or_default();
+    let stderr = stderr_handle.join().unwrap_or_default();
+    waited?;
+    Ok(Output { status, stdout, stderr })
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn parse_sha512_from_certutil(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+        is_valid_sha512(&compact).then(|| compact.to_ascii_lowercase())
+    })
+}
+
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
+fn parse_sha512_from_unix_output(text: &str) -> Option<String> {
+    let token = text.split_whitespace().next()?;
+    is_valid_sha512(token).then(|| token.to_ascii_lowercase())
+}
+
+fn compute_file_sha512(path: &Path) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        let mut certutil = Command::new("certutil.exe");
+        certutil.arg("-hashfile").arg(path).arg("SHA512");
+        if let Ok(output) = run_capture_output(certutil, Duration::from_secs(60)) {
+            if output.status.success() {
+                if let Some(hash) = parse_sha512_from_certutil(&decode_log(&output.stdout)) {
+                    return Ok(hash);
+                }
+            }
+        }
+        let quoted_path = path.display().to_string().replace('\'', "''");
+        let mut ps = Command::new("powershell.exe");
+        ps.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]).arg(format!(
+            "(Get-FileHash -LiteralPath '{quoted_path}' -Algorithm SHA512).Hash.ToLowerInvariant()"
+        ));
+        let output = run_capture_output(ps, Duration::from_secs(60))
+            .map_err(|error| format!("计算 SHA-512 校验和失败：{error}"))?;
+        if !output.status.success() {
+            return Err("计算安装包 SHA-512 校验和失败".into());
+        }
+        parse_sha512_from_certutil(&decode_log(&output.stdout))
+            .ok_or_else(|| "无法解析安装包 SHA-512 校验和".to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = if cfg!(target_os = "macos") {
+            let mut cmd = Command::new("shasum");
+            cmd.args(["-a", "512"]).arg(path);
+            cmd
+        } else {
+            let mut cmd = Command::new("sha512sum");
+            cmd.arg(path);
+            cmd
+        };
+        let output = run_capture_output(command, Duration::from_secs(60))
+            .map_err(|error| format!("计算 SHA-512 校验和失败：{error}"))?;
+        if !output.status.success() {
+            return Err("计算安装包 SHA-512 校验和失败".into());
+        }
+        parse_sha512_from_unix_output(&decode_log(&output.stdout))
+            .ok_or_else(|| "无法解析安装包 SHA-512 校验和".to_string())
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_stale_agy_backups(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else { return; };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else { continue; };
+        if name.starts_with(".agy-old-") && name.ends_with(".exe.bak") && path.is_file() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn replace_antigravity_binary(extracted: &Path, target_path: &Path) -> Result<(), String> {
+    let target_dir = target_path.parent().ok_or("无效的 Antigravity CLI 安装路径")?;
+    fs::create_dir_all(target_dir).map_err(|error| format!("无法创建安装目录 {}：{error}", target_dir.display()))?;
+    #[cfg(windows)]
+    let staged = target_dir.join(format!(".agy-staged-{}.exe", uuid::Uuid::new_v4()));
+    #[cfg(not(windows))]
+    let staged = target_dir.join(format!(".agy-staged-{}", uuid::Uuid::new_v4()));
+
+    if let Err(error) = fs::copy(extracted, &staged) {
+        let _ = fs::remove_file(&staged);
+        return Err(format!("无法写入安装包到 {}：{error}", target_dir.display()));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) = fs::set_permissions(&staged, fs::Permissions::from_mode(0o755)) {
+            let _ = fs::remove_file(&staged);
+            return Err(format!("无法设置可执行权限：{error}"));
+        }
+        if let Err(error) = fs::rename(&staged, target_path) {
+            let _ = fs::remove_file(&staged);
+            return Err(format!("无法替换启动入口 {}：{error}", target_path.display()));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let mut xattr = Command::new("xattr");
+            xattr.args(["-d", "com.apple.quarantine"]).arg(target_path);
+            prepare_command(&mut xattr);
+            let _ = xattr.stdout(Stdio::null()).stderr(Stdio::null()).status();
+        }
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        cleanup_stale_agy_backups(target_dir);
+        if target_path.exists() {
+            let backup = target_dir.join(format!(".agy-old-{}.exe.bak", uuid::Uuid::new_v4()));
+            if let Err(error) = fs::rename(target_path, &backup) {
+                let _ = fs::remove_file(&staged);
+                return Err(format!(
+                    "新版已下载，但无法替换旧版入口 {}（请检查目录权限或文件占用）：{error}",
+                    target_path.display()
+                ));
+            }
+            if let Err(error) = fs::rename(&staged, target_path) {
+                let _ = fs::rename(&backup, target_path);
+                let _ = fs::remove_file(&staged);
+                return Err(format!("无法写入新版入口 {}：{error}", target_path.display()));
+            }
+            let _ = fs::remove_file(&backup);
+        } else if let Err(error) = fs::rename(&staged, target_path) {
+            let _ = fs::remove_file(&staged);
+            return Err(format!("无法写入新版入口 {}：{error}", target_path.display()));
+        }
+        Ok(())
+    }
+}
+
+fn run_antigravity_post_install(target_path: &Path, target_dir: &Path) {
+    let mut setup = Command::new(target_path);
+    setup.arg("install").arg("--dir").arg(target_dir);
+    prepare_command(&mut setup);
+    let Ok(mut child) = setup.stdout(Stdio::null()).stderr(Stdio::null()).spawn() else { return; };
+    let mut tree = ProcessTree::attach(&child);
+    let _ = wait_for_child(&mut child, &mut tree, Duration::from_secs(15));
+    let _ = child.wait();
+}
+
+pub(crate) fn run_antigravity_install(manifest: &AntigravityManifest, target: Option<&str>) -> Result<String, String> {
+    if target.is_none() {
+        if let Some(version) = detect_cli(CliTool::Antigravity) {
+            return Ok(version);
+        }
+    }
+    let target_path = resolve_antigravity_target_path(target.is_some())?;
+    let dir = InstallDirectory::create("agy")?;
+    let log = dir.0.join("install.log");
+    let is_tar_gz = manifest.url.contains(".tar.gz");
+    let staging_payload = dir.0.join(if is_tar_gz {
+        "agy.tar.gz"
+    } else if cfg!(windows) {
+        "agy.exe"
+    } else {
+        "agy"
+    });
+
+    download_antigravity_payload(&manifest.url, &staging_payload, &log)?;
+
+    let actual_sha512 = compute_file_sha512(&staging_payload)?;
+    if !actual_sha512.eq_ignore_ascii_case(&manifest.sha512) {
+        return Err("Antigravity CLI 安装失败（安装包 SHA-512 校验未通过，请重试）".into());
+    }
+
+    let extracted = if is_tar_gz {
+        let mut tar = Command::new("tar");
+        tar.args(["-xzf"]).arg(&staging_payload).arg("-C").arg(&dir.0).arg("antigravity");
+        run_logged("Antigravity CLI", &mut tar, &log, Duration::from_secs(120))?;
+        let binary = dir.0.join("antigravity");
+        if !binary.is_file() {
+            return Err("Antigravity CLI 安装失败（解压安装包后未找到可执行文件）".into());
+        }
+        binary
+    } else {
+        staging_payload
+    };
+
+    replace_antigravity_binary(&extracted, &target_path)?;
+    if target.is_none() {
+        if let Some(target_dir) = target_path.parent() {
+            run_antigravity_post_install(&target_path, target_dir);
+        }
+    }
+
+    let version = detect_candidates(CliTool::Antigravity, vec![target_path]);
+    validate_installed_version(CliTool::Antigravity, version, target)
+}
+
+fn strip_ansi_sequences(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            match chars.peek().copied() {
+                Some('[') => {
+                    chars.next();
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn is_valid_antigravity_model_id(id: &str) -> bool {
+    !id.is_empty()
+        && !id.ends_with(':')
+        && !id.ends_with('.')
+        && id.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'/' | b'-')
+        })
+}
+
+fn split_antigravity_model_columns(line: &str) -> Option<(&str, &str)> {
+    if let Some((left, right)) = line.split_once('\t') {
+        let id = left.trim();
+        let name = right.trim();
+        return is_valid_antigravity_model_id(id).then(|| (id, if name.is_empty() { id } else { name }));
+    }
+    if let Some(pos) = line.find("  ") {
+        let id = line[..pos].trim();
+        let name = line[pos..].trim();
+        if !name.is_empty() && is_valid_antigravity_model_id(id) {
+            return Some((id, name));
+        }
+    }
+    let single = line.trim();
+    if is_valid_antigravity_model_id(single) && (single.contains('-') || single.contains('/') || single.contains('.')) {
+        return Some((single, single));
+    }
+    None
+}
+
+pub(crate) fn parse_antigravity_models(stdout: &str) -> Vec<AntigravityModel> {
+    let cleaned = strip_ansi_sequences(stdout);
+    let mut seen = HashSet::new();
+    let mut models = Vec::new();
+    for line in cleaned.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((id, name)) = split_antigravity_model_columns(trimmed) else { continue; };
+        if seen.insert(id.to_string()) {
+            models.push(AntigravityModel {
+                id: id.to_string(),
+                name: name.to_string(),
+            });
+        }
+    }
+    models
+}
+
+fn concise_cli_error(stderr: &[u8], stdout: &[u8]) -> String {
+    let raw = {
+        let err = decode_log(stderr);
+        if err.is_empty() { decode_log(stdout) } else { err }
+    };
+    let cleaned = strip_ansi_sequences(&raw);
+    let joined: String = cleaned
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(3)
+        .collect::<Vec<_>>()
+        .join("；");
+    let mut excerpt: String = joined.chars().take(240).collect();
+    if joined.chars().count() > 240 {
+        excerpt.push('…');
+    }
+    excerpt
+}
+
+pub fn list_antigravity_models(force_refresh: bool) -> Result<Vec<AntigravityModel>, String> {
+    if !force_refresh {
+        if let Ok(guard) = antigravity_models_cache().lock() {
+            if let Some((fetched_at, models)) = guard.as_ref() {
+                if fetched_at.elapsed() < ANTIGRAVITY_MODELS_CACHE_TTL && !models.is_empty() {
+                    return Ok(models.clone());
+                }
+            }
+        }
+    }
+
+    let executable = find_executable(CliTool::Antigravity)
+        .ok_or_else(|| "未检测到 Antigravity CLI（agy），请先在设置中安装".to_string())?;
+    let command = executable_command(&executable, &["models"]);
+    let output = run_capture_output(command, ANTIGRAVITY_MODELS_TIMEOUT).map_err(|error| {
+        if error.contains("超时") {
+            "获取 Antigravity 模型列表超时，请检查网络或代理设置后重试".to_string()
+        } else {
+            format!("获取 Antigravity 模型列表失败：{error}")
+        }
+    })?;
+
+    if !output.status.success() {
+        let detail = concise_cli_error(&output.stderr, &output.stdout);
+        return Err(if detail.is_empty() {
+            "获取模型列表失败，请确认已在终端执行 agy 完成 Google 账号登录或检查网络".into()
+        } else {
+            format!("获取模型列表失败，请确认已完成 Google 账号登录或检查网络：{detail}")
+        });
+    }
+
+    let stdout_text = decode_log(&output.stdout);
+    let models = parse_antigravity_models(&stdout_text);
+    if models.is_empty() {
+        let detail = concise_cli_error(&output.stderr, &output.stdout);
+        return Err(if detail.is_empty() {
+            "Antigravity CLI 未返回可用模型，请确认已在终端登录 Google 账号后重试".into()
+        } else {
+            format!("未获取到可用模型（请确认已登录 Google 账号）：{detail}")
+        });
+    }
+
+    if let Ok(mut guard) = antigravity_models_cache().lock() {
+        *guard = Some((Instant::now(), models.clone()));
+    }
+    Ok(models)
 }
 
 #[cfg(test)]
@@ -887,9 +1439,25 @@ mod tests {
     }
 
     #[test]
+    fn only_accepts_a_successful_antigravity_version() {
+        for (raw, expected) in [
+            ("1.5.10\n", Some("1.5.10")),
+            ("v1.5.13\n", Some("1.5.13")),
+            ("agy 1.5.10\n", Some("1.5.10")),
+            ("antigravity 1.5.10-rc.1\n", Some("1.5.10-rc.1")),
+            ("1.5.10 extra\n", None),
+            ("agy: command not found\n", None),
+        ] {
+            assert_eq!(version_from_output(CliTool::Antigravity, &output(raw, true)).as_deref(), expected, "{raw}");
+            assert!(version_from_output(CliTool::Antigravity, &output(raw, false)).is_none());
+        }
+    }
+
+    #[test]
     fn cli_installations_have_independent_locks() {
         let _claude = installation(CliTool::Claude).lock().unwrap();
         assert!(installation(CliTool::Codex).try_lock().is_ok());
+        assert!(installation(CliTool::Antigravity).try_lock().is_ok());
     }
 
     #[test]
@@ -1015,8 +1583,41 @@ mod tests {
 
     #[test]
     fn update_pins_the_checked_version_into_the_npm_package() {
-        assert_eq!(npm_package(CliTool::Codex, Some("0.163.0")), "@openai/codex@0.163.0");
-        assert_eq!(npm_package(CliTool::Codex, None), "@openai/codex");
-        assert_eq!(npm_package(CliTool::Claude, Some("2.1.0")), "@anthropic-ai/claude-code@2.1.0");
+        assert_eq!(npm_package(CliTool::Codex, Some("0.163.0")).unwrap(), "@openai/codex@0.163.0");
+        assert_eq!(npm_package(CliTool::Codex, None).unwrap(), "@openai/codex");
+        assert_eq!(npm_package(CliTool::Claude, Some("2.1.0")).unwrap(), "@anthropic-ai/claude-code@2.1.0");
+        assert!(npm_package(CliTool::Antigravity, None).is_err());
+    }
+
+    #[test]
+    fn parses_antigravity_models_and_filters_noise() {
+        let sample = "\x1b[2KFetching available models...\n\n\
+            gemini-4-neon-high\tGemini 4 Neon (High)\n\
+            gemini-pro-orchestrator-neon\tOrchestrator (Neon)\n\
+            claude-opus-5-5-medium\tClaude Opus 5.5 (Medium)\n\
+            gemini-4-neon-high\tDuplicate Should Be Dropped\n\
+            gpt-oss-120b-medium  GPT-OSS 120B (Medium)\n\
+            Warning: something unrelated\n\
+            standalone-model-1\n";
+        let parsed = parse_antigravity_models(sample);
+        assert_eq!(parsed, vec![
+            AntigravityModel { id: "gemini-4-neon-high".into(), name: "Gemini 4 Neon (High)".into() },
+            AntigravityModel { id: "gemini-pro-orchestrator-neon".into(), name: "Orchestrator (Neon)".into() },
+            AntigravityModel { id: "claude-opus-5-5-medium".into(), name: "Claude Opus 5.5 (Medium)".into() },
+            AntigravityModel { id: "gpt-oss-120b-medium".into(), name: "GPT-OSS 120B (Medium)".into() },
+            AntigravityModel { id: "standalone-model-1".into(), name: "standalone-model-1".into() },
+        ]);
+    }
+
+    #[test]
+    fn parses_sha512_from_certutil_and_unix_outputs() {
+        let digest = "17fc486d3b71d5af770bace6812e56aa33b62e293b405f59afb13338e02cb4c86ba8d8c5e8b74d2503ad5a5ce6a2dc6871572763ed59c6ec116571d94cc3e981";
+        let certutil_out = format!("SHA512 的 C:\\agy.exe 哈希:\n{}\nCertUtil: -hashfile 命令成功完成。\n", digest.to_ascii_uppercase());
+        assert_eq!(parse_sha512_from_certutil(&certutil_out).as_deref(), Some(digest));
+
+        let unix_out = format!("{digest}  /tmp/agy.tar.gz\n");
+        assert_eq!(parse_sha512_from_unix_output(&unix_out).as_deref(), Some(digest));
+        assert!(parse_sha512_from_certutil("no valid hash here").is_none());
+        assert!(parse_sha512_from_unix_output("short  /tmp/agy").is_none());
     }
 }

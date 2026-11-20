@@ -1,4 +1,4 @@
-//! Agent 历史会话自动归档：把超过设定天数未使用的 Claude / Codex 会话标记为已归档。
+//! Agent 历史会话自动归档：把超过设定天数未使用的 Claude / Codex / Antigravity 会话标记为已归档。
 //!
 //! 「未使用」以历史索引里的 `updated_at` 为准（会话最后一次产生内容的时间）。
 //! 收藏的会话永不自动归档；用户手动取消归档的会话不会被下一轮立刻重新归档：
@@ -29,6 +29,8 @@ static RUN_LOCK: Mutex<()> = Mutex::new(());
 pub struct AutoArchiveResult {
     pub claude: usize,
     pub codex: usize,
+    #[serde(default)]
+    pub antigravity: usize,
     pub days: u32,
 }
 
@@ -71,13 +73,14 @@ pub fn archive_stale(enabled: bool, days: u32) -> Result<AutoArchiveResult, Stri
     let cutoff = chrono::Utc::now().timestamp_millis() - i64::from(days) * DAY_MS;
     let claude = archive_claude(&conn, cutoff)?;
     let codex = archive_codex(&conn, cutoff)?;
-    Ok(AutoArchiveResult { claude, codex, days })
+    let antigravity = archive_antigravity(&conn, cutoff)?;
+    Ok(AutoArchiveResult { claude, codex, antigravity, days })
 }
 
 /// 执行一次并广播结果：只在确实归档了会话时通知，避免面板无意义地反复刷新。
 pub fn run_and_emit(app: &AppHandle) {
     match run_from_settings() {
-        Ok(result) if result.claude + result.codex > 0 => {
+        Ok(result) if result.claude + result.codex + result.antigravity > 0 => {
             let _ = app.emit(AUTO_ARCHIVED_EVENT, &result);
         }
         Ok(_) => {}
@@ -101,45 +104,52 @@ pub fn start(app: AppHandle) {
     });
 }
 
-fn archive_claude(conn: &Connection, cutoff: i64) -> Result<usize, String> {
-    conn.execute(
-        "INSERT INTO claude_session_meta (session_id, starred, archived, auto_archive_mark)
+fn archive_table(
+    conn: &Connection,
+    cutoff: i64,
+    sessions_table: &str,
+    meta_table: &str,
+    label: &str,
+) -> Result<usize, String> {
+    let sql = format!(
+        "INSERT INTO {meta_table} (session_id, starred, archived, auto_archive_mark)
          SELECT s.session_id, 0, 1, s.updated_at
-         FROM claude_sessions s
-         LEFT JOIN claude_session_meta m ON m.session_id = s.session_id
+         FROM {sessions_table} s
+         LEFT JOIN {meta_table} m ON m.session_id = s.session_id
          WHERE s.updated_at < ?1
            AND COALESCE(m.starred, 0) = 0
            AND COALESCE(m.archived, 0) = 0
            AND (m.auto_archive_mark IS NULL OR m.auto_archive_mark < s.updated_at)
          ON CONFLICT(session_id) DO UPDATE SET
            archived = 1,
-           auto_archive_mark = excluded.auto_archive_mark",
-        [cutoff],
-    )
-    .map_err(|error| format!("自动归档 Claude 会话失败: {error}"))
+           auto_archive_mark = excluded.auto_archive_mark"
+    );
+    conn.execute(&sql, [cutoff])
+        .map_err(|error| format!("自动归档 {label} 会话失败: {error}"))
+}
+
+fn archive_claude(conn: &Connection, cutoff: i64) -> Result<usize, String> {
+    archive_table(conn, cutoff, "claude_sessions", "claude_session_meta", "Claude")
 }
 
 fn archive_codex(conn: &Connection, cutoff: i64) -> Result<usize, String> {
-    conn.execute(
-        "INSERT INTO codex_session_meta (session_id, starred, archived, auto_archive_mark)
-         SELECT s.session_id, 0, 1, s.updated_at
-         FROM codex_sessions s
-         LEFT JOIN codex_session_meta m ON m.session_id = s.session_id
-         WHERE s.updated_at < ?1
-           AND COALESCE(m.starred, 0) = 0
-           AND COALESCE(m.archived, 0) = 0
-           AND (m.auto_archive_mark IS NULL OR m.auto_archive_mark < s.updated_at)
-         ON CONFLICT(session_id) DO UPDATE SET
-           archived = 1,
-           auto_archive_mark = excluded.auto_archive_mark",
-        [cutoff],
+    archive_table(conn, cutoff, "codex_sessions", "codex_session_meta", "Codex")
+}
+
+fn archive_antigravity(conn: &Connection, cutoff: i64) -> Result<usize, String> {
+    archive_table(
+        conn,
+        cutoff,
+        "antigravity_sessions",
+        "antigravity_session_meta",
+        "Antigravity",
     )
-    .map_err(|error| format!("自动归档 Codex 会话失败: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::antigravity_history_service::init_antigravity_schema;
     use crate::services::claude_history_service::init_claude_schema;
     use crate::services::codex_history_service::init_codex_schema;
 
@@ -147,6 +157,7 @@ mod tests {
         let conn = Connection::open_in_memory().expect("内存库");
         init_claude_schema(&conn).expect("Claude 建表");
         init_codex_schema(&conn).expect("Codex 建表");
+        init_antigravity_schema(&conn).expect("Antigravity 建表");
         conn
     }
 
@@ -164,10 +175,15 @@ mod tests {
              VALUES (?1, '/tmp/r.jsonl', 0, 0, '', ?2, '{}')",
             rusqlite::params![id, updated_at],
         ).expect("写 Codex 会话");
+        conn.execute(
+            "INSERT INTO antigravity_sessions (session_id, file_path, file_mtime, file_size,
+                project_dir, updated_at, item_json)
+             VALUES (?1, '/tmp/a.jsonl', 0, 0, '', ?2, '{}')",
+            rusqlite::params![id, updated_at],
+        ).expect("写 Antigravity 会话");
     }
 
-    fn archived(conn: &Connection, claude: bool, id: &str) -> bool {
-        let table = if claude { "claude_session_meta" } else { "codex_session_meta" };
+    fn archived(conn: &Connection, table: &str, id: &str) -> bool {
         // 没有元数据行时视为未归档：用子查询保证始终返回一行。
         conn.query_row(
             &format!("SELECT COALESCE((SELECT archived FROM {table} WHERE session_id = ?1), 0)"),
@@ -184,22 +200,24 @@ mod tests {
         insert_session(&conn, "old", old);
         insert_session(&conn, "fresh", now);
         insert_session(&conn, "starred", old);
-        conn.execute(
-            "INSERT INTO claude_session_meta (session_id, starred) VALUES ('starred', 1)",
-            [],
-        ).unwrap();
-        conn.execute(
-            "INSERT INTO codex_session_meta (session_id, starred) VALUES ('starred', 1)",
-            [],
-        ).unwrap();
+        for table in ["claude_session_meta", "codex_session_meta", "antigravity_session_meta"] {
+            conn.execute(
+                &format!("INSERT INTO {table} (session_id, starred) VALUES ('starred', 1)"),
+                [],
+            ).unwrap();
+        }
 
         let cutoff = now - i64::from(30) * DAY_MS;
         assert_eq!(archive_claude(&conn, cutoff).unwrap(), 1);
         assert_eq!(archive_codex(&conn, cutoff).unwrap(), 1);
-        assert!(archived(&conn, true, "old"));
-        assert!(archived(&conn, false, "old"));
-        assert!(!archived(&conn, true, "fresh"));
-        assert!(!archived(&conn, true, "starred"));
+        assert_eq!(archive_antigravity(&conn, cutoff).unwrap(), 1);
+        assert!(archived(&conn, "claude_session_meta", "old"));
+        assert!(archived(&conn, "codex_session_meta", "old"));
+        assert!(archived(&conn, "antigravity_session_meta", "old"));
+        assert!(!archived(&conn, "claude_session_meta", "fresh"));
+        assert!(!archived(&conn, "antigravity_session_meta", "fresh"));
+        assert!(!archived(&conn, "claude_session_meta", "starred"));
+        assert!(!archived(&conn, "antigravity_session_meta", "starred"));
     }
 
     #[test]
@@ -214,17 +232,17 @@ mod tests {
         // 用户手动取消归档：同一 updated_at 下不应被下一轮重新归档。
         conn.execute("UPDATE claude_session_meta SET archived = 0 WHERE session_id = 'old'", []).unwrap();
         assert_eq!(archive_claude(&conn, cutoff).unwrap(), 0);
-        assert!(!archived(&conn, true, "old"));
+        assert!(!archived(&conn, "claude_session_meta", "old"));
 
         // 会话再次被使用后 updated_at 前移，过期后重新获得归档资格。
         conn.execute("UPDATE claude_sessions SET updated_at = ?1 WHERE session_id = 'old'", [old + 1]).unwrap();
         assert_eq!(archive_claude(&conn, cutoff).unwrap(), 1);
-        assert!(archived(&conn, true, "old"));
+        assert!(archived(&conn, "claude_session_meta", "old"));
     }
 
     #[test]
     fn disabled_does_nothing() {
         let result = archive_stale(false, 30).unwrap();
-        assert_eq!(result.claude + result.codex, 0);
+        assert_eq!(result.claude + result.codex + result.antigravity, 0);
     }
 }

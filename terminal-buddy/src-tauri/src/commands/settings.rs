@@ -124,11 +124,20 @@ pub fn save_show_task_summary(enabled: bool) -> Result<(), String> {
 
 /// 保存 Agent 管理中配置的基础启动命令；空串表示回退内置默认。
 #[cfg_attr(feature = "desktop", tauri::command)]
-pub fn save_agent_commands(claude: String, codex: String) -> Result<(), String> {
+pub fn save_agent_commands(
+    claude: String,
+    codex: String,
+    antigravity: Option<String>,
+) -> Result<(), String> {
     SettingsService::mutate_settings(|settings| {
+        let next_antigravity = match antigravity {
+            Some(value) => value.trim().to_string(),
+            None => settings.agent_commands.antigravity.clone(),
+        };
         settings.agent_commands = AgentCommands {
             claude: claude.trim().to_string(),
             codex: codex.trim().to_string(),
+            antigravity: next_antigravity,
         };
     })
 }

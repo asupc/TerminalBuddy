@@ -151,7 +151,7 @@ pub struct AppSettings {
     pub agent_idle_recycle_hours: u32,
 }
 
-/// Agent（Claude Code / Codex）的基础启动命令，供项目模型启动与历史恢复继承参数。
+/// Agent（Claude Code / Codex / Antigravity CLI）的基础启动命令，供项目启动与历史恢复继承参数。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCommands {
@@ -161,11 +161,14 @@ pub struct AgentCommands {
     /// Codex 基础命令，默认 `codex --dangerously-bypass-approvals-and-sandbox`。
     #[serde(default)]
     pub codex: String,
+    /// Antigravity CLI 基础命令，默认 `agy --dangerously-skip-permissions`。
+    #[serde(default)]
+    pub antigravity: String,
 }
 
 impl Default for AgentCommands {
     fn default() -> Self {
-        Self { claude: String::new(), codex: String::new() }
+        Self { claude: String::new(), codex: String::new(), antigravity: String::new() }
     }
 }
 

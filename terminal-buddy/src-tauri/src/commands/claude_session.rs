@@ -138,7 +138,7 @@ pub fn get_agent_sessions_for_terminals(
     let requested: HashSet<String> = terminal_ids.iter().cloned().collect();
     let mut sessions: HashMap<_, _> = crate::services::terminal_task_service::session_bindings()
         .into_iter()
-        .filter(|(id, _)| requested.contains(id))
+        .filter(|(id, record)| requested.contains(id) && matches!(record.provider.as_str(), "claude" | "codex"))
         .collect();
     let missing: Vec<String> = terminal_ids
         .into_iter()
@@ -188,6 +188,7 @@ pub struct TerminalTaskSummaries {
     enabled: bool,
     summaries: HashMap<String, crate::services::terminal_task_service::TerminalTaskSummary>,
     activities: HashMap<String, crate::services::ClaudeHookTerminalEvent>,
+    providers: HashMap<String, String>,
 }
 
 /// 前端只传终端 ID；会话 ID 和文件路径始终由服务端发现。
@@ -198,8 +199,17 @@ pub async fn get_terminal_task_summaries(
 ) -> Result<TerminalTaskSummaries, String> {
     let enabled = crate::services::SettingsService::get_settings().show_task_summary;
     let activities = crate::services::codex_activity_service::snapshot(&terminal_ids);
-    if !enabled { return Ok(TerminalTaskSummaries { enabled, summaries: HashMap::new(), activities }); }
+    if !enabled {
+        let providers = crate::services::terminal_task_service::current_providers(&terminal_ids);
+        return Ok(TerminalTaskSummaries {
+            enabled,
+            summaries: HashMap::new(),
+            activities,
+            providers,
+        });
+    }
     let pids = terminal_processes(&terminal_ids, &service);
     let summaries = super::claude_task(move || Ok(crate::services::terminal_task_service::summaries(pids))).await?;
-    Ok(TerminalTaskSummaries { enabled, summaries, activities })
+    let providers = crate::services::terminal_task_service::current_providers(&terminal_ids);
+    Ok(TerminalTaskSummaries { enabled, summaries, activities, providers })
 }

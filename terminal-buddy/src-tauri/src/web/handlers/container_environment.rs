@@ -11,6 +11,7 @@ use crate::web::{auth::ClaimsFromRequest, error::ApiError, server::AppState};
 pub enum CliToolParam {
     Claude,
     Codex,
+    Antigravity,
 }
 
 impl From<CliToolParam> for CliTool {
@@ -18,6 +19,7 @@ impl From<CliToolParam> for CliTool {
         match value {
             CliToolParam::Claude => Self::Claude,
             CliToolParam::Codex => Self::Codex,
+            CliToolParam::Antigravity => Self::Antigravity,
         }
     }
 }
@@ -42,11 +44,12 @@ pub async fn status(
     Query(query): Query<EnvironmentQuery>,
 ) -> Result<Json<Environment>, ApiError> {
     if query.check_updates {
-        let (claude, codex) = tokio::try_join!(
+        let (claude, codex, antigravity) = tokio::try_join!(
             agent_cli_service::load_status(CliTool::Claude, true),
             agent_cli_service::load_status(CliTool::Codex, true),
+            agent_cli_service::load_status(CliTool::Antigravity, true),
         ).map_err(map_error)?;
-        return Ok(Json(Environment { claude, codex }));
+        return Ok(Json(Environment { claude, codex, antigravity }));
     }
     tokio::task::spawn_blocking(agent_cli_service::environment).await
         .map_err(|error| ApiError::Internal(error.to_string()))?

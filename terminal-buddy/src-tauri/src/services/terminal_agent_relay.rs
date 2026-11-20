@@ -1021,7 +1021,10 @@ fn relay_scan(app: &AppHandle) -> Arc<ScanData> {
         }
     }
     let summaries = terminal_task_service::summaries(pids);
-    let bindings = terminal_task_service::session_bindings();
+    let bindings = terminal_task_service::session_bindings()
+        .into_iter()
+        .filter(|(_, record)| matches!(record.provider.as_str(), "claude" | "codex"))
+        .collect();
     let data = Arc::new(ScanData { summaries, bindings });
     lock_state().scan_cache = Some((Instant::now(), pids_key, data.clone()));
     data

@@ -1,10 +1,21 @@
-//! Agent CLI 更新检测：使用设置中的下载源查询 dist-tags 与预发布通道。
-use std::{cmp::Ordering, time::Duration};
+//! Agent CLI 更新检测：使用设置中的下载源查询 dist-tags 与预发布通道；
+//! Antigravity CLI 使用 Google 官方发布清单查询。
+use std::{cmp::Ordering, path::Path, time::Duration};
 
 use reqwest::Client;
 use semver::Version;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+
+pub(crate) const ANTIGRAVITY_MANIFEST_BASE: &str =
+    "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests";
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub(crate) struct AntigravityManifest {
+    pub version: String,
+    pub url: String,
+    pub sha512: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +125,101 @@ pub async fn check_update(package: &str, current: Option<&str>, preview_tags: &[
     update_from_tags(tags, current, preview_tags)
 }
 
+fn resolve_antigravity_platform(os: &str, arch: &str, is_musl: bool) -> Result<&'static str, String> {
+    match (os, arch) {
+        ("windows", "x86_64") => Ok("windows_amd64"),
+        ("windows", "aarch64") => Ok("windows_arm64"),
+        ("macos", "x86_64") => Ok("darwin_amd64"),
+        ("macos", "aarch64") => Ok("darwin_arm64"),
+        ("linux", "x86_64") => Ok(if is_musl { "linux_amd64_musl" } else { "linux_amd64" }),
+        ("linux", "aarch64") => Ok(if is_musl { "linux_arm64_musl" } else { "linux_arm64" }),
+        _ => Err("当前系统架构暂不支持 Antigravity CLI 自动安装或更新".into()),
+    }
+}
+
+pub(crate) fn antigravity_platform() -> Result<&'static str, String> {
+    let is_musl = cfg!(target_env = "musl")
+        || Path::new("/lib/libc.musl-x86_64.so.1").exists()
+        || Path::new("/lib/libc.musl-aarch64.so.1").exists();
+    resolve_antigravity_platform(std::env::consts::OS, std::env::consts::ARCH, is_musl)
+}
+
+pub(crate) fn is_valid_sha512(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.len() == 128 && trimmed.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn validate_antigravity_manifest(
+    mut manifest: AntigravityManifest,
+    require_https_download: bool,
+) -> Result<AntigravityManifest, String> {
+    manifest.version = manifest.version.trim().to_string();
+    manifest.url = manifest.url.trim().to_string();
+    manifest.sha512 = manifest.sha512.trim().to_ascii_lowercase();
+
+    if parse_version(&manifest.version).is_none() {
+        return Err("Google 官方版本源返回了无效版本号，请稍后重试".into());
+    }
+    if !is_valid_sha512(&manifest.sha512) {
+        return Err("Google 官方版本源返回了无效校验和，请稍后重试".into());
+    }
+    let valid_url = !manifest.url.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+        && if require_https_download {
+            manifest.url.starts_with("https://")
+        } else {
+            manifest.url.starts_with("http://") || manifest.url.starts_with("https://")
+        };
+    if !valid_url {
+        return Err("Google 官方版本源返回了无效下载地址，请稍后重试".into());
+    }
+    Ok(manifest)
+}
+
+async fn fetch_antigravity_manifest_from(
+    client: &Client,
+    url: &str,
+    require_https_download: bool,
+) -> Result<AntigravityManifest, String> {
+    let response = client.get(url).send().await
+        .map_err(|_| "无法连接 Google 官方版本源，请检查网络或代理设置后重试".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Google 官方版本源查询失败（HTTP {}），请稍后重试", response.status().as_u16()));
+    }
+    let manifest = response.json::<AntigravityManifest>().await
+        .map_err(|_| "Google 官方版本源返回了无效数据，请稍后重试".to_string())?;
+    validate_antigravity_manifest(manifest, require_https_download)
+}
+
+pub(crate) async fn fetch_antigravity_manifest() -> Result<AntigravityManifest, String> {
+    let platform = antigravity_platform()?;
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|_| "无法创建版本查询连接，请重试".to_string())?;
+    let url = format!("{ANTIGRAVITY_MANIFEST_BASE}/{platform}.json");
+    fetch_antigravity_manifest_from(&client, &url, true).await
+}
+
+fn update_from_antigravity_manifest(manifest: Result<AntigravityManifest, String>, current: Option<&str>) -> CliUpdate {
+    match manifest {
+        Ok(manifest) => refresh_update_state(CliUpdate {
+            latest_version: Some(manifest.version),
+            state: CliUpdateState::Unknown,
+            message: None,
+        }, current),
+        Err(message) => CliUpdate {
+            latest_version: None,
+            state: CliUpdateState::Failed,
+            message: Some(message),
+        },
+    }
+}
+
+pub async fn check_antigravity_update(current: Option<&str>) -> CliUpdate {
+    update_from_antigravity_manifest(fetch_antigravity_manifest().await, current)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +311,86 @@ mod tests {
                 assert!(result.unwrap_err().contains(message));
             } else {
                 assert_eq!(result.unwrap().get("latest").and_then(Value::as_str), Some("0.116.0"));
+            }
+            server.await.unwrap();
+        }
+    }
+
+    #[test]
+    fn resolves_antigravity_platforms_matching_official_scripts() {
+        assert_eq!(resolve_antigravity_platform("windows", "x86_64", false).unwrap(), "windows_amd64");
+        assert_eq!(resolve_antigravity_platform("windows", "aarch64", false).unwrap(), "windows_arm64");
+        assert_eq!(resolve_antigravity_platform("macos", "x86_64", false).unwrap(), "darwin_amd64");
+        assert_eq!(resolve_antigravity_platform("macos", "aarch64", false).unwrap(), "darwin_arm64");
+        assert_eq!(resolve_antigravity_platform("linux", "x86_64", false).unwrap(), "linux_amd64");
+        assert_eq!(resolve_antigravity_platform("linux", "x86_64", true).unwrap(), "linux_amd64_musl");
+        assert_eq!(resolve_antigravity_platform("linux", "aarch64", true).unwrap(), "linux_arm64_musl");
+        assert!(resolve_antigravity_platform("freebsd", "x86_64", false).is_err());
+    }
+
+    #[test]
+    fn validates_antigravity_manifest_and_update_states() {
+        let valid_sha = "A".repeat(128);
+        let ok = validate_antigravity_manifest(AntigravityManifest {
+            version: " 1.5.13 ".into(),
+            url: "https://storage.googleapis.com/antigravity-public/cli.exe".into(),
+            sha512: valid_sha.clone(),
+        }, true).unwrap();
+        assert_eq!(ok.version, "1.5.13");
+        assert_eq!(ok.sha512, "a".repeat(128));
+
+        // 坏版本号、非 https（strict 模式）、非法 sha512 一律拒绝。
+        for bad in [
+            AntigravityManifest { version: "1.5".into(), url: "https://example.com/agy.exe".into(), sha512: valid_sha.clone() },
+            AntigravityManifest { version: "1.5.13".into(), url: "http://example.com/agy.exe".into(), sha512: valid_sha.clone() },
+            AntigravityManifest { version: "1.5.13".into(), url: "https://example.com/agy.exe".into(), sha512: "abc".into() },
+            AntigravityManifest { version: "1.5.13".into(), url: "https://example.com/agy.exe".into(), sha512: "z".repeat(128) },
+        ] {
+            assert!(validate_antigravity_manifest(bad, true).is_err());
+        }
+
+        assert_eq!(update_from_antigravity_manifest(Ok(ok.clone()), Some("1.5.10")).state, CliUpdateState::Available);
+        assert_eq!(update_from_antigravity_manifest(Ok(ok.clone()), Some("1.5.13")).state, CliUpdateState::UpToDate);
+        assert_eq!(update_from_antigravity_manifest(Ok(ok.clone()), Some("1.6.0")).state, CliUpdateState::Ahead);
+        assert_eq!(update_from_antigravity_manifest(Ok(ok), None).state, CliUpdateState::Unknown);
+
+        let failed = update_from_antigravity_manifest(Err("网络不可用".into()), Some("1.5.10"));
+        assert_eq!(failed.state, CliUpdateState::Failed);
+        assert_eq!(failed.message.as_deref(), Some("网络不可用"));
+    }
+
+    #[tokio::test]
+    async fn fetches_antigravity_manifest_and_handles_http_errors() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let valid_sha = "b".repeat(128);
+        let ok_body = format!(r#"{{"version":"1.5.13","url":"https://storage.googleapis.com/a/agy.exe","sha512":"{valid_sha}"}}"#);
+        for (status, body, expected_error) in [
+            ("200 OK", ok_body.as_str(), None),
+            ("503 Service Unavailable", ok_body.as_str(), Some("HTTP 503")),
+            ("200 OK", "not-json", Some("无效数据")),
+            ("200 OK", r#"{"version":"1.5.13","url":"https://x","sha512":"short"}"#, Some("无效校验和")),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let response_body = body.to_string();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 2048];
+                let _ = stream.read(&mut request).await.unwrap();
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                    response_body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            });
+            let client = Client::builder().no_proxy().timeout(Duration::from_secs(2)).build().unwrap();
+            let result = fetch_antigravity_manifest_from(&client, &format!("http://{address}/manifest.json"), true).await;
+            if let Some(message) = expected_error {
+                assert!(result.unwrap_err().contains(message), "expected {message}");
+            } else {
+                let manifest = result.unwrap();
+                assert_eq!(manifest.version, "1.5.13");
+                assert_eq!(manifest.sha512, valid_sha);
             }
             server.await.unwrap();
         }

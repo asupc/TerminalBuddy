@@ -1,12 +1,13 @@
-//! Agent 管理（桌面端）：检测、安装与更新 Claude Code / Codex。
+//! Agent 管理（桌面端）：检测、安装与更新 Claude Code / Codex / Antigravity CLI。
 //! 逻辑与 Docker 网页版 REST 接口共用 services/agent_cli_service.rs。
 use super::claude_task;
-use crate::services::agent_cli_service::{self, CliTool, Environment, Operation};
+use crate::services::agent_cli_service::{self, AntigravityModel, CliTool, Environment, Operation};
 
 fn parse_tool(tool: &str) -> Result<CliTool, String> {
     match tool {
         "claude" => Ok(CliTool::Claude),
         "codex" => Ok(CliTool::Codex),
+        "antigravity" => Ok(CliTool::Antigravity),
         _ => Err(format!("未知的 Agent：{tool}")),
     }
 }
@@ -40,4 +41,11 @@ pub async fn update_agent_cli(tool: String) -> Result<agent_cli_service::CliStat
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn save_agent_download_source(source: crate::models::AgentDownloadSource) -> Result<(), String> {
     claude_task(move || agent_cli_service::save_download_source(source)).await
+}
+
+/// 获取 Antigravity CLI 当前登录账号可用的模型列表（`agy models`）。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn list_antigravity_models(refresh: Option<bool>) -> Result<Vec<AntigravityModel>, String> {
+    let force = refresh.unwrap_or(false);
+    claude_task(move || agent_cli_service::list_antigravity_models(force)).await
 }
