@@ -9,6 +9,7 @@ import {
   startTerminal,
   writeToTerminal,
   aiSessionList,
+  type BackendTerminalInfo,
 } from './tauri';
 import { loadSavedTabs, saveTabsToStorage, useAppStore, type NativeAgentTab, type SavedNativeAgentTab } from '../stores/appStore';
 import { flushPendingSaveTabsIfAny } from '../stores/slices/sessionsSlice';
@@ -182,6 +183,45 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   return terminalId;
 }
 
+/**
+ * 后端 PTY 仍存活时直接接回原会话（不再新建进程）。
+ *
+ * 页面重载（切换本地 / 远程工作区、WebView reload）不会终止桌面端 Rust 进程，
+ * 旧终端依旧在运行；此时若按快照重建 PTY，就会和存活会话并存出现「已打开的会话再次打开」。
+ * 命中 terminalId 的页签复用原 id，并按后端真值回填目录与启动参数。
+ */
+function reattachLiveTerminalTab(tab: SavedTab, live: BackendTerminalInfo): string {
+  const store = useAppStore.getState();
+  const terminalId = tab.terminalId!;
+  const existing = store.sessions.find(session => session.id === terminalId);
+  if (existing) return existing.id;
+  const terminalType = (tab.terminalType || live.terminalType || defaultShellType()) as TerminalSession['terminalType'];
+  store.addSession({
+    id: terminalId,
+    profileId: tab.profileId || live.profileId,
+    profileName: tab.profileName || live.profileName,
+    terminalType,
+    colorTheme: tab.colorTheme,
+    tabColor: tab.tabColor,
+    groupId: tab.groupId || 'default',
+    groupName: tab.groupName || live.group || undefined,
+    owner: live.owner,
+    startupPath: tab.startupPath,
+    extraParams: live.extraStartupParams ?? tab.extraParams,
+    extraParamMode: live.extraStartupMode ?? tab.extraParamMode,
+    manualTitle: tab.manualTitle,
+  }, true);
+  // 后端目录可能已在远程工作区期间被 cd 过，优先采用；否则回落到快照目录。
+  const directory = live.directory || tab.directory;
+  if (directory) store.setSessionDirectory(terminalId, directory, { skipRemoteSync: true });
+  const binding: AgentSessionBinding | undefined = tab.agentSession
+    ?? (tab.claudeSessionId
+      ? { provider: 'claude', sessionId: tab.claudeSessionId, cwd: directory }
+      : undefined);
+  if (binding) store.setAgentSessionBinding(terminalId, binding);
+  return terminalId;
+}
+
 /** 将持久化的 recentTabs token 恢复为 store 的 tabActivationHistory，并保证当前激活页签位于最前。 */
 function seedRestoredTabHistory(
   recentTabs: readonly string[],
@@ -223,6 +263,8 @@ interface RestoreSavedTabsOptions {
   dropStaleSessions?: boolean;
   /** 与入参 `tabs` 下标对齐的最近激活记录。 */
   recentTabs?: string[];
+  /** 后端仍存活的终端：terminalId 命中时直接接回，不重复创建 PTY。 */
+  liveTerminals?: BackendTerminalInfo[];
 }
 
 /**
@@ -236,6 +278,7 @@ async function restoreSavedTabs(
 ): Promise<string[]> {
   if (tabs.length === 0) return [];
   const restoredSessionIds: Array<string | undefined> = new Array(tabs.length);
+  const liveById = new Map((options.liveTerminals ?? []).map(terminal => [terminal.id, terminal]));
   // 暂停逐次写入，恢复完后统一写一次
   useAppStore.setState({ _skipSaveTabs: true });
   try {
@@ -253,7 +296,10 @@ async function restoreSavedTabs(
         if (tab.sessionType === 'editor') {
           restoredSessionIds[i] = await restoreEditorTab(tab);
         } else {
-          restoredSessionIds[i] = await restoreTerminalTab(tab);
+          const live = tab.terminalId ? liveById.get(tab.terminalId) : undefined;
+          restoredSessionIds[i] = live
+            ? reattachLiveTerminalTab(tab, live)
+            : await restoreTerminalTab(tab);
         }
         if (i === activeIndex || useAppStore.getState().activeSessionId === null) {
           const id = restoredSessionIds[i];
@@ -541,7 +587,11 @@ export async function restoreTabs() {
   } else if (tabs.length === 0) {
     seedRestoredTabHistory(recentTabs, () => undefined);
   } else {
-    await restoreSavedTabs(tabs, activeIndex, { recentTabs });
+    // 桌面端进程在页面重载（切换工作区、WebView reload）后仍然存活：
+    // 先取一次后端存活终端，命中 terminalId 的页签直接接回，避免重复创建 PTY。
+    // 真正冷启动时列表为空，仍按快照恢复。
+    const liveTerminals = await listTerminals().catch((): BackendTerminalInfo[] => []);
+    await restoreSavedTabs(tabs, activeIndex, { recentTabs, liveTerminals });
   }
   // 终端恢复会把 activeSpecialTab 归零；保存时正在看原生会话则最后切回去并落盘。
   if (agentChatActive && activeAgentTabKey) {

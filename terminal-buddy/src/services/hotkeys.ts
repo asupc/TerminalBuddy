@@ -101,8 +101,11 @@ export const isAppHotkeyEvent = (e: KeyboardEvent): boolean => {
   return false;
 };
 
-// 当前已注册到系统的全局快捷键（空串 = 未注册）
+// 当前已注册到系统的全局快捷键（空串 = 未启用）
 let _registeredShowWindow: string | null = null;
+// 注册 / 注销串行执行：StrictMode 重挂载、设置变更与页面重载可能连续触发，
+// 并发调用会让「卸载旧键」和「注册新键」互相抢时序。
+let _globalHotkeySync: Promise<void> = Promise.resolve();
 
 // App 挂载后调用：注册 window/document keydown 分发 + 全局快捷键（呼出窗口）。
 // 返回清理函数。F11 现有监听保持独立、不受影响；本分发器用独立的 _tbHotkeyHandled 去重。
@@ -132,16 +135,30 @@ export const initAppHotkeys = (): (() => void) => {
     if (hotkey === _registeredShowWindow) return;
     const previous = _registeredShowWindow;
     _registeredShowWindow = hotkey;
-    if (previous) void unregister(previous).catch(() => {});
-    if (!hotkey) return;
-    register(hotkey, () => {
-      const win = getCurrentWindow();
-      void win.show();
-      void win.unminimize();
-      void win.setFocus();
+    _globalHotkeySync = _globalHotkeySync.then(async () => {
+      if (previous) await unregister(previous).catch(() => {});
+      if (!hotkey) return;
+      // 页面重载（切换本地 / 远程工作区、WebView reload）不会执行前端清理，
+      // 但 Rust 侧仍持有上一页注册的同一个键；直接 register 会因「已注册」而
+      // 误报被其他程序占用。先注销同名键（其他程序占用时注销会失败，忽略即可）。
+      await unregister(hotkey).catch(() => {});
+      try {
+        await register(hotkey, (event) => {
+          if (event.state !== 'Pressed') return;
+          const win = getCurrentWindow();
+          void win.show();
+          void win.unminimize();
+          void win.setFocus();
+        });
+      } catch (err) {
+        console.error('全局快捷键注册失败:', err);
+        useAppStore.getState().showToast(
+          `全局快捷键「${hotkey}」注册失败，可能已被其他程序占用`,
+          'error',
+        );
+      }
     }).catch(err => {
-      console.error('全局快捷键注册失败:', err);
-      useAppStore.getState().showToast('全局快捷键注册失败,可能被其他程序占用', 'error');
+      console.error('全局快捷键同步失败:', err);
     });
   };
   syncGlobalHotkey();
@@ -151,9 +168,13 @@ export const initAppHotkeys = (): (() => void) => {
     window.removeEventListener('keydown', handleKeyDown);
     document.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('app-settings-changed', syncGlobalHotkey);
-    if (_registeredShowWindow) {
-      void unregister(_registeredShowWindow).catch(() => {});
-      _registeredShowWindow = null;
+    const registered = _registeredShowWindow;
+    _registeredShowWindow = null;
+    if (registered) {
+      // 排进同一条串行队列，避免「清理注销」晚于下一次挂载的注册。
+      _globalHotkeySync = _globalHotkeySync
+        .then(() => unregister(registered))
+        .catch(() => {});
     }
   };
 };
