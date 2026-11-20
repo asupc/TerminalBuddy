@@ -67,9 +67,10 @@ function load(file, mocks = {}) {
 // 纯工具模块可直接真加载：剥 --resume 参数、判断 claude 命令等无运行时依赖。
 const claudeLaunch = load('src/utils/claudeLaunch.ts');
 const codexLaunch = load('src/utils/codexLaunch.ts', { './claudeLaunch': claudeLaunch });
+const antigravityLaunch = load('src/utils/antigravityLaunch.ts');
 const commandParams = load('src/utils/commandParams.ts');
 const agentCommands = load('src/utils/agentCommands.ts', {
-  './claudeLaunch': claudeLaunch, './codexLaunch': codexLaunch,
+  './claudeLaunch': claudeLaunch, './codexLaunch': codexLaunch, './antigravityLaunch': antigravityLaunch,
   '../stores/appStore': { useAppStore: store },
 });
 const sessionHistory = load('src/utils/sessionHistory.ts', {
@@ -82,7 +83,7 @@ const openTerminal = load('src/utils/openTerminalInDir.ts', {
   '../stores/appStore': { useAppStore: store }, '../services/tauri': tauri, './agentCommands': agentCommands,
   '../services/platform': { defaultShellType: () => 'powershell' },
   './projectPath': load('src/utils/projectPath.ts', { '../services/platform': { serverUsesWindowsPaths: () => false } }),
-  './claudeLaunch': claudeLaunch, './codexLaunch': codexLaunch,
+  './claudeLaunch': claudeLaunch, './codexLaunch': codexLaunch, './antigravityLaunch': antigravityLaunch,
 });
 const { TabContextMenu } = load('src/components/shell/TabContextMenu.tsx', {
   '../../stores/appStore': { useAppStore: store },
@@ -211,3 +212,12 @@ await recreate(legacy);
 assert.equal(state.sessions.length, 0);
 assert.match(state.toasts[0][0], /分屏模式已满/);
 console.log('PASS: 启动失败提示及分屏容量保护');
+assert.equal(
+  commandParams.withoutResumeArgs('agy --dangerously-skip-permissions --model gemini-3-pro --effort high --conversation conv-123'),
+  'agy --dangerously-skip-permissions --model gemini-3-pro --effort high',
+);
+assert.equal(
+  commandParams.withoutResumeArgs('agy.exe -c --continue'),
+  'agy.exe',
+);
+console.log('PASS: 剥离 Antigravity --conversation / -c 恢复参数');
