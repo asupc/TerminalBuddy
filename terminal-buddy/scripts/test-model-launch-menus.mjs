@@ -51,7 +51,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const claude = load('src/utils/claudeLaunch.ts');
 const codex = load('src/utils/codexLaunch.ts', { './claudeLaunch': claude });
 const antigravity = load('src/utils/antigravityLaunch.ts');
-const claudeRef = load('src/services/tauri/claudeEnhance.ts', { '@tauri-apps/api/core': {} });
+const claudeRef = load('src/services/tauri/claudeEnhance.ts', { './../remoteWorkspace/core': {} });
 const openAgentChat = { openNewAgentSession: async () => {} };
 const agentCommands = load('src/utils/agentCommands.ts', {
   './claudeLaunch': claude, './codexLaunch': codex, './antigravityLaunch': antigravity,
@@ -61,7 +61,6 @@ const types = load('src/types/index.ts');
 const projectPath = load('src/utils/projectPath.ts', { '../services/platform': { serverUsesWindowsPaths: () => false } });
 const TreeView = () => null;
 const ClaudeModelMenuSection = () => null;
-const AntigravityModelMenuSection = () => null;
 const event = { preventDefault() {}, stopPropagation() {}, clientX: 30, clientY: 40,
   currentTarget: { getBoundingClientRect: () => ({ left: 30, bottom: 40 }) } };
 
@@ -76,7 +75,6 @@ function desktopWithProject(project, availability = { claude: true, codex: true,
   const state = {
     profiles: [profile], projects: [project], configSearchQuery: '',
     refreshClaudeLaunchTargets: async () => {}, refreshCodexLaunchTargets: async () => {},
-    antigravityProviderConfigLoaded: true, antigravityProviderConfig: null, refreshAntigravityProviderConfig: async () => {},
     selectProfile() {}, setProviderSettingsTab: source => settings.push(source), openSettingsDialog() {},
   };
   const useAppStore = selector => selector(state);
@@ -86,13 +84,13 @@ function desktopWithProject(project, availability = { claude: true, codex: true,
     '../../stores/appStore': { useAppStore },
     '../../utils/openTerminalInDir': {
       openProjectAgentTerminal: async () => {},
-      openProjectAntigravityTerminal: async (targetProject, modelId, effort) => antigravityLaunches.push([targetProject, modelId, effort]),
+      openProjectAntigravityTerminal: async (targetProject) => antigravityLaunches.push(targetProject),
     },
     '../../utils/openAgentChat': openAgentChat,
     '../../utils/agentCommands': agentCommands,
     '../../hooks/useAgentAvailability': { useAgentAvailability: () => availability },
     '../../types': types,
-    './AntigravityModelMenuSection': { AntigravityModelMenuSection },
+    '../agent-chat/AgentIcon': { AgentIcon: () => null },
     './ClaudeModelMenuSection': { ClaudeModelMenuSection },
   });
   const ProjectContextMenu = load('src/components/shared/ProjectContextMenu.tsx', {
@@ -135,14 +133,14 @@ function desktopWithProject(project, availability = { claude: true, codex: true,
     launchNodes = nodes(profileMenu);
   }
   const sections = launchNodes.filter(node => node.type === ClaudeModelMenuSection);
-  const agySections = launchNodes.filter(node => node.type === AntigravityModelMenuSection);
+  const agyItems = launchNodes.filter(node => node.props?.['data-launch-agent'] === 'antigravity');
   if (sections.length) {
     assert.ok(launchNodes.indexOf(sections[0]) > launchNodes.findIndex(node => node.props?.children === '命令行'));
   }
-  if (agySections.length) {
-    assert.ok(launchNodes.indexOf(agySections[0]) > launchNodes.findIndex(node => node.props?.children === '命令行'));
+  if (agyItems.length) {
+    assert.ok(launchNodes.indexOf(agyItems[0]) > launchNodes.findIndex(node => node.props?.children === '命令行'));
   }
-  return { sections, agySections, launches, antigravityLaunches, settings, profile, project };
+  return { sections, agyItems, launches, antigravityLaunches, settings, profile, project };
   };
 }
 
@@ -182,34 +180,25 @@ for (const command of ['', 'npm run dev']) {
 // 项目停用全部 Agent 后，分组右键不再展开模型区。
 const disabledAll = desktopWithProject({ name: '停用项目', path: '/test/disabled', enabledAgents: { claude: false, codex: false, antigravity: false } })();
 assert.equal(disabledAll.sections.length, 0);
-assert.equal(disabledAll.agySections.length, 0);
+assert.equal(disabledAll.agyItems.length, 0);
 
-// Antigravity CLI 命令组装（含 effort & conversation 恢复）、taskLaunchInfo 识别、右键菜单显隐/同步。
+// Antigravity CLI 命令组装（含 conversation 恢复）、taskLaunchInfo 识别、右键菜单显隐。
 assert.equal(antigravity.buildAntigravityLaunchCommand(), antigravity.DEFAULT_ANTIGRAVITY_COMMAND);
 assert.equal(antigravity.buildAntigravityLaunchCommand('agy --mode auto'), 'agy --mode auto');
 assert.equal(
-  antigravity.buildAntigravityLaunchCommand('agy --dangerously-skip-permissions --model old-model --effort low', 'gemini-4-neon-high', 'high'),
-  'agy --dangerously-skip-permissions --model gemini-4-neon-high --effort high',
+  antigravity.buildAntigravityResumeCommand('abc-123', 'agy --dangerously-skip-permissions -c'),
+  'agy --dangerously-skip-permissions --conversation abc-123',
 );
 assert.equal(
-  antigravity.buildAntigravityLaunchCommand('agy --model=old && echo ok', 'gemini-pro-orchestrator-neon'),
-  'agy --model gemini-pro-orchestrator-neon && echo ok',
-);
-assert.equal(
-  antigravity.buildAntigravityLaunchCommand('agy --dangerously-skip-permissions', undefined, 'xhigh'),
-  'agy --dangerously-skip-permissions --effort xhigh',
-);
-assert.equal(
-  antigravity.buildAntigravityResumeCommand('abc-123', 'agy --dangerously-skip-permissions -c', 'gemini-3-pro', 'max'),
-  'agy --dangerously-skip-permissions --model gemini-3-pro --effort max --conversation abc-123',
+  antigravity.buildAntigravityResumeCommand('abc-123', 'agy --conversation old && echo ok'),
+  'agy --conversation abc-123 && echo ok',
 );
 assert.equal(
   antigravity.resumedAntigravitySessionId('agy --dangerously-skip-permissions --conversation abc-123'),
   'abc-123',
 );
 assert.equal(antigravity.resumedAntigravitySessionId('claude --conversation abc-123'), undefined);
-assert.throws(() => antigravity.buildAntigravityLaunchCommand('agy', 'bad model;rm'));
-assert.throws(() => antigravity.buildAntigravityLaunchCommand('agy', 'gemini-3-pro', 'turbo'));
+assert.throws(() => antigravity.buildAntigravityResumeCommand('bad id;rm'));
 
 const taskLaunchInfo = load('src/utils/taskLaunchInfo.ts', {
   './claudeLaunch': claude,
@@ -226,79 +215,17 @@ assert.deepEqual(
 
 const agyProject = { name: 'Agy项目', path: '/test/agy', enabledAgents: { claude: false, codex: false, antigravity: true } };
 const agyEnabled = desktopWithProject(agyProject)();
-assert.equal(agyEnabled.agySections.length, 1);
-agyEnabled.agySections[0].props.onPickModel(undefined, 'high');
-agyEnabled.agySections[0].props.onPickModel('gemini-4-neon-high', 'xhigh');
-agyEnabled.agySections[0].props.onGotoProviders();
+assert.equal(agyEnabled.agyItems.length, 1);
+agyEnabled.agyItems[0].props.onClick();
 await tick();
-assert.deepEqual(agyEnabled.antigravityLaunches, [
-  [agyProject, undefined, 'high'],
-  [agyProject, 'gemini-4-neon-high', 'xhigh'],
-]);
-assert.equal(agyEnabled.settings.at(-1), 'antigravity');
-
-// 验证真实的 AntigravityModelMenuSection 渲染：已启用模型平铺 + defaultEffort 回落 + 跳转设置
-const realMenuReact = hooks();
-const menuState = {
-  antigravityProviderConfigLoaded: true,
-  refreshAntigravityProviderConfig: async () => {},
-  antigravityProviderConfig: {
-    defaultEffortLevel: 'high',
-    availableModels: [],
-    enabledModels: [
-      { id: 'gemini-4-neon', name: 'Gemini 4 Neon', effortLevel: '' },
-      { id: 'claude-sonnet', name: 'Claude Sonnet', effortLevel: 'xhigh' },
-    ],
-  },
-};
-const realMenuStore = selector => selector(menuState);
-realMenuStore.getState = () => menuState;
-const { AntigravityModelMenuSection: RealAgySection } = load('src/components/shared/AntigravityModelMenuSection.tsx', {
-  react: realMenuReact,
-  '../../stores/appStore': { useAppStore: realMenuStore },
-  '../../utils/antigravityLaunch': antigravity,
-});
-const picked = [];
-let wentToProviders = 0;
-realMenuReact.begin();
-const flatTree = nodes(RealAgySection({
-  itemClassName: 'context-menu-item',
-  separatorClassName: 'context-menu-separator',
-  mode: 'launch',
-  onPickModel: (id, effort) => picked.push([id, effort]),
-  onGotoProviders: () => { wentToProviders++; },
-}));
-const modelItems = flatTree.filter(n => typeof n.props?.onClick === 'function');
-assert.equal(modelItems.length, 2);
-modelItems[0].props.onClick(event);
-modelItems[1].props.onClick(event);
-assert.deepEqual(picked, [
-  ['gemini-4-neon', 'high'],
-  ['claude-sonnet', 'xhigh'],
-]);
-
-menuState.antigravityProviderConfig = { defaultEffortLevel: 'medium', availableModels: [], enabledModels: [] };
-realMenuReact.begin();
-const fallbackTree = nodes(RealAgySection({
-  itemClassName: 'context-menu-item',
-  separatorClassName: 'context-menu-separator',
-  mode: 'launch',
-  onPickModel: (id, effort) => picked.push([id, effort]),
-  onGotoProviders: () => { wentToProviders++; },
-}));
-const fallbackItems = fallbackTree.filter(n => typeof n.props?.onClick === 'function');
-assert.equal(fallbackItems.length, 2);
-fallbackItems[0].props.onClick(event);
-fallbackItems[1].props.onClick(event);
-assert.deepEqual(picked.at(-1), [undefined, 'medium']);
-assert.equal(wentToProviders, 1);
+assert.deepEqual(agyEnabled.antigravityLaunches, [agyProject]);
 
 assert.equal(
-  desktopWithProject(agyProject, { claude: true, codex: true, antigravity: false })().agySections.length,
+  desktopWithProject(agyProject, { claude: true, codex: true, antigravity: false })().agyItems.length,
   0,
 );
 assert.equal(
-  desktopWithProject({ name: '停用Agy', path: '/test/no-agy', enabledAgents: { claude: true, codex: true, antigravity: false } })().agySections.length,
+  desktopWithProject({ name: '停用Agy', path: '/test/no-agy', enabledAgents: { claude: true, codex: true, antigravity: false } })().agyItems.length,
   0,
 );
 

@@ -49,6 +49,7 @@ function load(file, mocks = {}) {
     // 各文件用相对路径引用它（./platform、../services/platform），统一按后缀兜底。
     if (name.endsWith('services/platform')) return {
       isBrowserClient: () => false,
+      isWebBackend: () => false,
       isDockerClient: () => false,
       clientTerminalOwner: () => 'pc',
       defaultShellType: () => 'powershell',
@@ -103,7 +104,7 @@ const restore = load('src/services/sessionRestore.ts', {
   '../utils/settings': { getAppSettings: () => ({ autoResumeClaudeSession: false }) },
   '../utils/agentCommands': agentCommands,
   './dialog': {}, '../types': load('src/types/index.ts'), './agentCommands': agentCommands,
-  './platform': { isBrowserClient: () => false, clientTerminalOwner: () => 'pc', defaultShellType: () => 'powershell' },
+  './platform': { isBrowserClient: () => false, isWebBackend: () => false, clientTerminalOwner: () => 'pc', defaultShellType: () => 'powershell' },
 });
 function reset() {
   calls = [];
