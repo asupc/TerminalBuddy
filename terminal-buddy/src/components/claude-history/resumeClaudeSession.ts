@@ -13,11 +13,10 @@ export interface ResumableClaudeSession {
   projectDir: string;
 }
 
-/** 指定模型恢复：引用标记指向的供应商与模型（Antigravity 可附加 effort）。 */
+/** 指定模型恢复：引用标记指向的供应商与模型。 */
 export interface ClaudeVendorRef {
   providerId: string;
   modelId: string;
-  effort?: string;
 }
 
 function normalizeDir(path: string): string {

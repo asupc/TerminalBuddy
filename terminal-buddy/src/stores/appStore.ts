@@ -10,7 +10,7 @@ import { createTransfersSlice } from "./slices/transfersSlice";
 import { createWindowSlice } from "./slices/windowSlice";
 import { createClaudeLaunchSlice } from "./slices/claudeLaunchSlice";
 import { createAgentChatSlice } from "./slices/agentChatSlice";
-import type { AntigravityModel, AntigravityProviderConfig, CodexProviderState, LlmLaunchTarget } from "../services/tauri";
+import type { CodexProviderState, LlmLaunchTarget } from "../services/tauri";
 
 interface SavedTab {
 	profileId: string;
@@ -562,21 +562,12 @@ export interface AppState {
 	codexProviderState: CodexProviderState | null;
 	refreshCodexLaunchTargets: () => Promise<void>;
 	setCodexProviderState: (state: CodexProviderState) => void;
-	providerSettingsTab: "claude" | "codex" | "antigravity";
-	setProviderSettingsTab: (tab: "claude" | "codex" | "antigravity") => void;
+	providerSettingsTab: "claude" | "codex";
+	setProviderSettingsTab: (tab: "claude" | "codex") => void;
 	claudeLaunchTargets: LlmLaunchTarget[];
 	claudeLaunchTargetsLoaded: boolean;
 	refreshClaudeLaunchTargets: () => Promise<void>;
 	setClaudeLaunchTargets: (targets: LlmLaunchTarget[]) => void;
-	antigravityModels: AntigravityModel[];
-	antigravityModelsLoaded: boolean;
-	antigravityModelsLoading: boolean;
-	antigravityModelsError: string | null;
-	refreshAntigravityModels: (force?: boolean) => Promise<void>;
-	antigravityProviderConfig: AntigravityProviderConfig | null;
-	antigravityProviderConfigLoaded: boolean;
-	refreshAntigravityProviderConfig: () => Promise<void>;
-	setAntigravityProviderConfig: (config: AntigravityProviderConfig) => void;
 }
 
 // 各 slice 只声明自己管辖的字段（Partial<AppState>），

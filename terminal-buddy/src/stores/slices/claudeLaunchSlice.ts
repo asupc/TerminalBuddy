@@ -1,16 +1,10 @@
 import type { StoreApi } from "zustand";
 import type { AppState } from "../appStore";
 import {
-	getAntigravityProviderConfig,
 	getCodexProviderState,
-	listAntigravityModels,
 	listClaudeLaunchTargets,
-	type AntigravityProviderConfig,
 	type LlmLaunchTarget,
 } from "../../services/tauri";
-
-let antigravityModelsInFlight: Promise<void> | null = null;
-let antigravityConfigInFlight: Promise<void> | null = null;
 
 export const createClaudeLaunchSlice = (
 	set: StoreApi<AppState>["setState"],
@@ -39,54 +33,5 @@ export const createClaudeLaunchSlice = (
 	},
 	setClaudeLaunchTargets: (targets: LlmLaunchTarget[]) => {
 		set({ claudeLaunchTargets: targets, claudeLaunchTargetsLoaded: true });
-	},
-	antigravityModels: [],
-	antigravityModelsLoaded: false,
-	antigravityModelsLoading: false,
-	antigravityModelsError: null,
-	refreshAntigravityModels: (force = false) => {
-		if (antigravityModelsInFlight) return antigravityModelsInFlight;
-		set({ antigravityModelsLoading: true, antigravityModelsError: null });
-		const run = listAntigravityModels(force)
-			.then(models => {
-				set({
-					antigravityModels: Array.isArray(models) ? models : [],
-					antigravityModelsLoaded: true,
-					antigravityModelsLoading: false,
-					antigravityModelsError: null,
-				});
-			})
-			.catch(error => {
-				set({
-					antigravityModelsLoaded: true,
-					antigravityModelsLoading: false,
-					antigravityModelsError: error instanceof Error ? error.message : String(error),
-				});
-			})
-			.finally(() => {
-				antigravityModelsInFlight = null;
-			});
-		antigravityModelsInFlight = run;
-		return run;
-	},
-	antigravityProviderConfig: null,
-	antigravityProviderConfigLoaded: false,
-	refreshAntigravityProviderConfig: () => {
-		if (antigravityConfigInFlight) return antigravityConfigInFlight;
-		const run = getAntigravityProviderConfig()
-			.then(config => {
-				set({ antigravityProviderConfig: config, antigravityProviderConfigLoaded: true });
-			})
-			.catch(() => {
-				set({ antigravityProviderConfigLoaded: true });
-			})
-			.finally(() => {
-				antigravityConfigInFlight = null;
-			});
-		antigravityConfigInFlight = run;
-		return run;
-	},
-	setAntigravityProviderConfig: (config: AntigravityProviderConfig) => {
-		set({ antigravityProviderConfig: config, antigravityProviderConfigLoaded: true });
 	},
 });

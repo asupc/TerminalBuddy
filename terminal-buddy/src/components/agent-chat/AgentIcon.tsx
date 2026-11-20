@@ -4,18 +4,25 @@ import codexLogo from '../../assets/agent-logo-codex.png';
 import './AgentIcon.css';
 
 /**
- * Agent 图标：Claude 星芒、Codex 结与 Antigravity CLI 升空 A 标。
- * 资源仅作为 CSS 遮罩绘制，颜色跟随 `currentColor`，深浅主题下都能正确显示。
+ * Agent 图标：Claude 星芒与 Codex 结用 CSS 遮罩跟随 `currentColor` 绘制；
+ * Antigravity CLI 直接渲染从官网 antigravity.google 获取的四色矢量 Logo。
  */
 export function AgentIcon({ provider, className }: {
   provider?: 'claude' | 'codex' | 'antigravity' | string | null;
   className?: string;
 }) {
-  const logo = provider === 'codex'
-    ? codexLogo
-    : provider === 'antigravity'
-      ? antigravityLogo
-      : claudeLogo;
+  if (provider === 'antigravity') {
+    return (
+      <img
+        src={antigravityLogo}
+        alt=""
+        draggable={false}
+        className={className ? `agent-logo agent-logo--color ${className}` : 'agent-logo agent-logo--color'}
+        aria-hidden="true"
+      />
+    );
+  }
+  const logo = provider === 'codex' ? codexLogo : claudeLogo;
   return (
     <span
       className={className ? `agent-logo ${className}` : 'agent-logo'}

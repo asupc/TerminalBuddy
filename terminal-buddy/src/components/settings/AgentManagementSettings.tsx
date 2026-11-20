@@ -9,6 +9,7 @@ import { useAppStore } from '../../stores/appStore';
 import { DEFAULT_CLAUDE_COMMAND } from '../../utils/claudeLaunch';
 import { DEFAULT_CODEX_COMMAND } from '../../utils/codexLaunch';
 import { DEFAULT_ANTIGRAVITY_COMMAND } from '../../utils/antigravityLaunch';
+import antigravityLogo from '../../assets/agent-logo-antigravity.svg';
 import './AgentManagementSettings.css';
 
 const tools = [
@@ -25,10 +26,10 @@ const createToolRecord = <T,>(initial: T): Record<AgentCli, T> => ({
 });
 
 /**
- * 各 Agent 的品牌标，均取自官方资源或几何标识：
+ * 各 Agent 的品牌标，均取自官方资源：
  * Claude 星芒取自 claude.ai 的 favicon（原色 #D97757）；
  * Codex 用 ChatGPT 六瓣结（取自 chatgpt-guides.com/logo.svg，currentColor 染色）；
- * Antigravity CLI 使用 Google 蓝升空 A 形几何标识。
+ * Antigravity CLI 取自官网 antigravity.google 的四色标志。
  */
 function AgentBrandMark({ id }: { id: AgentCli }) {
   if (id === 'claude') {
@@ -40,11 +41,7 @@ function AgentBrandMark({ id }: { id: AgentCli }) {
   }
   if (id === 'antigravity') {
     return (
-      <svg viewBox="0 0 24 24" fill="none" stroke="#4285F4" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M12 3.5L4.5 20.5" />
-        <path d="M12 3.5L19.5 20.5" />
-        <path d="M7.5 14.5C9.8 11.8 14.2 11.8 16.5 14.5" />
-      </svg>
+      <img src={antigravityLogo} alt="" draggable={false} aria-hidden="true" />
     );
   }
   return (

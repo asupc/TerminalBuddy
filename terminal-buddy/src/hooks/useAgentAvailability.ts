@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { getAgentCliEnvironment } from '../services/agentCli';
-import { useAppStore } from '../stores/appStore';
 
 export type AgentKind = 'claude' | 'codex' | 'antigravity';
 
@@ -24,18 +23,11 @@ export function useAgentAvailability(): AgentAvailability | null {
     let cancelled = false;
     const apply = (environment: EnvironmentLike | null | undefined) => {
       if (cancelled || !environment) return;
-      const antigravityAvailable = isAvailableStatus(environment.antigravity?.status);
       setAvailability({
         claude: isAvailableStatus(environment.claude?.status),
         codex: isAvailableStatus(environment.codex?.status),
-        antigravity: antigravityAvailable,
+        antigravity: isAvailableStatus(environment.antigravity?.status),
       });
-      if (antigravityAvailable) {
-        const state = useAppStore.getState();
-        if (!state.antigravityProviderConfigLoaded) {
-          void state.refreshAntigravityProviderConfig?.();
-        }
-      }
     };
     void getAgentCliEnvironment().then(apply).catch(() => {});
     const onChange = (event: Event) => {

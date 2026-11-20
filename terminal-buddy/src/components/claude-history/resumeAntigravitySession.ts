@@ -6,13 +6,12 @@ import { isModelRefLocalType } from '../../utils/claudeLaunch';
 import {
   buildAntigravityResumeCommand,
   isAntigravityCommand,
-  resolveAntigravityEffort,
   resumedAntigravitySessionId,
 } from '../../utils/antigravityLaunch';
 import { currentAntigravityCommand } from '../../utils/agentCommands';
 import { PRESET_THEMES, type Profile } from '../../types';
 import { useAppStore } from '../../stores/appStore';
-import { focusTerminalById, type ResumableClaudeSession, type ClaudeVendorRef } from './resumeClaudeSession';
+import { focusTerminalById, type ResumableClaudeSession } from './resumeClaudeSession';
 
 export function pickAntigravityProfile(profiles: Profile[], projectDir: string): Profile | undefined {
   const dir = normalizeProjectPath(projectDir);
@@ -34,7 +33,6 @@ export function pickAntigravityProfile(profiles: Profile[], projectDir: string):
 
 export async function resumeAntigravitySession(
   session: ResumableClaudeSession,
-  vendorRef?: ClaudeVendorRef,
 ): Promise<void> {
   const store = useAppStore.getState();
   const live = store.sessions.find(item =>
@@ -47,14 +45,9 @@ export async function resumeAntigravitySession(
   const profile = pickAntigravityProfile(store.profiles, session.projectDir);
   const project = projectForDirectory(store.projects, session.projectDir);
   const baseCommand = profile?.startupCommands.find(cmd => isAntigravityCommand(cmd)) ?? currentAntigravityCommand();
-  const effort = vendorRef?.effort !== undefined
-    ? resolveAntigravityEffort(vendorRef.effort)
-    : resolveAntigravityEffort(undefined, store.antigravityProviderConfig?.defaultEffortLevel);
   const command = buildAntigravityResumeCommand(
     session.sessionId,
     baseCommand,
-    vendorRef?.modelId || undefined,
-    effort,
   );
   const name = session.title || 'Antigravity 会话';
   const terminalType = profile?.terminalType ?? defaultShellType();

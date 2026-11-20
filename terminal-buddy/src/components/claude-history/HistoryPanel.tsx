@@ -36,7 +36,6 @@ import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { supportsSystemExplorerOpen } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
-import { AntigravityModelMenuSection } from '../shared/AntigravityModelMenuSection';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { ClaudeExportDialog } from './ClaudeExportDialog';
 import { type ClaudeVendorRef } from './resumeClaudeSession';
@@ -191,7 +190,6 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
-  const refreshAntigravityProviderConfig = useAppStore(s => s.refreshAntigravityProviderConfig);
   const sessions = useAppStore(s => s.sessions);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
@@ -247,8 +245,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
   useEffect(() => {
     if (provider === 'claude') void refreshClaudeLaunchTargets();
     else if (provider === 'codex') void refreshCodexLaunchTargets();
-    else void refreshAntigravityProviderConfig();
-  }, [provider, refreshClaudeLaunchTargets, refreshCodexLaunchTargets, refreshAntigravityProviderConfig]);
+  }, [provider, refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
 
   useEffect(() => {
     searchRequestRef.current += 1;
@@ -890,24 +887,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
             hint="（双击）"
             onClick={() => { handleResume(contextMenuItem); setContextMenu(null); }}
           />
-          {provider === 'antigravity' ? (
-            <AntigravityModelMenuSection
-              itemClassName="claude-hist-context-item"
-              separatorClassName="claude-hist-context-sep"
-              mode="resume"
-              title="指定模型恢复"
-              onPickModel={(modelId, effort) => {
-                const item = contextMenuItem;
-                setContextMenu(null);
-                handleResumeWithModel(item, { providerId: '', modelId: modelId ?? '', effort });
-              }}
-              onGotoProviders={() => {
-                setContextMenu(null);
-                useAppStore.getState().setProviderSettingsTab('antigravity');
-                openSettingsDialog('llm-providers');
-              }}
-            />
-          ) : (
+          {provider !== 'antigravity' && (
             <ClaudeModelMenuSection
               source={provider}
               itemClassName="claude-hist-context-item"

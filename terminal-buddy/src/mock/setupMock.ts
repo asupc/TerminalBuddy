@@ -188,38 +188,6 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
           codex: { status: 'installed', version: '0.116.0', message: null, update: null, updatedVersion: null },
           antigravity: { status: 'installed', version: '1.5.10', message: null, update: null, updatedVersion: null },
         };
-      case 'list_antigravity_models':
-        return [
-          { id: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)' },
-          { id: 'gemini-pro-orchestrator-neon', name: 'Orchestrator (Neon)' },
-          { id: 'claude-sonnet-5-5-medium', name: 'Claude Sonnet 5.5 (Medium)' },
-        ];
-      case 'get_antigravity_provider_config':
-        return {
-          defaultEffortLevel: 'high',
-          availableModels: [
-            { id: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)' },
-            { id: 'gemini-pro-orchestrator-neon', name: 'Orchestrator (Neon)' },
-            { id: 'claude-sonnet-5-5-medium', name: 'Claude Sonnet 5.5 (Medium)' },
-          ],
-          enabledModels: [
-            { id: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)', effortLevel: '' },
-          ],
-        };
-      case 'save_antigravity_provider_config':
-        return args.config ?? null;
-      case 'fetch_antigravity_provider_models':
-        return {
-          defaultEffortLevel: 'high',
-          availableModels: [
-            { id: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)' },
-            { id: 'gemini-pro-orchestrator-neon', name: 'Orchestrator (Neon)' },
-            { id: 'claude-sonnet-5-5-medium', name: 'Claude Sonnet 5.5 (Medium)' },
-          ],
-          enabledModels: [
-            { id: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)', effortLevel: '' },
-          ],
-        };
       case 'save_agent_commands':
         return null;
 

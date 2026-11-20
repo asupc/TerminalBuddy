@@ -107,7 +107,7 @@ export const ProjectEditDialog: FC<ProjectEditDialogProps> = ({ targetName, onCl
               Antigravity CLI
             </label>
           </div>
-          <small>右键项目时可按启用的 Agent 展开供应商与模型启动；基础命令在设置 → Agent 管理中配置。</small>
+          <small>右键项目时可按启用的 Agent 展开启动入口；基础命令在设置 → Agent 管理中配置。</small>
         </div>
         {projectError && <div className="error" role="alert">{projectError}</div>}
       </form>

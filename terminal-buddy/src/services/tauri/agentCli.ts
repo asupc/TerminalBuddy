@@ -16,11 +16,6 @@ export interface AgentCliStatus {
 
 export type AgentCliEnvironment = Record<AgentCli, AgentCliStatus>;
 
-export interface AntigravityModel {
-  id: string;
-  name: string;
-}
-
 /** Agent 管理：与 Docker 网页版 REST 接口共用后端 agent_cli_service。 */
 export const getAgentCliEnvironment = () => invoke<AgentCliEnvironment>('get_agent_cli_environment');
 
@@ -32,6 +27,3 @@ export const installAgentCli = (tool: AgentCli) =>
 
 export const updateAgentCli = (tool: AgentCli) =>
   invoke<AgentCliStatus>('update_agent_cli', { tool });
-
-export const listAntigravityModels = (refresh = false) =>
-  invoke<AntigravityModel[]>('list_antigravity_models', { refresh });

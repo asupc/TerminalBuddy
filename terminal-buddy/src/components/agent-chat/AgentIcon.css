@@ -12,3 +12,13 @@
   -webkit-mask-size: contain;
   mask-size: contain;
 }
+
+/* Antigravity 官网四色标志保留原色，不走单色遮罩。 */
+.agent-logo.agent-logo--color {
+  background-color: transparent;
+  object-fit: contain;
+  -webkit-mask-image: none;
+  mask-image: none;
+  user-select: none;
+  pointer-events: none;
+}
