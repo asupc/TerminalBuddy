@@ -363,6 +363,10 @@ class AiRepository(context: Context) {
         request("POST", listOf("ai", "sessions", id, "stop"))
     }
 
+    /** 强制结束：服务端立即摘掉旧 worker 并返回已经落盘的终止快照。 */
+    suspend fun forceStop(id: String): AiSession =
+        ApiJson.decodeFromJsonElement(request("POST", listOf("ai", "sessions", id, "force-stop")))
+
     suspend fun delete(id: String) {
         request("DELETE", listOf("ai", "sessions", id))
     }

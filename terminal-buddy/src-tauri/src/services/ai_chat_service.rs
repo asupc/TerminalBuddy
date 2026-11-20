@@ -60,9 +60,16 @@ fn is_desktop_open(id: &str) -> bool {
 struct RunningTask;
 impl Drop for RunningTask { fn drop(&mut self) { RUNNING.fetch_sub(1, Ordering::Relaxed); } }
 
-enum Control { Stop, Retire, Message { text: String, request_id: String, images: Vec<AiImage> }, Approval(AnswerAiApproval) }
+enum Control { Stop, ForceStop, Retire, Message { text: String, request_id: String, images: Vec<AiImage> }, Approval(AnswerAiApproval) }
+/// worker 的控制通道及所属代次。强制结束后旧通道会被移出会话，
+/// worker 收尾时据此识别自己已经失效，不能覆盖强制结束状态或重新启动队列。
 type WorkerControl = Arc<mpsc::Sender<Control>>;
-enum WorkerExit { Completed, Retired }
+struct WorkerHandle {
+    id: u64,
+    tx: WorkerControl,
+}
+enum WorkerExit { Completed, Retired, Forced }
+static NEXT_WORKER_ID: AtomicUsize = AtomicUsize::new(1);
 /// 桌面 webview 与浏览器事件通道共用的 AppHandle（启动时注入）。
 static APP: OnceLock<crate::runtime::AppHandle> = OnceLock::new();
 pub fn set_app_handle(app: crate::runtime::AppHandle) {
@@ -81,7 +88,7 @@ struct Emitted {
 
 struct Cell {
     data: Mutex<AiSession>,
-    control: Mutex<Option<WorkerControl>>,
+    control: Mutex<Option<WorkerHandle>>,
     summary: Mutex<SessionSummaryTracker>,
     emitted: Mutex<Emitted>,
     deleted: AtomicBool,
@@ -186,6 +193,8 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
         let interrupted = matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping");
         if interrupted {
             data.status = "interrupted".into(); data.approvals.clear();
+            // 排队消息没有进程可以接手，服务重启后不能隐瞒它们仍会执行。
+            data.pending_inputs.clear();
             usage::finish_turn(&mut data);
             // 进程已随服务重启消失：仍在「执行中」的子代理一律置终态。
             settle_agents(&mut data, "stopped");
@@ -497,13 +506,13 @@ pub fn delete(id: &str, owner: &str) -> Result<()> {
     let cell = load(id, owner)?;
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
-    if control.is_some() && data.status != "idle" {
+    if control.is_some() && !matches!(data.status.as_str(), "idle" | "forceStopped") {
         return Err("会话正在执行，请先中断再删除".into());
     }
     fs::remove_file(&cell.path).map_err(|e| format!("删除 AI 会话失败：{e}"))?;
     cell.deleted.store(true, Ordering::Release);
     // 空闲会话仍保留常驻 CLI 进程；删除时退出，但不能再执行普通收尾把文件写回来。
-    if let Some(tx) = control.take() { let _ = tx.send(Control::Retire); }
+    if let Some(worker) = control.take() { let _ = worker.tx.send(Control::Retire); }
     drop(data);
     registry().lock().map_err(|_| "AI 会话状态不可用")?.remove(&cell.path);
     // 跨端同步：其他客户端据此关闭已删除会话的标签。
@@ -512,8 +521,8 @@ pub fn delete(id: &str, owner: &str) -> Result<()> {
 }
 pub fn stop(id: &str, owner: &str) -> Result<()> {
     let cell = load(id, owner)?;
-    if let Some(tx) = cell.control.lock().map_err(|_| "AI 会话状态不可用")?.as_ref() {
-        tx.send(Control::Stop).map_err(|_| "执行已经结束")?;
+    if let Some(worker) = cell.control.lock().map_err(|_| "AI 会话状态不可用")?.as_ref() {
+        worker.tx.send(Control::Stop).map_err(|_| "执行已经结束")?;
         update(&cell, |data| {
             data.status = "stopping".into();
             // 子代理随进程一起被杀：就地置终态，避免界面上残留「执行中」。
@@ -525,6 +534,45 @@ pub fn stop(id: &str, owner: &str) -> Result<()> {
     Ok(())
 }
 
+/// 强制结束：不再等待 CLI 响应，立即摘掉旧 worker 的控制通道并把会话落为
+/// forceStopped。旧 worker 随后自然退出时只能回收进程树，不能再改写状态、
+/// 清空错误或启动排队中的下一回合。
+///
+/// 审批与排队消息一并清空：两者都依赖已经不可信的旧进程，保留只会让用户误以为
+/// 任务仍会继续。聊天记录、用量和 CLI 线程标识保留，下一条消息仍可用 --resume
+/// / thread resume 续接上下文。
+pub fn force_stop(id: &str, owner: &str) -> Result<AiSession> {
+    let cell = load(id, owner)?;
+    let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
+    let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    if !cell.path.is_file() { return Err("AI 会话不存在".into()); }
+    let before = data.clone();
+    // 先保存最终正文与用量。持久化失败时保留原状态，避免界面已显示结束但磁盘仍停在运行中。
+    usage::finish_turn(&mut data);
+    settle_agents(&mut data, "stopped");
+    thinking_clear(&mut data);
+    data.approvals.clear();
+    data.pending_inputs.clear();
+    data.status = "forceStopped".into();
+    // 强制结束是用户主动确认的终态，不借用 error 字段，避免手机页显示成执行故障。
+    data.error = None;
+    touch(&mut data);
+    data.result_revision = data.revision;
+    if let Err(error) = persist_data(&cell, &data) {
+        *data = before;
+        return Err(error);
+    }
+    // 原子交接：之后到达的发送会看到 forceStopped 和空控制通道，直接启动新 worker。
+    // 旧 worker 仍可能在读管道，收到 ForceStop 后由 Drop 回收整棵进程树。
+    if let Some(worker) = control.take() { let _ = worker.tx.send(Control::ForceStop); }
+    let snapshot = data.clone();
+    drop(data);
+    drop(control);
+    emit_update(&cell);
+    Ok(snapshot)
+}
+
+
 /// 回收空闲会话的常驻 CLI 进程，保留会话记录以便继续打开 / 恢复。
 ///
 /// 定时任务每轮执行结束后调用：否则按小时任务会留下一个常驻 Claude 进程，
@@ -533,11 +581,12 @@ pub fn release_process(id: &str, owner: &str) -> Result<()> {
     let cell = load(id, owner)?;
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    // forceStopped 是用户强制终止后的终态：旧 worker 已经摘除，不能再发 Retire 造成状态交换。
     if data.status != "idle" || !data.approvals.is_empty() || !data.pending_inputs.is_empty() {
         return Ok(());
     }
-    if let Some(tx) = control.take() {
-        let _ = tx.send(Control::Retire);
+    if let Some(worker) = control.take() {
+        let _ = worker.tx.send(Control::Retire);
     }
     Ok(())
 }
@@ -603,7 +652,7 @@ pub fn switch_model(id: &str, owner: &str, provider_id: &str, model: &str) -> Re
         return Ok(data.clone());
     }
     // 先结束常驻进程（不会写回文件），再修改配置，避免旧进程在新配置下继续接收消息。
-    if let Some(tx) = control.take() { let _ = tx.send(Control::Retire); }
+    if let Some(worker) = control.take() { let _ = worker.tx.send(Control::Retire); }
     let before = data.clone();
     let from_label = [before.model.clone(), before.provider_name.clone()].into_iter()
         .flatten().collect::<Vec<_>>().join(" · ");
@@ -658,7 +707,7 @@ pub fn answer(id: &str, owner: &str, input: AnswerAiApproval) -> Result<()> {
         return Ok(());
     }
     let result = cell.control.lock().map_err(|_| "AI 会话状态不可用")?.as_ref().ok_or("执行已经结束")?
-        .send(Control::Approval(input)).map_err(|_| "执行已经结束".to_string());
+        .tx.send(Control::Approval(input)).map_err(|_| "执行已经结束".to_string());
     result
 }
 /// 单条消息最多附带的图片数量与体积：base64 解码后校验，防止超大附件拖垮会话与 CLI。
@@ -770,9 +819,10 @@ fn send_locked(cell: &Arc<Cell>, input: SendAiMessage) -> Result<AiSession> {
     let images = save_send_images(&draft_images)?;
     // 原生插话，或会话空闲且没有排队消息时，直接把消息交给当前 CLI 进程。
     // 插话由 CLI 自己决定在合适节点消费；排队则等当前回合任务完全结束后再写入同一个进程。
-    let idle_delivery = data.status == "idle" && data.pending_inputs.is_empty();
-    if let Some(tx) = control.as_ref().filter(|_| data.status != "stopping" && (steer || idle_delivery)) {
-        return deliver_now(&cell, &mut data, tx, request_id, text, images);
+    let idle_delivery = matches!(data.status.as_str(), "idle" | "forceStopped") && data.pending_inputs.is_empty();
+    if let Some(worker) = control.as_ref().filter(|_| data.status != "stopping" && (steer || idle_delivery)) {
+        // forceStopped 只是给客户端看的终止结果；旧 worker 已被摘除，这里不会命中。
+        return deliver_now(&cell, &mut data, &worker.tx, request_id, text, images);
     }
     if control.is_some() {
         // 执行期间只入队，当前回合结束后由 worker 直接写入同一个 CLI 进程，不需要 --resume。
@@ -812,7 +862,7 @@ fn flush_locked(cell: &Arc<Cell>, request_id: Option<&str>) -> Result<()> {
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
     if !cell.path.is_file() { return Err("AI 会话不存在".into()); }
-    if data.status == "stopping" { return Err("正在中断当前回复，请稍候".into()); }
+    if data.status == "stopping" || data.status == "forceStopped" { return Err("请发送新消息后再操作排队消息".into()); }
     if data.pending_inputs.is_empty() { return Err("没有排队中的消息".into()); }
     let index = match request_id {
         Some(request_id) => data.pending_inputs.iter().position(|item| item.request_id == request_id)
@@ -820,12 +870,12 @@ fn flush_locked(cell: &Arc<Cell>, request_id: Option<&str>) -> Result<()> {
         None => 0,
     };
     let before = data.clone();
-    if let Some(tx) = control.as_ref() {
+    if let Some(worker) = control.as_ref() {
         // 运行中或空闲常驻：直接把选中的消息交给当前 CLI 进程，不重置队列顺序，也不打断当前任务。
         let item = data.pending_inputs.remove(index);
         accept_input(&mut data, &item.request_id, &item.text, &item.images);
         if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
-        if tx.send(Control::Message { text: item.text, request_id: item.request_id, images: item.images }).is_err() {
+        if worker.tx.send(Control::Message { text: item.text, request_id: item.request_id, images: item.images }).is_err() {
             *data = before;
             persist_data(&cell, &data)?;
             return Err("服务端进程已退出，请再次发送消息".into());
@@ -874,7 +924,8 @@ fn input_title(text: &str, images: &[AiImage]) -> String {
 /// 立即写入聊天记录；排队消息出队时由 begin_pending_turn 完成同样的登记。
 fn accept_input(data: &mut AiSession, request_id: &str, text: &str, images: &[AiImage]) {
     // 空闲态直达的消息开启新回合：上一轮的任务清单与子代理不再适用，清空以免残留。
-    let new_turn = data.status == "idle";
+    // forceStopped 只是给客户端看的终止结果，下一条消息仍开启新的续接回合。
+    let new_turn = matches!(data.status.as_str(), "idle" | "forceStopped");
     if !data.request_ids.iter().any(|id| id == request_id) { data.request_ids.push(request_id.to_string()); }
     data.messages.push(AiMessage { id: request_id.to_string(), role: "user".into(), text: text.into(),
         created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None,
@@ -922,22 +973,23 @@ fn change_pending_input_locked(cell: &Cell, request_id: &str, text: Option<Strin
 }
 
 /// 调用方持有 control 和 data 锁直到 worker 安装完成，避免队列交接时重复启动。
-fn start_turn(cell: &Arc<Cell>, next: PendingInput, control: &mut Option<WorkerControl>) -> Result<()> {
+fn start_turn(cell: &Arc<Cell>, next: PendingInput, control: &mut Option<WorkerHandle>) -> Result<()> {
     let thread_name = cell.path.file_stem().and_then(|id| id.to_str())
         .map(|id| format!("ai-{id}")).unwrap_or_else(|| "ai-turn".into());
     RUNNING.fetch_add(1, Ordering::Relaxed);
     let task = RunningTask;
     let (tx, rx) = mpsc::channel();
     let worker_control = Arc::new(tx);
-    *control = Some(worker_control.clone());
+    let worker_id = NEXT_WORKER_ID.fetch_add(1, Ordering::Relaxed) as u64;
+    *control = Some(WorkerHandle { id: worker_id, tx: worker_control });
     let worker_cell = cell.clone();
     if let Err(error) = thread::Builder::new().name(thread_name).spawn(move || {
         let _task = task;
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_turn(&worker_cell, &next, rx, &worker_control)))
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_turn(&worker_cell, &next, rx, worker_id)))
             .unwrap_or_else(|_| Err("AI 执行意外结束，可以重新发送消息".into()));
         match result {
-            Ok(WorkerExit::Retired) => {},
-            result => finish(&worker_cell, result.map(|_| ())),
+            Ok(WorkerExit::Retired | WorkerExit::Forced) => {},
+            result => finish(&worker_cell, worker_id, result.map(|_| ())),
         }
     }) {
         *control = None;
@@ -958,7 +1010,7 @@ fn begin_pending_turn(data: &mut AiSession) -> Option<PendingInput> {
     // 新一轮任务开始：上一轮的任务清单、子代理与思考快照不再对应当前上下文，清空以免残留误导。
     data.todos.clear(); data.agents.clear();
     data.thinking = None;
-    data.status = "running".into(); data.error = None; data.approvals.clear(); touch(data);
+    data.status = "running".into(); data.error = None; data.approvals.clear(); data.result_revision = 0; touch(data);
     Some(next)
 }
 /// 常驻进程空闲后持续检查队列，覆盖结算事件之后才到达的新消息。
@@ -1009,10 +1061,12 @@ fn save_summary_title(cell: &Cell, provider: &str, session_id: &str, title: Stri
     emit_update(cell);
     outcome
 }
-fn finish(cell: &Arc<Cell>, result: Result<()>) {
+fn finish(cell: &Arc<Cell>, worker_id: u64, result: Result<()>) {
     let succeeded = result.is_ok();
     refresh_title(cell, true);
     let Ok(mut control) = cell.control.lock() else { return; };
+    // 强制结束已经摘掉旧 worker；它迟到返回时不能再改状态、清错误或启动队列。
+    if !control.as_ref().is_some_and(|worker| worker.id == worker_id) { return; }
     let Ok(mut data) = cell.data.lock() else { return; };
     let was_active = matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping");
     data.approvals.clear();
@@ -1402,21 +1456,29 @@ fn thinking_clear(data: &mut AiSession) {
 /// 子代理等后代，只杀直接子进程会留下孤儿。Windows 走 Job Object（不再 spawn
 /// `taskkill`：GUI 子系统下它会弹控制台并打报错，且 PID 复用后可能杀错进程），
 /// Unix 走进程组信号 + `child.kill()` 兜底。
-struct Process(Child, ProcessTree);
+struct Process(Option<Child>, Option<ProcessTree>);
 impl Process {
     fn spawn(command: &mut Command, provider: &str) -> Result<Self> {
         let child = command.spawn()
             .map_err(|e| format!("无法启动 {}，请确认服务端已安装并配置该 CLI：{e}", provider))?;
         let tree = ProcessTree::attach(&child);
-        Ok(Self(child, tree))
+        Ok(Self(Some(child), Some(tree)))
     }
 }
 impl Drop for Process {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        { let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", self.0.id())]).stdout(Stdio::null()).stderr(Stdio::null()).status(); }
-        self.1.terminate(&mut self.0);
-        let _ = self.0.wait();
+        // 强制结束不能卡在旧 CLI 的退出等待上：把整棵进程树的回收交给独立线程，
+        // run_turn 立即返回，后续消息可以并行启动新的续接回合。
+        // 子进程句柄无法从 Drop 中直接 move，因此由 Option 槽位先原子摘出。
+        let (Some(child), Some(tree)) = (self.0.take(), self.1.take()) else { return; };
+        let _ = thread::Builder::new().name("ai-process-reap".into()).spawn(move || {
+            let mut child = child;
+            let mut tree = tree;
+            #[cfg(unix)]
+            { let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", child.id())]).stdout(Stdio::null()).stderr(Stdio::null()).status(); }
+            tree.terminate(&mut child);
+            let _ = child.wait();
+        });
     }
 }
 fn cli_command(provider: &str) -> Command {
@@ -1485,7 +1547,7 @@ fn take_pending_for_claude(cell: &Cell, stdin: &mut impl Write) -> Result<Option
     }
     Ok(Some(()))
 }
-fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control>, worker_control: &WorkerControl) -> Result<WorkerExit> {
+fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control>, worker_id: u64) -> Result<WorkerExit> {
     let session = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     let mut launch = super::ai_catalog_service::prepare(&session.provider, session.provider_id.as_deref(), session.model.as_deref())?;
     let hooks = if session.provider == "claude" {
@@ -1513,9 +1575,10 @@ fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control
         command.args(&permissions.codex_args).args(["-c", "features.default_mode_request_user_input=true"]).arg("app-server");
     }
     let mut process = Process::spawn(&mut command, &session.provider)?;
-    let mut stdin = process.0.stdin.take().ok_or("AI 输入通道不可用")?;
-    let stdout = process.0.stdout.take().ok_or("AI 输出通道不可用")?;
-    let stderr = process.0.stderr.take().ok_or("AI 错误通道不可用")?;
+    let child = process.0.as_mut().ok_or("AI 进程不可用")?;
+    let mut stdin = child.stdin.take().ok_or("AI 输入通道不可用")?;
+    let stdout = child.stdout.take().ok_or("AI 输出通道不可用")?;
+    let stderr = child.stderr.take().ok_or("AI 错误通道不可用")?;
     let errors = Arc::new(Mutex::new(String::new()));
     let error_buffer = errors.clone();
     thread::spawn(move || {
@@ -1551,10 +1614,10 @@ fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control
     });
     if session.provider == "claude" {
         write_claude_user(&mut stdin, session.thread_id.as_deref().unwrap_or(""), &prompt.text, &prompt.images)?;
-        run_claude(cell, &mut process, stdin, controls, output, errors, hooks.as_ref().ok_or("Claude 决策 Hook 未初始化")?, worker_control)
+        run_claude(cell, &mut process, stdin, controls, output, errors, hooks.as_ref().ok_or("Claude 决策 Hook 未初始化")?, worker_id)
     } else {
         write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"},"capabilities":{"experimentalApi":true}}}))?;
-        run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors, worker_control)
+        run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors, worker_id)
     }
 }
 fn next_output(output: &mpsc::Receiver<Result<Value>>, errors: &Mutex<String>) -> Result<Option<Value>> {
@@ -2227,7 +2290,7 @@ fn normalize_status(status: Option<&str>) -> Option<String> {
 const AGENT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// 仅在输出接收超时后尝试回收，确保已经就绪的完成事件与后台输出先被处理。
-fn retire_idle_process(cell: &Cell, worker_control: &WorkerControl, idle_since: &mut Option<Instant>, ready: bool) -> Result<bool> {
+fn retire_idle_process(cell: &Cell, worker_id: u64, idle_since: &mut Option<Instant>, ready: bool) -> Result<bool> {
     if !ready { *idle_since = None; return Ok(false); }
     // 开关与时长每次从设置缓存读取，修改后直接作用于已打开的会话。
     // 关闭时清掉计时，重新开启后按新配置重新计算空闲窗口。
@@ -2238,7 +2301,7 @@ fn retire_idle_process(cell: &Cell, worker_control: &WorkerControl, idle_since: 
     // 与发送/出队/删除共用锁：新消息若已被接纳，则不能再退出而把消息留在旧通道里。
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     // 切换模型或删除可能已交接控制权；旧 worker 不能清掉新 worker 的控制通道。
-    if !control.as_ref().is_some_and(|current| Arc::ptr_eq(current, worker_control)) { return Ok(true); }
+    if !control.as_ref().is_some_and(|current| current.id == worker_id) { return Ok(true); }
     let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
     if data.status != "idle" || !data.approvals.is_empty() || !data.pending_inputs.is_empty() || data.thread_id.is_none() {
         *idle_since = None;
@@ -2252,7 +2315,7 @@ fn retire_idle_process(cell: &Cell, worker_control: &WorkerControl, idle_since: 
     Ok(true)
 }
 fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: mpsc::Receiver<Control>,
-    output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>, hooks: &NativeClaudeHooks, worker_control: &WorkerControl) -> Result<WorkerExit> {
+    output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>, hooks: &NativeClaudeHooks, worker_id: u64) -> Result<WorkerExit> {
     let mut checkpoint = Instant::now();
     let mut persisted_revision = 0;
     let mut turn = Uuid::new_v4().to_string();
@@ -2285,6 +2348,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
         while let Ok(control) = controls.try_recv() {
             match control {
                 Control::Stop => return Err("已中断".into()),
+                Control::ForceStop => { drop(input.take()); return Ok(WorkerExit::Forced); },
                 Control::Retire => { drop(input.take()); return Ok(WorkerExit::Retired); }
                 Control::Message { text, request_id: _, images } => {
                     let stdin = input.as_mut().ok_or("Claude 输入通道已关闭，请重新发送消息")?;
@@ -2331,7 +2395,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
         // 会继承写端并可能在主进程死后继续存活——此时读取线程永远等不到 EOF，
         // 旧实现只能靠 600 秒停滞超时兜底，用户看到的是「10 分钟没有任何输出」，
         // 实际任务早就结束了（服务重启、进程被杀等场景尤其常见）。
-        if let Some(status) = process.0.try_wait().map_err(|e| format!("读取 Claude 进程状态失败：{e}"))? {
+        if let Some(status) = process.0.as_mut().ok_or("AI 进程不可用")?.try_wait().map_err(|e| format!("读取 Claude 进程状态失败：{e}"))? {
             // 进程已回收：先尽力排空已就绪的输出，避免丢掉最后几条事件。
             let mut drained = Vec::new();
             while let Ok(ready) = output.try_recv() { drained.push(ready); }
@@ -2407,7 +2471,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
         let value = match output.recv_timeout(Duration::from_millis(100)) {
             Ok(value) => { idle_since = None; last_event = Instant::now(); value? }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if retire_idle_process(cell, worker_control, &mut idle_since, idle_ready)? { return Ok(WorkerExit::Retired); }
+                if retire_idle_process(cell, worker_id, &mut idle_since, idle_ready)? { return Ok(WorkerExit::Retired); }
                 continue;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => { output_closed = true; drop(input.take()); continue; }
@@ -2662,7 +2726,7 @@ fn codex_request(stdin: &mut impl Write, next_id: &mut u64, method: &str, params
 fn codex_status(cell: &Cell, state: &CodexOutputState, background: &CodexBackgroundState, request_id: Option<&str>, submitting: bool) {
     if let Ok(mut data) = cell.data.lock() {
         // 发送接口可能刚接纳了下一条消息，旧回合的迟到事件不能把它改回空闲。
-        if active_request_id(&data) != request_id || data.status == "stopping" { return; }
+        if active_request_id(&data) != request_id || data.status == "stopping" || data.status == "forceStopped" { return; }
         let status = if !data.approvals.is_empty() { "approval" } else if submitting || !state.finished { "running" }
             else if background.running(state) { "background" } else { "idle" };
         if data.status != status {
@@ -2673,7 +2737,7 @@ fn codex_status(cell: &Cell, state: &CodexOutputState, background: &CodexBackgro
     emit_update(cell);
 }
 fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permissions: &super::ai_permission_service::NativePermissions, stdin: &mut impl Write,
-    controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>, worker_control: &WorkerControl) -> Result<WorkerExit> {
+    controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>, worker_id: u64) -> Result<WorkerExit> {
     let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
     let mut last_persisted = session.revision;
     let mut pending: HashMap<String, (Value, String)> = HashMap::new();
@@ -2697,6 +2761,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
         while let Ok(control) = controls.try_recv() {
             match control {
                 Control::Stop => return Err("已中断".into()),
+                Control::ForceStop => return Ok(WorkerExit::Forced),
                 Control::Retire => return Ok(WorkerExit::Retired),
                 Control::Message { text, request_id: accepted_id, images } => {
                     request_id = Some(accepted_id.clone());
@@ -2780,7 +2845,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
             && resume_request.is_none() && turn_request.is_none() && settle_at.is_none() && queued_prompt.is_none();
         if !idle_ready { idle_since = None; }
         let Some(value) = next_output(&output, &errors)? else {
-            if retire_idle_process(cell, worker_control, &mut idle_since, idle_ready)? { return Ok(WorkerExit::Retired); }
+            if retire_idle_process(cell, worker_id, &mut idle_since, idle_ready)? { return Ok(WorkerExit::Retired); }
             continue;
         };
         idle_since = None;
@@ -2880,9 +2945,9 @@ pub fn shutdown_all() {
     let cells = registry().lock().map(|items| items.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
     for cell in cells {
         if let Ok(control) = cell.control.lock() {
-            if let Some(tx) = control.as_ref() {
+            if let Some(worker) = control.as_ref() {
                 let idle = cell.data.lock().map(|data| data.status == "idle").unwrap_or(false);
-                let _ = tx.send(if idle { Control::Retire } else { Control::Stop });
+                let _ = worker.tx.send(if idle { Control::Retire } else { Control::Stop });
             }
         }
     }

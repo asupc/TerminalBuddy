@@ -127,6 +127,7 @@ data class AiSession(
         "approval" -> "等待确认"
         "background" -> "后台任务执行中"
         "stopping" -> "正在中断"
+        "forceStopped" -> "已强制结束"
         "error" -> "执行失败"
         "interrupted" -> "已中断"
         else -> "可以发送消息"

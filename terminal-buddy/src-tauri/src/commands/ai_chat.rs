@@ -49,6 +49,12 @@ pub async fn ai_session_stop(id: String) -> Result<(), String> {
     claude_task(move || service::stop(&id, &desktop_owner())).await
 }
 
+/// 强制结束原生会话：立即摘掉 CLI worker、清理审批与排队并落为终止状态。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn ai_session_force_stop(id: String) -> Result<AiSession, String> {
+    claude_task(move || service::force_stop(&id, &desktop_owner())).await
+}
+
 /// 空闲时切换供应商与模型（仅 Claude）；返回更新后的会话快照。
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn ai_session_switch_model(id: String, provider_id: String, model: String) -> Result<AiSession, String> {

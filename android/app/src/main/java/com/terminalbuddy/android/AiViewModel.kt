@@ -1293,6 +1293,32 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(sendSteer = value) }
     }
 
+    /** 强制结束：入口在「对话操作」中，二次确认后调用。成功后立即采用服务端已落盘的终止快照。 */
+    fun forceStop() {
+        val session = mutable.value.selected ?: return
+        if (actionJob?.isActive == true) return
+        val epoch = generation
+        mutable.update { it.copy(working = true, error = null) }
+        actionJob = viewModelScope.launch {
+            try {
+                val snapshot = repository.forceStop(session.id)
+                if (epoch == generation) {
+                    receive(snapshot)
+                    // 终止结果不是执行故障：清掉任何旧错误，只保留状态文案。
+                    mutable.update {
+                        if (it.selected?.id == snapshot.id) it.copy(error = null) else it
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (epoch == generation) failure(e)
+            } finally {
+                if (epoch == generation) mutable.update { it.copy(working = false) }
+            }
+        }
+    }
+
     fun stop() {
         val session = mutable.value.selected ?: return
         if (actionJob?.isActive == true || session.status == "stopping") return

@@ -439,7 +439,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // 原生 AI 会话（桌面端，owner 固定为 web_api_username）
             ai_session_list, ai_session_get, ai_session_create, ai_session_send,
-            ai_session_stop, ai_session_switch_model, ai_session_answer, ai_session_delete,
+            ai_session_stop, ai_session_force_stop, ai_session_switch_model, ai_session_answer, ai_session_delete,
             ai_session_pending_update, ai_session_pending_delete, ai_session_flush,
             ai_catalog, ai_session_history, ai_session_resume_history, set_desktop_open_sessions,
             get_all_profiles, get_projects, save_projects,

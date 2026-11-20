@@ -441,7 +441,7 @@ internal fun AiRecentSessionRow(
     val enabled = !ui.working && !ui.deletingAll
     val active = session.running
     val accentColor = TbColors.Accent
-    val failed = session.status == "error" || session.status == "interrupted"
+    val failed = session.status in listOf("error", "interrupted", "forceStopped")
     val status = when {
         active -> session.statusLabel
         unread -> "有新进展"
@@ -578,7 +578,7 @@ internal fun AiSessionCard(
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val status = when {
-                    session.running || session.status in listOf("error", "interrupted") -> session.statusLabel
+                    session.running || session.status in listOf("error", "interrupted", "forceStopped") -> session.statusLabel
                     unread -> "有新进展"
                     else -> session.providerLabel
                 }

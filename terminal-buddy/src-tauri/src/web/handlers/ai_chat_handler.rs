@@ -119,6 +119,10 @@ pub async fn delete_pending_input(
 pub async fn stop(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<()>, ApiError> {
     blocking(move || service::stop(&id, &claims.0.sub)).await
 }
+/// 强制结束：立即终止会话进程并清理审批/排队，不等待 CLI 的停止握手。
+pub async fn force_stop(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiSession>, ApiError> {
+    blocking(move || service::force_stop(&id, &claims.0.sub)).await
+}
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
