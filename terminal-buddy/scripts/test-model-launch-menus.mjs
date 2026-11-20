@@ -76,6 +76,7 @@ function desktopWithProject(project, availability = { claude: true, codex: true,
     profiles: [profile], projects: [project], configSearchQuery: '',
     refreshClaudeLaunchTargets: async () => {}, refreshCodexLaunchTargets: async () => {},
     selectProfile() {}, setProviderSettingsTab: source => settings.push(source), openSettingsDialog() {},
+    setLastClickRegion() {},
   };
   const useAppStore = selector => selector(state);
   useAppStore.getState = () => state;
