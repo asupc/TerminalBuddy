@@ -43,6 +43,8 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
   return (
     <>
       <div className="context-menu-item" onClick={() => {
+        // 启动后焦点转到新会话：状态栏不再跟随「项目与命令」面板的选中项。
+        useAppStore.getState().setLastClickRegion('tab');
         onLaunched();
         void openTerminalInDir(project.path, { groupName: project.name }).catch(console.error);
       }}>命令行</div>
@@ -56,6 +58,7 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
           separatorClassName="context-menu-separator"
           title={source === 'claude' ? 'Claude 模型' : 'Codex 模型'}
           onPickModel={(providerId, modelId) => {
+            useAppStore.getState().setLastClickRegion('tab');
             onLaunched();
             // 新会话形态由设置决定：原生会话直接开聊天标签，终端接力（默认）沿用终端启动。
             // 创建失败必须提示（如供应商被删、服务端未就绪），否则点击后毫无反馈。
@@ -74,6 +77,7 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
             data-launch-agent="antigravity"
             title="启动 Antigravity CLI（agy）"
             onClick={() => {
+              useAppStore.getState().setLastClickRegion('tab');
               onLaunched();
               void openProjectAntigravityTerminal(project);
             }}

@@ -313,7 +313,15 @@ export const TerminalPanel: FC = () => {
       {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab || gitChangesTab || claudeReplayTab || agentTabs.length > 0 || scheduledTasksTabOpen) && (
         <TerminalTabBar />
       )}
-      <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
+      <div
+        className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}
+        onMouseDown={() => {
+          // 焦点进入终端区域：状态栏恢复跟随活动会话，F2 也不再落到侧栏面板。
+          if (useAppStore.getState().lastClickRegion !== 'terminal') {
+            useAppStore.getState().setLastClickRegion('terminal');
+          }
+        }}
+      >
         {renderTerminalContent()}
         {gitHistoryTab && activeSpecialTab === 'git-history' && (
           <div className="git-history-tab-content">

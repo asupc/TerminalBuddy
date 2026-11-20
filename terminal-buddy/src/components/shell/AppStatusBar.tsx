@@ -4,8 +4,10 @@ import {
   Clock3,
   Cpu,
   Folder,
+  FolderTree,
   Globe2,
   MemoryStick,
+  SquareTerminal,
 } from 'lucide-react';
 import type { Profile, SessionHistoryProvider, TerminalType } from '../../types';
 import { useAppStore } from '../../stores/appStore';
@@ -25,7 +27,7 @@ import { getWebApiStatus } from '../../services/tauri';
 import { isBrowserClient } from '../../services/platform';
 import { isClaudeLaunchProfile } from '../../utils/claudeLaunch';
 import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
-import { projectForDirectory } from '../../utils/projectPath';
+import { effectiveProfilePath, projectForDirectory } from '../../utils/projectPath';
 import './AppStatusBar.css';
 
 const browserClient = isBrowserClient();
@@ -72,6 +74,20 @@ function connectionDetail(profile: Profile | undefined): string | undefined {
     default:
       return profile.startupPath || undefined;
   }
+}
+
+/** 「项目与命令」面板的选中项：项目节点或某个具体命令。 */
+interface SidebarSelection {
+  kind: 'project' | 'profile';
+  name: string;
+  /** 连接详情或项目路径，仅用于悬浮说明。 */
+  detail?: string;
+  /** 状态栏展示的目录；本地命令可浏览 / 检测 Git，远程命令只展示并复制路径。 */
+  directory: string | null;
+  /** 目录是否属于本机文件系统。 */
+  isLocalDirectory: boolean;
+  /** 选中命令时从启动命令识别出的 Agent；项目本身不限定 Agent。 */
+  provider: SessionHistoryProvider | null;
 }
 
 /** 窄屏下只保留路径末尾两段，完整路径放在条目 tooltip 里。 */
@@ -217,6 +233,9 @@ const StatusBarResources = memo(function StatusBarResources() {
   const terminalActivities = useAppStore(s => s.terminalActivities);
   const profiles = useAppStore(s => s.profiles);
   const projects = useAppStore(s => s.projects);
+  const selectedProfileId = useAppStore(s => s.selectedProfileId);
+  const configPanelVisible = useAppStore(s => s.configPanelVisible);
+  const lastClickRegion = useAppStore(s => s.lastClickRegion);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
   const agentSessionBindings = useAppStore(s => s.agentSessionBindings);
   const taskSummaries = useTaskSummaryStore(s => s.summaries);
@@ -267,6 +286,52 @@ const StatusBarResources = memo(function StatusBarResources() {
   const canBrowseLocal = Boolean(
     session && directory && isTerminal && LOCAL_SHELL_TYPES.has(session.terminalType),
   );
+
+  // 「项目与命令」面板获得焦点时，状态栏切换到选中项目 / 命令的上下文；
+  // 点击终端或会话标签后焦点离开面板，状态栏恢复跟随活动会话。
+  const selection = useMemo<SidebarSelection | null>(() => {
+    if (!configPanelVisible || lastClickRegion !== 'config' || !selectedProfileId) return null;
+
+    // 项目节点：面板里用项目名作为树节点 id。
+    const selectedProject = projects.find(item => item.name === selectedProfileId);
+    if (selectedProject) {
+      const dir = selectedProject.path.trim() || null;
+      return {
+        kind: 'project',
+        name: selectedProject.name,
+        detail: dir ?? '未配置项目路径',
+        directory: dir,
+        isLocalDirectory: Boolean(dir),
+        provider: null,
+      };
+    }
+
+    // 命令节点：本地 Shell 允许相对启动路径叠加项目根，远程命令的路径本身就是远端目录。
+    const selected = profiles.find(item => item.id === selectedProfileId);
+    if (!selected) return null;
+    const isLocal = LOCAL_SHELL_TYPES.has(selected.terminalType);
+    const dir = isLocal
+      ? effectiveProfilePath(selected, projects) || null
+      : selected.startupPath.trim() || null;
+    const launch = getTaskLaunchInfo('', selected.startupCommands);
+    return {
+      kind: 'profile',
+      name: selected.name,
+      detail: isLocal ? dir ?? undefined : connectionDetail(selected) ?? dir ?? undefined,
+      directory: dir,
+      isLocalDirectory: isLocal && Boolean(dir),
+      provider: launch?.provider ?? (isClaudeLaunchProfile(selected) ? 'claude' : null),
+    };
+  }, [configPanelVisible, lastClickRegion, selectedProfileId, projects, profiles]);
+
+  // 状态栏的工作上下文：面板有选中项时跟随选中项，否则跟随活动终端会话。
+  const contextDirectory = selection ? selection.directory : (isTerminal ? directory : null);
+  const contextCanBrowseLocal = selection ? selection.isLocalDirectory : canBrowseLocal;
+  const contextGitDirectory = selection
+    ? (selection.isLocalDirectory ? selection.directory : null)
+    : gitDirectory;
+  const contextTerminalActivityAt = selection ? undefined : terminalActivityAt;
+
   const web = useWebApiBarStatus();
   // 选中原生会话时展示模型 / 思考强度 / 上下文 / Token / 缓存命中率。
   const agentStats = useActiveAgentStats(activeNativeAgentTab?.sessionId ?? null);
@@ -387,8 +452,12 @@ const StatusBarResources = memo(function StatusBarResources() {
     session, directory, profile, projects, claudeSessionIds,
   ]);
 
-  const agentProvider = agentTarget?.provider;
-  const agentProjectDir = agentTarget?.projectDir;
+  // 面板选中项优先：选中项目时列出该项目下所有可用 Agent 的历史；
+  // 选中远程命令时没有本地历史索引，退回各 Agent 最近的会话。
+  const agentProvider = selection ? selection.provider ?? undefined : agentTarget?.provider;
+  const agentProjectDir = selection
+    ? (selection.isLocalDirectory ? selection.directory : null)
+    : agentTarget?.projectDir;
 
   // 本机装了哪些 Agent：装了几个就列几个历史入口，当前会话的 Agent 始终保留。
   // 没有打开任何 Agent 时入口依然在，projectDir 为 null 表示展开全部项目的最近会话。
@@ -397,8 +466,12 @@ const StatusBarResources = memo(function StatusBarResources() {
     const available = agentAvailability
       ? AGENT_KINDS.filter(kind => agentAvailability[kind])
       : [...AGENT_KINDS];
-    if (!agentProvider || !agentProjectDir) {
+    if (!agentProjectDir) {
       return available.map(provider => ({ provider, projectDir: null }));
+    }
+    // 选中项目本身：不限定 Agent，统一按项目根过滤历史会话。
+    if (!agentProvider) {
+      return available.map(provider => ({ provider, projectDir: agentProjectDir }));
     }
     const providers = agentAvailability
       ? AGENT_KINDS.filter(kind => kind === agentProvider || agentAvailability[kind])
@@ -444,7 +517,20 @@ const StatusBarResources = memo(function StatusBarResources() {
 
   return (
     <div className="app-statusbar" role="group" aria-label="应用状态栏">
-      {session ? (
+      {selection ? (
+        <span
+          className="app-statusbar-item app-statusbar-session"
+          title={`已选中${selection.kind === 'project' ? '项目' : '命令'} · ${selection.name}${selection.detail ? ` · ${selection.detail}` : ''}`}
+        >
+          {selection.kind === 'project' ? (
+            <FolderTree className="app-statusbar-icon" aria-hidden="true" />
+          ) : (
+            <SquareTerminal className="app-statusbar-icon" aria-hidden="true" />
+          )}
+          <span className="app-statusbar-label">{selection.name}</span>
+          <span className="app-statusbar-badge">{selection.kind === 'project' ? '项目' : '命令'}</span>
+        </span>
+      ) : session ? (
         <span
           className="app-statusbar-item app-statusbar-session app-statusbar-optional"
           title={detail ? `${session.profileName} · ${detail}` : session.profileName}
@@ -470,7 +556,8 @@ const StatusBarResources = memo(function StatusBarResources() {
         </span>
       )}
 
-      {agentStatusView && <StatusBarAgent view={agentStatusView} />}
+      {/* 选中项目 / 命令时展示的是该项目上下文，不显示活动会话的模型与用量。 */}
+      {!selection && agentStatusView && <StatusBarAgent view={agentStatusView} />}
 
       {agentTargets.length > 0 && (
         <>
@@ -500,33 +587,33 @@ const StatusBarResources = memo(function StatusBarResources() {
         </>
       )}
 
-      {isTerminal && directory && (
+      {contextDirectory && (
         <>
           <span className="app-statusbar-divider app-statusbar-optional" aria-hidden="true" />
           <button
             type="button"
             className="app-statusbar-item app-statusbar-clickable"
-            title={canBrowseLocal ? `打开文件管理 · ${directory}（右键复制路径）` : `复制路径 ${directory}`}
+            title={contextCanBrowseLocal ? `打开文件管理 · ${contextDirectory}（右键复制路径）` : `复制路径 ${contextDirectory}`}
             onClick={() => {
-              if (canBrowseLocal) setFileManagerOpen(true);
-              else copyDirectory(directory);
+              if (contextCanBrowseLocal) setFileManagerOpen(true);
+              else copyDirectory(contextDirectory);
             }}
             onContextMenu={event => {
-              if (!canBrowseLocal) return;
+              if (!contextCanBrowseLocal) return;
               event.preventDefault();
-              copyDirectory(directory);
+              copyDirectory(contextDirectory);
             }}
           >
             <Folder className="app-statusbar-icon" aria-hidden="true" />
-            <span className="app-statusbar-path-full">{directory}</span>
-            <span className="app-statusbar-path-short">{shortenPath(directory)}</span>
+            <span className="app-statusbar-path-full">{contextDirectory}</span>
+            <span className="app-statusbar-path-short">{shortenPath(contextDirectory)}</span>
           </button>
 
-          {gitDirectory && (
+          {contextGitDirectory && (
             <GitNavBar
               variant="statusbar"
-              currentDirectory={gitDirectory}
-              terminalActivityAt={terminalActivityAt}
+              currentDirectory={contextGitDirectory}
+              terminalActivityAt={contextTerminalActivityAt}
             />
           )}
         </>
@@ -565,10 +652,10 @@ const StatusBarResources = memo(function StatusBarResources() {
         <StatusBarClock />
       </span>
 
-      {directory && (
+      {contextDirectory && (
         <FileManagerDialog
           open={fileManagerOpen}
-          initialPath={directory}
+          initialPath={contextDirectory}
           onClose={() => setFileManagerOpen(false)}
         />
       )}

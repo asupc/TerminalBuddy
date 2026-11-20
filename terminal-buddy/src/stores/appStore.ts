@@ -528,9 +528,9 @@ export interface AppState {
 	dragProfileId: string | null;
 	setDragProfileId: (id: string | null) => void;
 
-	// Last click region for F2 routing
-	lastClickRegion: "config" | "tab" | "history" | null;
-	setLastClickRegion: (region: "config" | "tab" | "history" | null) => void;
+	// Last click region for F2 routing / statusbar context (config / tab / history / terminal)
+	lastClickRegion: "config" | "tab" | "history" | "terminal" | null;
+	setLastClickRegion: (region: "config" | "tab" | "history" | "terminal" | null) => void;
 
 	// Remote file cache (per session)
 	remoteFileCache: Record<string, { files: RemoteFileEntry[]; currentPath: string }>;

@@ -550,6 +550,8 @@ function App() {
   }, [setProfiles, setProjects]);
 
   const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, tabName?: string, extraParamMode?: ExtraParamMode) => {
+    // 启动终端后焦点转到新会话：状态栏不再跟随「项目与命令」面板里的选中项。
+    useAppStore.getState().setLastClickRegion('tab');
     if (profile.terminalType === 'mstsc') {
       try {
         await startMstsc(profile.id);

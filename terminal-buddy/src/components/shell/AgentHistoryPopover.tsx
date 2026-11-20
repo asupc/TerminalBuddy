@@ -288,6 +288,8 @@ export function AgentHistoryPopover({
       } else {
         await history.resume({ sessionId: item.sessionId, title, projectDir: item.projectDir });
       }
+      // 恢复后焦点转到新会话 / 聊天标签，状态栏不再跟随面板选中项。
+      useAppStore.getState().setLastClickRegion('tab');
       onClose();
     } catch (resumeError) {
       showToast(`恢复会话失败: ${String(resumeError)}`, 'error');
@@ -315,6 +317,7 @@ export function AgentHistoryPopover({
           vendorRef,
         );
       }
+      useAppStore.getState().setLastClickRegion('tab');
       onClose();
     } catch (resumeError) {
       showToast(`恢复会话失败: ${String(resumeError)}`, 'error');

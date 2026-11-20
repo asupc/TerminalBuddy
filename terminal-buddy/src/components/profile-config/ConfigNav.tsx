@@ -493,6 +493,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             if (target) {
               // 空白终端没有 profile 可回退分组，必须显式带上所属项目，
               // 否则会话标签会落到“默认”分组。
+              // 启动后焦点转到新会话，状态栏不再跟随面板选中项。
+              useAppStore.getState().setLastClickRegion('tab');
               try { await openTerminalInDir(effectiveProfilePath(target, projects) || undefined, { groupName: target.group || undefined }); }
               catch (err) { console.error(err); }
             }
