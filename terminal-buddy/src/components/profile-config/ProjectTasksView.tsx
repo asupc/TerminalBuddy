@@ -1,0 +1,1072 @@
+import { FC, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { CalendarClock, ChevronRight, FileText, Folder, FolderOpen, SlidersHorizontal, X } from 'lucide-react';
+import { isDockerClient } from '../../services/platform';
+import { sessionReplayTabKey, useAppStore, type NativeAgentTab } from '../../stores/appStore';
+import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
+import type { ExtraParamMode, Profile, TerminalSession } from '../../types';
+import { getIndicatorClassName, getIndicatorColor, getIndicatorTitle, getNativeAgentLight, getIndicatorLight } from '../../utils/claudeIndicator';
+import { formatDuration } from '../../utils/formatDuration';
+import {
+  buildProjectTasksTree,
+  EDITOR_GROUP_ID,
+  PINNED_GROUP_ID,
+  type ProjectTasksGroup,
+  type SessionLeaf,
+} from '../../utils/projectTasksTree';
+import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
+import { AgentIcon } from '../agent-chat/AgentIcon';
+import { AgentTabContextMenu } from '../shell/AgentTabContextMenu';
+import { SessionTaskLabel } from '../shell/SessionTaskLabel';
+import { TabContextMenu } from '../shell/TabContextMenu';
+import '../file-explorer/TreeView.css';
+import '../shell/TabNav.css';
+
+const TYPE_ICONS: Record<string, string> = {
+  powershell: 'PS', pwsh: 'PS7', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
+};
+
+interface ProjectTasksViewProps {
+  isActive: boolean;
+  searchQuery: string;
+  selectedProfileId: string | null;
+  renamingProfileId: string | null;
+  renamingProfileName: string;
+  onRenamingProfileChange: (value: string) => void;
+  onRenamingProfileSubmit: () => void;
+  onRenamingProfileCancel: () => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, tabName?: string, extraParamMode?: ExtraParamMode) => void;
+  onProfileContextMenu: (e: React.MouseEvent, profileId: string) => void;
+  onGroupContextMenu: (e: React.MouseEvent, groupId: string) => void;
+  onCloseSession: (sessionId: string) => void;
+  onCloseGroup: (groupName: string, groupSessions: TerminalSession[], groupAgentKeys: string[]) => void;
+  onCloseExternalMenus: () => void;
+}
+
+function sessionLeafKey(leaf: SessionLeaf): string {
+  switch (leaf.kind) {
+    case 'terminal':
+      return `t:${leaf.session.id}`;
+    case 'agent':
+      return `a:${leaf.tab.key}`;
+    case 'git-changes':
+      return `gc:${leaf.tab.repoRoot}`;
+    case 'git-history':
+      return `gh:${leaf.tab.repoRoot}`;
+  }
+}
+
+/**
+ * 「项目与任务」统一树视图（实验性）：
+ * 在同一棵树中按项目归类展示已打开的会话（保留完整呼吸灯与 Agent Logo）与项目「配置」子分组。
+ */
+export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
+  isActive,
+  searchQuery,
+  selectedProfileId,
+  renamingProfileId,
+  renamingProfileName,
+  onRenamingProfileChange,
+  onRenamingProfileSubmit,
+  onRenamingProfileCancel,
+  onStartTerminal,
+  onProfileContextMenu,
+  onGroupContextMenu,
+  onCloseSession,
+  onCloseGroup,
+  onCloseExternalMenus,
+}) => {
+  const profiles = useAppStore(s => s.profiles);
+  const projects = useAppStore(s => s.projects);
+  const sessions = useAppStore(s => s.sessions);
+  const tabGroups = useAppStore(s => s.groups);
+  const activeSessionId = useAppStore(s => s.activeSessionId);
+  const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
+  const gitChangesTab = useAppStore(s => s.gitChangesTab);
+  const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
+  const claudeReplayTabs = useAppStore(s => s.claudeReplayTabs);
+  const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
+  const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
+  const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
+  const scheduledTasksTabOpen = useAppStore(s => s.scheduledTasksTabOpen);
+  const openScheduledTasksPage = useAppStore(s => s.openScheduledTasksPage);
+  const closeScheduledTasksPage = useAppStore(s => s.closeScheduledTasksPage);
+  const agentTabs = useAppStore(s => s.agentTabs);
+  const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
+  const setActiveAgentTab = useAppStore(s => s.setActiveAgentTab);
+  const closeAgentTab = useAppStore(s => s.closeAgentTab);
+  const renameSession = useAppStore(s => s.renameSession);
+  const removeSessions = useAppStore(s => s.removeSessions);
+  const selectProfile = useAppStore(s => s.selectProfile);
+  const setDragProfileId = useAppStore(s => s.setDragProfileId);
+  const terminalActivities = useAppStore(s => s.terminalActivities);
+  const terminalWebTakeovers = useAppStore(s => s.terminalWebTakeovers);
+  const lastClickRegion = useAppStore(s => s.lastClickRegion);
+  // 订阅 settingsVersion 以便指示灯自定义配色更改后立即重绘。
+  useAppStore(s => s.settingsVersion);
+  const taskSummaries = useTaskSummaryStore(s => s.summaries);
+  const taskProviders = useTaskSummaryStore(s => s.providers);
+
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set([
+    PINNED_GROUP_ID,
+    EDITOR_GROUP_ID,
+    ...(isDockerClient() ? ['服务器工作区'] : []),
+  ]));
+  const [toolsCollapsed, setToolsCollapsed] = useState(false);
+  const [relayCollapsed, setRelayCollapsed] = useState(false);
+  const [replayCollapsed, setReplayCollapsed] = useState(false);
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
+  const [agentTabMenu, setAgentTabMenu] = useState<{ x: number; y: number; key: string } | null>(null);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameBaseline, setRenameBaseline] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const prevSessionKeysRef = useRef<Set<string>>(new Set());
+
+  // 终端运行时长后缀每 60s 刷新一次
+  const [, setUptimeTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setUptimeTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const model = useMemo(() => buildProjectTasksTree({
+    projects,
+    profiles,
+    sessions,
+    agentTabs,
+    tabGroups,
+    gitChangesTab,
+    gitHistoryTab,
+    taskSummaries,
+    searchQuery,
+  }), [projects, profiles, sessions, agentTabs, tabGroups, gitChangesTab, gitHistoryTab, taskSummaries, searchQuery]);
+
+  // 无搜索时跟踪已见会话，仅在某项目或编辑器分组出现新增打开会话时自动展开该项目，不干扰「配置」子分组折叠态。
+  const fullModel = useMemo(() => (
+    searchQuery.trim()
+      ? buildProjectTasksTree({
+        projects,
+        profiles,
+        sessions,
+        agentTabs,
+        tabGroups,
+        gitChangesTab,
+        gitHistoryTab,
+        taskSummaries,
+        searchQuery: '',
+      })
+      : model
+  ), [searchQuery, model, projects, profiles, sessions, agentTabs, tabGroups, gitChangesTab, gitHistoryTab, taskSummaries]);
+
+  useEffect(() => {
+    const currentKeys = new Set<string>();
+    const newlyActiveGroups = new Set<string>();
+
+    for (const editor of fullModel.editorSessions) {
+      const key = `${EDITOR_GROUP_ID}\0${editor.id}`;
+      currentKeys.add(key);
+      if (!prevSessionKeysRef.current.has(key)) {
+        newlyActiveGroups.add(EDITOR_GROUP_ID);
+      }
+    }
+
+    for (const group of fullModel.groups) {
+      for (const leaf of group.sessions) {
+        const key = `${group.id}\0${sessionLeafKey(leaf)}`;
+        currentKeys.add(key);
+        if (!prevSessionKeysRef.current.has(key)) {
+          newlyActiveGroups.add(group.id);
+        }
+      }
+    }
+
+    prevSessionKeysRef.current = currentKeys;
+
+    if (newlyActiveGroups.size > 0) {
+      setExpandedIds(prev => {
+        let changed = false;
+        const next = new Set(prev);
+        for (const id of newlyActiveGroups) {
+          if (!next.has(id)) {
+            next.add(id);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
+  }, [fullModel]);
+
+  // F2 快速重命名会话（仅在焦点位于会话区域时响应；配置与项目 F2 由 ConfigNav 处理）
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'F2') return;
+      if (!isActive) return;
+      const region = useAppStore.getState().lastClickRegion;
+      if (region && region !== 'tab') return;
+      if (!activeSessionId) return;
+      const session = sessions.find(s => s.id === activeSessionId);
+      if (session && session.sessionType !== 'editor') {
+        const displayed = session.manualTitle
+          ? session.profileName
+          : (useTaskSummaryStore.getState().summaries[session.id]?.summary?.trim() || session.profileName);
+        setRenameValue(displayed);
+        setRenameBaseline(displayed);
+        setRenamingSessionId(activeSessionId);
+        setTimeout(() => renameInputRef.current?.select(), 0);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [isActive, activeSessionId, sessions]);
+
+  useEffect(() => {
+    if (renamingSessionId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renamingSessionId]);
+
+  useEffect(() => {
+    if (!tabContextMenu) return;
+    const handler = () => setTabContextMenu(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [tabContextMenu]);
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleRenameSubmit = (sessionId: string) => {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== renameBaseline) renameSession(sessionId, trimmed);
+    setRenamingSessionId(null);
+  };
+
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+  const isSearching = trimmedQuery.length > 0;
+  const isNodeExpanded = (id: string, forceWhenSearching = false) =>
+    (isSearching && forceWhenSearching) || expandedIds.has(id);
+
+  const relayAgentTabs = agentTabs.filter(tab => tab.shape === 'relay');
+  const hasTopSpecialSections = scheduledTasksTabOpen || relayAgentTabs.length > 0 || claudeReplayTabs.length > 0;
+  const hasMainSections =
+    model.editorSessions.length > 0 || model.pinnedProfiles.length > 0 || model.groups.length > 0;
+
+  const activateTerminalSession = (sessionId: string) => {
+    const store = useAppStore.getState();
+    store.setLastClickRegion('tab');
+    store.selectProfile(null);
+    if (store.splitMode !== 'off') {
+      if (!store.splitSlots.some(slot => slot.sessionId === sessionId)) {
+        store.placeSessionInSplitSlot(sessionId);
+      } else {
+        store.setActiveSession(sessionId);
+      }
+    } else {
+      store.setActiveSession(sessionId);
+    }
+  };
+
+  const renderProfileLeaf = (profile: Profile, paddingLeft: number) => {
+    const isSelected = lastClickRegion === 'config' && selectedProfileId === profile.id;
+    const isRenaming = renamingProfileId === profile.id;
+    return (
+      <div
+        key={profile.id}
+        className={`tree-item project-tasks-profile-item${isSelected ? ' selected' : ''}`}
+        style={{ paddingLeft: `${paddingLeft}px` }}
+        draggable={!isRenaming}
+        onDragStart={(e) => {
+          setDragProfileId(profile.id);
+          e.dataTransfer.effectAllowed = 'copy';
+          e.dataTransfer.setData('text/plain', profile.id);
+        }}
+        onDragEnd={() => setDragProfileId(null)}
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          e.stopPropagation();
+          useAppStore.getState().setLastClickRegion('config');
+          selectProfile(profile.id);
+        }}
+        onClick={() => {
+          useAppStore.getState().setLastClickRegion('config');
+          selectProfile(profile.id);
+        }}
+        onDoubleClick={() => {
+          if (isRenaming) return;
+          onStartTerminal(profile);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setTabContextMenu(null);
+          setAgentTabMenu(null);
+          selectProfile(profile.id);
+          onProfileContextMenu(e, profile.id);
+        }}
+      >
+        <span className="tree-icon">
+          <span className="config-nav-icon-type">
+            {TYPE_ICONS[profile.terminalType] || profile.terminalType.toUpperCase()}
+          </span>
+        </span>
+        {isRenaming ? (
+          <input
+            className="tree-rename-input"
+            value={renamingProfileName}
+            onChange={(e) => onRenamingProfileChange(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') onRenamingProfileSubmit();
+              if (e.key === 'Escape') onRenamingProfileCancel();
+            }}
+            onBlur={onRenamingProfileSubmit}
+            onClick={(e) => e.stopPropagation()}
+            autoFocus
+          />
+        ) : (
+          <span className="tree-name" style={profile.tabColor ? { color: profile.tabColor } : undefined}>
+            {profile.name}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  const renderTerminalSessionLeaf = (session: TerminalSession, paddingLeft: number) => {
+    const isEditor = session.sessionType === 'editor';
+    if (isEditor) {
+      return (
+        <div
+          key={session.id}
+          className={`tree-item tab-nav-item${activeSpecialTab === null && activeSessionId === session.id ? ' active' : ''}`}
+          style={{ paddingLeft: `${paddingLeft}px` }}
+          onMouseDown={(e) => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            const store = useAppStore.getState();
+            store.setLastClickRegion('tab');
+            store.selectProfile(null);
+          }}
+          onClick={() => activateTerminalSession(session.id)}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              onCloseSession(session.id);
+            }
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onCloseExternalMenus();
+            setAgentTabMenu(null);
+            setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId: session.id });
+          }}
+        >
+          <span className="tab-nav-file-icon">
+            {session.isDirty && <span className="tab-nav-dirty-dot" />}
+            <FileText aria-hidden="true" />
+          </span>
+          <span className="tree-name" title={session.profileName} style={session.tabColor ? { color: session.tabColor } : undefined}>
+            {session.profileName}
+          </span>
+          <span className="tree-item-end">
+            <button
+              type="button"
+              className="tree-item-close"
+              onClick={(e) => { e.stopPropagation(); onCloseSession(session.id); }}
+              title="关闭"
+            >
+              <X aria-hidden="true" />
+            </button>
+          </span>
+        </div>
+      );
+    }
+
+    const light = getIndicatorLight(terminalActivities[session.id]);
+    const activityProvider = terminalActivities[session.id]?.provider;
+    const ledDot = (
+      <span
+        className={`tab-nav-dot${getIndicatorClassName(light)}`}
+        style={{ background: getIndicatorColor(light, session.tabColor) }}
+        title={getIndicatorTitle(light, activityProvider) || undefined}
+        onClick={(e) => {
+          if (light !== 'failed' && light !== 'attention') return;
+          e.stopPropagation();
+          const store = useAppStore.getState();
+          if (light === 'failed') {
+            store.clearClaudeFailure(session.id);
+          } else {
+            store.setActiveSession(session.id);
+          }
+        }}
+      />
+    );
+
+    const task = taskSummaries[session.id];
+    const profile = profiles.find(p => p.id === session.profileId);
+    const launchInfo = getTaskLaunchInfo(session.extraParams, profile?.startupCommands, session.extraParamMode);
+    const provider = task?.provider ?? taskProviders[session.id] ?? launchInfo?.provider;
+    const fallbackName = session.profileName;
+
+    if (renamingSessionId === session.id) {
+      return (
+        <div key={session.id} className="tree-item" style={{ paddingLeft: `${paddingLeft}px` }}>
+          {ledDot}
+          <input
+            ref={renameInputRef}
+            className="tree-rename-input"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={() => handleRenameSubmit(session.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleRenameSubmit(session.id);
+              else if (e.key === 'Escape') setRenamingSessionId(null);
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div
+        key={session.id}
+        className={`tree-item tab-nav-item${activeSpecialTab === null && activeSessionId === session.id ? ' active' : ''}`}
+        style={{ paddingLeft: `${paddingLeft}px` }}
+        title={provider && session.createdAt ? `${session.profileName} · 运行 ${formatDuration(Date.now() - session.createdAt)}` : undefined}
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          e.stopPropagation();
+          const store = useAppStore.getState();
+          store.setLastClickRegion('tab');
+          store.selectProfile(null);
+        }}
+        onClick={() => activateTerminalSession(session.id)}
+        onAuxClick={(e) => {
+          if (e.button === 1) {
+            e.preventDefault();
+            onCloseSession(session.id);
+          }
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onCloseExternalMenus();
+          setAgentTabMenu(null);
+          setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId: session.id });
+        }}
+      >
+        {ledDot}
+        {provider ? (
+          <SessionTaskLabel
+            task={task}
+            fallbackName={fallbackName}
+            fallbackProvider={provider}
+            color={session.tabColor}
+            manualTitle={session.manualTitle}
+          />
+        ) : (
+          <span className="tree-name" title={session.profileName} style={session.tabColor ? { color: session.tabColor } : undefined}>
+            {session.profileName}
+            {session.createdAt && (
+              <span className="tab-nav-uptime"> · {formatDuration(Date.now() - session.createdAt)}</span>
+            )}
+          </span>
+        )}
+        {session.owner === 'web' && !isDockerClient() && <span className="tab-nav-owner-badge">Web</span>}
+        {session.owner !== 'web' && terminalWebTakeovers[session.id] && (
+          <span className="tab-nav-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>
+        )}
+        <span className="tree-item-end">
+          <button
+            type="button"
+            className="tree-item-close"
+            onClick={(e) => { e.stopPropagation(); onCloseSession(session.id); }}
+            title="关闭"
+          >
+            <X aria-hidden="true" />
+          </button>
+        </span>
+      </div>
+    );
+  };
+
+  const renderNativeAgentLeaf = (tab: NativeAgentTab, paddingLeft: number) => {
+    const light = getNativeAgentLight(tab.status);
+    const active = activeSpecialTab === 'agent-chat' && activeAgentTabKey === tab.key;
+    return (
+      <div
+        key={tab.key}
+        className={`tree-item tab-nav-item${active ? ' active' : ''}`}
+        style={{ paddingLeft: `${paddingLeft}px` }}
+        title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          e.stopPropagation();
+          const store = useAppStore.getState();
+          store.setLastClickRegion('tab');
+          store.selectProfile(null);
+        }}
+        onClick={() => {
+          const store = useAppStore.getState();
+          store.setLastClickRegion('tab');
+          store.selectProfile(null);
+          store.setActiveAgentTab(tab.key);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onCloseExternalMenus();
+          setTabContextMenu(null);
+          setAgentTabMenu({ x: e.clientX, y: e.clientY, key: tab.key });
+        }}
+        onAuxClick={(e) => {
+          if (e.button === 1) {
+            e.preventDefault();
+            closeAgentTab(tab.key);
+          }
+        }}
+      >
+        <span
+          className={`tab-nav-dot${getIndicatorClassName(light)}`}
+          style={{ background: getIndicatorColor(light) }}
+          title={getIndicatorTitle(light, tab.provider) || undefined}
+          onClick={(e) => {
+            if (light === 'failed') {
+              e.stopPropagation();
+              useAppStore.getState().updateAgentTab(tab.key, { status: 'idle' });
+            } else if (light === 'attention') {
+              e.stopPropagation();
+              useAppStore.getState().setActiveAgentTab(tab.key);
+            }
+          }}
+        />
+        <AgentIcon provider={tab.provider} className="tab-nav-agent-icon" />
+        <span className="tree-name" title={tab.title}>{tab.title}</span>
+        <span className="tree-item-end">
+          <button
+            type="button"
+            className="tree-item-close"
+            onClick={(e) => { e.stopPropagation(); closeAgentTab(tab.key); }}
+            title="关闭"
+          >
+            <X aria-hidden="true" />
+          </button>
+        </span>
+      </div>
+    );
+  };
+
+  const renderSessionLeaf = (leaf: SessionLeaf, paddingLeft: number) => {
+    switch (leaf.kind) {
+      case 'terminal':
+        return renderTerminalSessionLeaf(leaf.session, paddingLeft);
+      case 'agent':
+        return renderNativeAgentLeaf(leaf.tab, paddingLeft);
+      case 'git-changes':
+        return (
+          <div
+            key="__git_changes__"
+            className={`tree-item tab-nav-item${activeSpecialTab === 'git-changes' ? ' active' : ''}`}
+            style={{ paddingLeft: `${paddingLeft}px` }}
+            title={`${leaf.tab.repoRoot} - 未提交变更`}
+            onMouseDown={(e) => {
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              const store = useAppStore.getState();
+              store.setLastClickRegion('tab');
+              store.selectProfile(null);
+            }}
+            onClick={() => {
+              const store = useAppStore.getState();
+              store.setLastClickRegion('tab');
+              store.selectProfile(null);
+              if (store.gitChangesTab) store.openGitChangesTab(store.gitChangesTab);
+            }}
+            onAuxClick={(e) => {
+              if (e.button === 1) {
+                e.preventDefault();
+                useAppStore.getState().closeGitChangesTab();
+              }
+            }}
+          >
+            <span className="tab-nav-dot" style={{ background: '#55b988' }} />
+            <span className="tree-name">未提交变更</span>
+            <span className="tree-item-end">
+              <button
+                type="button"
+                className="tree-item-close"
+                onClick={(e) => { e.stopPropagation(); useAppStore.getState().closeGitChangesTab(); }}
+                title="关闭"
+              >
+                <X aria-hidden="true" />
+              </button>
+            </span>
+          </div>
+        );
+      case 'git-history':
+        return (
+          <div
+            key="__git_history__"
+            className={`tree-item tab-nav-item${activeSpecialTab === 'git-history' ? ' active' : ''}`}
+            style={{ paddingLeft: `${paddingLeft}px` }}
+            title={`${leaf.tab.repoRoot} - Git 历史记录`}
+            onMouseDown={(e) => {
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              const store = useAppStore.getState();
+              store.setLastClickRegion('tab');
+              store.selectProfile(null);
+            }}
+            onClick={() => {
+              const store = useAppStore.getState();
+              store.setLastClickRegion('tab');
+              store.selectProfile(null);
+              if (store.gitHistoryTab) store.openGitHistoryTab(store.gitHistoryTab);
+            }}
+            onAuxClick={(e) => {
+              if (e.button === 1) {
+                e.preventDefault();
+                useAppStore.getState().closeGitHistoryTab();
+              }
+            }}
+          >
+            <span className="tab-nav-dot" style={{ background: '#e6a23c' }} />
+            <span className="tree-name">Git 历史记录</span>
+            <span className="tree-item-end">
+              <button
+                type="button"
+                className="tree-item-close"
+                onClick={(e) => { e.stopPropagation(); useAppStore.getState().closeGitHistoryTab(); }}
+                title="关闭"
+              >
+                <X aria-hidden="true" />
+              </button>
+            </span>
+          </div>
+        );
+    }
+  };
+
+  const renderProjectGroup = (group: ProjectTasksGroup) => {
+    const hasChildren = group.profiles.length > 0 || group.sessions.length > 0;
+    const isExpanded = isNodeExpanded(group.id, hasChildren);
+    const isSelected = lastClickRegion === 'config' && selectedProfileId === group.id;
+
+    const groupTerminalSessions = group.sessions
+      .filter((leaf): leaf is { kind: 'terminal'; session: TerminalSession } => leaf.kind === 'terminal')
+      .map(leaf => leaf.session);
+    const groupAgentKeys = group.sessions
+      .filter((leaf): leaf is { kind: 'agent'; tab: NativeAgentTab } => leaf.kind === 'agent')
+      .map(leaf => leaf.tab.key);
+    const closableCount = groupTerminalSessions.length + groupAgentKeys.length;
+    const sessionCount = group.sessions.length;
+
+    const hasMatchedProfilesInSearch = isSearching && group.profiles.some(
+      p => p.name.toLowerCase().includes(trimmedQuery),
+    );
+    const isConfigExpanded = isNodeExpanded(group.configGroupId, hasMatchedProfilesInSearch);
+
+    return (
+      <div key={group.id} className="tree-node">
+        <div
+          className={`tree-item tree-group-item${isSelected ? ' selected' : ''}`}
+          style={{ paddingLeft: '8px' }}
+          onMouseDown={(e) => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            useAppStore.getState().setLastClickRegion('config');
+            selectProfile(group.id);
+          }}
+          onClick={() => {
+            useAppStore.getState().setLastClickRegion('config');
+            selectProfile(group.id);
+            toggleExpand(group.id);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setTabContextMenu(null);
+            setAgentTabMenu(null);
+            onGroupContextMenu(e, group.id);
+          }}
+        >
+          <span
+            className={`tree-arrow${isExpanded ? ' expanded' : ''}`}
+            onClick={(e) => { e.stopPropagation(); toggleExpand(group.id); }}
+          >
+            <ChevronRight aria-hidden="true" />
+          </span>
+          <span className="tree-group-icon">
+            {isExpanded ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}
+          </span>
+          <span className="tree-group-name">{group.label}</span>
+          {sessionCount > 0 && (
+            <span className="tree-item-end">
+              <span className="tree-item-count">{sessionCount}</span>
+              {closableCount > 0 && (
+                <button
+                  type="button"
+                  className="tree-item-close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCloseGroup(group.id, groupTerminalSessions, groupAgentKeys);
+                  }}
+                  title="关闭项目内所有会话"
+                >
+                  <X aria-hidden="true" />
+                </button>
+              )}
+            </span>
+          )}
+        </div>
+
+        {isExpanded && hasChildren && (
+          <div className="tree-children">
+            {group.profiles.length > 0 && (
+              <div className="tree-node">
+                <div
+                  className="tree-item project-tasks-config-group"
+                  style={{ paddingLeft: '20px' }}
+                  onClick={() => toggleExpand(group.configGroupId)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setTabContextMenu(null);
+                    setAgentTabMenu(null);
+                    onGroupContextMenu(e, group.id);
+                  }}
+                >
+                  <span
+                    className={`tree-arrow${isConfigExpanded ? ' expanded' : ''}`}
+                    onClick={(e) => { e.stopPropagation(); toggleExpand(group.configGroupId); }}
+                  >
+                    <ChevronRight aria-hidden="true" />
+                  </span>
+                  <span className="project-tasks-config-icon">
+                    <SlidersHorizontal aria-hidden="true" />
+                  </span>
+                  <span className="tree-name project-tasks-config-name">配置</span>
+                  <span className="project-tasks-config-count">{group.profiles.length}</span>
+                </div>
+                {isConfigExpanded && (
+                  <div className="tree-children">
+                    {group.profiles.map(profile => renderProfileLeaf(profile, 34))}
+                  </div>
+                )}
+              </div>
+            )}
+            {group.sessions.map(leaf => renderSessionLeaf(leaf, 20))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="project-tasks-tree">
+      {scheduledTasksTabOpen && (
+        <div className="tab-nav-group">
+          <div
+            className="tab-nav-group-header"
+            onClick={() => setToolsCollapsed(v => !v)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                setToolsCollapsed(v => !v);
+              }
+            }}
+          >
+            <span className={`tab-nav-group-arrow${toolsCollapsed ? ' collapsed' : ''}`}>▾</span>
+            <span className="tab-nav-group-name">工具</span>
+          </div>
+          {!toolsCollapsed && (
+            <div
+              className={`tab-nav-settings-btn tab-nav-replay-item${activeSpecialTab === 'scheduled-tasks' ? ' active' : ''}`}
+              onMouseDown={(e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                useAppStore.getState().setLastClickRegion('tab');
+              }}
+              onClick={openScheduledTasksPage}
+              onAuxClick={(event) => {
+                if (event.button === 1) {
+                  event.preventDefault();
+                  closeScheduledTasksPage();
+                }
+              }}
+              title="定时任务 · 按计划启动项目环境或执行 Agent 任务"
+            >
+              <CalendarClock aria-hidden="true" style={{ width: 12, height: 12, flex: 'none' }} />
+              <span className="tab-nav-name">定时任务</span>
+              <button
+                type="button"
+                className="tree-item-close"
+                onClick={event => { event.stopPropagation(); closeScheduledTasksPage(); }}
+                title="关闭"
+                aria-label="关闭定时任务"
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {relayAgentTabs.length > 0 && (
+        <div className="tab-nav-group">
+          <div
+            className="tab-nav-group-header"
+            onClick={() => setRelayCollapsed(v => !v)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                setRelayCollapsed(v => !v);
+              }
+            }}
+          >
+            <span className={`tab-nav-group-arrow${relayCollapsed ? ' collapsed' : ''}`}>▾</span>
+            <span className="tab-nav-group-name">AI 会话</span>
+            <span className="tab-nav-group-count">{relayAgentTabs.length}</span>
+          </div>
+          {!relayCollapsed && relayAgentTabs.map(tab => (
+            <div
+              key={tab.key}
+              className={`tab-nav-settings-btn tab-nav-replay-item${activeSpecialTab === 'agent-chat' && activeAgentTabKey === tab.key ? ' active' : ''}`}
+              onMouseDown={(e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                useAppStore.getState().setLastClickRegion('tab');
+              }}
+              onClick={() => setActiveAgentTab(tab.key)}
+              onAuxClick={(event) => {
+                if (event.button === 1) {
+                  event.preventDefault();
+                  closeAgentTab(tab.key);
+                }
+              }}
+              title={`终端接力 · ${tab.title}`}
+            >
+              <span className="tab-nav-name">{tab.title}</span>
+              <button
+                type="button"
+                className="tree-item-close"
+                onClick={event => { event.stopPropagation(); closeAgentTab(tab.key); }}
+                title="关闭"
+                aria-label={`关闭 ${tab.title}`}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {claudeReplayTabs.length > 0 && (
+        <div className="tab-nav-group">
+          <div
+            className="tab-nav-group-header"
+            onClick={() => setReplayCollapsed(v => !v)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                setReplayCollapsed(v => !v);
+              }
+            }}
+          >
+            <span className={`tab-nav-group-arrow${replayCollapsed ? ' collapsed' : ''}`}>▾</span>
+            <span className="tab-nav-group-name">会话详情</span>
+            <span className="tab-nav-group-count">{claudeReplayTabs.length}</span>
+          </div>
+          {!replayCollapsed && claudeReplayTabs.map(tab => (
+            <div
+              key={sessionReplayTabKey(tab)}
+              className={`tab-nav-settings-btn tab-nav-replay-item${activeSpecialTab === 'claude-replay' && claudeReplayTab && sessionReplayTabKey(claudeReplayTab) === sessionReplayTabKey(tab) ? ' active' : ''}`}
+              onMouseDown={(e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                useAppStore.getState().setLastClickRegion('tab');
+              }}
+              onClick={() => openClaudeReplayTab(tab)}
+              onAuxClick={(event) => {
+                if (event.button === 1) {
+                  event.preventDefault();
+                  closeClaudeReplayTab(tab.sessionId, tab.provider);
+                }
+              }}
+              title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'antigravity' ? 'Antigravity CLI' : 'Claude Code'} · ${tab.title}`}
+            >
+              <span className="tab-nav-name">{tab.title}</span>
+              <button
+                type="button"
+                className="tree-item-close"
+                onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId, tab.provider); }}
+                title="关闭"
+                aria-label={`关闭 ${tab.title}`}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {hasTopSpecialSections && hasMainSections && <div className="project-tasks-section-sep" />}
+
+      {model.editorSessions.length > 0 && (() => {
+        const editorExpanded = isNodeExpanded(EDITOR_GROUP_ID, true);
+        return (
+          <div className="tree-node">
+            <div
+              className="tree-item tree-group-item"
+              style={{ paddingLeft: '8px' }}
+              onClick={() => toggleExpand(EDITOR_GROUP_ID)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
+              <span
+                className={`tree-arrow${editorExpanded ? ' expanded' : ''}`}
+                onClick={(e) => { e.stopPropagation(); toggleExpand(EDITOR_GROUP_ID); }}
+              >
+                <ChevronRight aria-hidden="true" />
+              </span>
+              <span className="tree-group-icon">
+                {editorExpanded ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}
+              </span>
+              <span className="tree-group-name">文本编辑</span>
+              <span className="tree-item-end">
+                <span className="tree-item-count">{model.editorSessions.length}</span>
+                <button
+                  type="button"
+                  className="tree-item-close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCloseGroup('文本编辑', model.editorSessions, []);
+                  }}
+                  title="关闭分组内所有标签"
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </span>
+            </div>
+            {editorExpanded && (
+              <div className="tree-children">
+                {model.editorSessions.map(session => renderTerminalSessionLeaf(session, 20))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {model.pinnedProfiles.length > 0 && (() => {
+        const pinnedExpanded = isNodeExpanded(PINNED_GROUP_ID, true);
+        return (
+          <div className="tree-node">
+            <div
+              className="tree-item tree-group-item"
+              style={{ paddingLeft: '8px' }}
+              onClick={() => toggleExpand(PINNED_GROUP_ID)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
+              <span
+                className={`tree-arrow${pinnedExpanded ? ' expanded' : ''}`}
+                onClick={(e) => { e.stopPropagation(); toggleExpand(PINNED_GROUP_ID); }}
+              >
+                <ChevronRight aria-hidden="true" />
+              </span>
+              <span className="tree-group-icon">
+                {pinnedExpanded ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}
+              </span>
+              <span className="tree-group-name">置顶</span>
+            </div>
+            {pinnedExpanded && (
+              <div className="tree-children">
+                {model.pinnedProfiles.map(profile => renderProfileLeaf(profile, 22))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {model.groups.map(renderProjectGroup)}
+
+      {isSearching && !hasMainSections && (
+        <div className="empty-state">未找到匹配的项目、配置或会话</div>
+      )}
+
+      {tabContextMenu && createPortal(
+        <>
+          <div
+            className="context-menu-overlay"
+            onClick={() => setTabContextMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setTabContextMenu(null); }}
+          />
+          <TabContextMenu
+            x={tabContextMenu.x}
+            y={tabContextMenu.y}
+            sessionId={tabContextMenu.sessionId}
+            sessions={sessions}
+            profiles={profiles}
+            onStartTerminal={onStartTerminal}
+            onClose={() => setTabContextMenu(null)}
+            onRename={(session) => {
+              if (session) {
+                const displayed = session.manualTitle
+                  ? session.profileName
+                  : (taskSummaries[session.id]?.summary?.trim() || session.profileName);
+                setRenameValue(displayed);
+                setRenameBaseline(displayed);
+                setRenamingSessionId(session.id);
+                setTimeout(() => renameInputRef.current?.select(), 0);
+              }
+            }}
+            onCloseSession={onCloseSession}
+            onCloseOthers={(sessionId) => {
+              const editorSessions = sessions.filter(
+                s => s.sessionType === 'editor' && s.id !== sessionId,
+              );
+              if (editorSessions.length > 0) {
+                removeSessions(editorSessions.map(s => s.id));
+              }
+            }}
+          />
+        </>,
+        document.body,
+      )}
+
+      {agentTabMenu && (() => {
+        const tab = agentTabs.find(item => item.key === agentTabMenu.key && item.shape === 'native');
+        if (!tab || tab.shape !== 'native') return null;
+        return (
+          <AgentTabContextMenu
+            x={agentTabMenu.x}
+            y={agentTabMenu.y}
+            tab={tab}
+            onClose={() => setAgentTabMenu(null)}
+          />
+        );
+      })()}
+    </div>
+  );
+};

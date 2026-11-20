@@ -61,6 +61,7 @@ import { compareVersions } from '../../utils/version';
 
 interface TitleBarProps {
   uiStyle: UiStyle;
+  experimentalProjectTasks?: boolean;
   onSettings: () => void;
   configPanelVisible: boolean;
   fileTreeVisible: boolean;
@@ -92,6 +93,7 @@ const THEME_SKINS: ReadonlyArray<ThemeSkinOption> = [
 
 export const TitleBar: FC<TitleBarProps> = ({
   uiStyle,
+  experimentalProjectTasks = false,
   onSettings,
   configPanelVisible,
   fileTreeVisible,
@@ -308,8 +310,12 @@ export const TitleBar: FC<TitleBarProps> = ({
               <button
                 className={`titlebar-nav-btn ${configPanelVisible ? 'active' : ''}`}
                 onClick={onToggleConfigPanel}
-                title={configPanelVisible ? '隐藏项目与命令' : '显示项目与命令'}
-                aria-label={configPanelVisible ? '隐藏项目与命令' : '显示项目与命令'}
+                title={configPanelVisible
+                  ? (experimentalProjectTasks ? '隐藏项目与任务' : '隐藏项目与命令')
+                  : (experimentalProjectTasks ? '显示项目与任务' : '显示项目与命令')}
+                aria-label={configPanelVisible
+                  ? (experimentalProjectTasks ? '隐藏项目与任务' : '隐藏项目与命令')
+                  : (experimentalProjectTasks ? '显示项目与任务' : '显示项目与命令')}
                 aria-pressed={configPanelVisible}
               >
                 <PanelLeft aria-hidden="true" />

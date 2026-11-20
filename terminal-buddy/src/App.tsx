@@ -86,6 +86,7 @@ function App() {
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [defaultGroupForNewProfile, setDefaultGroupForNewProfile] = useState<string | undefined>();
   const [enableTabNav, setEnableTabNav] = useState(true);
+  const [experimentalProjectTasks, setExperimentalProjectTasks] = useState(() => getAppSettings().experimentalProjectTasks);
   const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
   const [showStatusBar, setShowStatusBar] = useState(() => getAppSettings().showStatusBar);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
@@ -400,6 +401,7 @@ function App() {
       queueMicrotask(() => {
         setUiStyle(settings.uiStyle);
         setShowStatusBar(settings.showStatusBar);
+        setExperimentalProjectTasks(settings.experimentalProjectTasks);
       });
     };
     window.addEventListener('app-settings-changed', handler);
@@ -427,6 +429,26 @@ function App() {
     }
     useAppStore.getState().bumpTerminalLayout();
   }, [showStatusBar]);
+
+  // 切换「项目与任务」实验开关：开启时若侧栏停在会话标签页则切到项目与任务，
+  // 且保证面板可见；同时触发终端重新布局 fit。
+  const projectTasksMountedRef = useRef(false);
+  useEffect(() => {
+    if (!projectTasksMountedRef.current) {
+      projectTasksMountedRef.current = true;
+      if (experimentalProjectTasks) {
+        setSidebarPanel(current => (current === 'tabs' ? 'config' : current));
+      }
+      return;
+    }
+    if (experimentalProjectTasks) {
+      setSidebarPanel(current => (current === 'tabs' ? 'config' : current));
+      if (!useAppStore.getState().configPanelVisible) {
+        useAppStore.setState({ configPanelVisible: true });
+      }
+    }
+    useAppStore.getState().bumpTerminalLayout();
+  }, [experimentalProjectTasks]);
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
@@ -738,6 +760,7 @@ function App() {
     <div className={`app-container ui-style-${uiStyle}${windowMode === 'panels-hidden' ? ' panels-hidden' : ''}`} tabIndex={0}>
       <TitleBar
         uiStyle={uiStyle}
+        experimentalProjectTasks={experimentalProjectTasks}
         onSettings={handleSettings}
         configPanelVisible={configPanelVisible}
         fileTreeVisible={fileTreeVisible}
@@ -756,6 +779,7 @@ function App() {
           <ActivityBar
             activePanel={sidebarPanel}
             tabNavigationEnabled={enableTabNav}
+            experimentalProjectTasks={experimentalProjectTasks}
             onSelectPanel={handleSidebarPanel}
             onSettings={handleSettings}
           />
@@ -764,7 +788,10 @@ function App() {
             <ConfigNav
               isActive={windowMode !== 'panels-hidden' && (uiStyle !== 'sidebar' || sidebarPanel === 'config')}
               isSidebarMode={uiStyle === 'sidebar'}
+              experimentalProjectTasks={experimentalProjectTasks}
               onStartTerminal={handleStartTerminal}
+              onStartBlankTerminal={handleStartBlankTerminal}
+              onStartTextEditor={handleStartTextEditor}
               onEditProfile={handleEditProfile}
               onCopyProfile={handleCopyProfile}
               onAddProfile={handleAddProfile}
@@ -782,7 +809,7 @@ function App() {
             />
           )}
         </div>
-        {enableTabNav && (
+        {enableTabNav && !experimentalProjectTasks && (
           <div className={`nav-panel-slot nav-panel-tabs${sidebarPanel === 'tabs' ? ' active' : ''}`}>
             <TabNav
               isActive={windowMode !== 'panels-hidden' && (uiStyle !== 'sidebar' || sidebarPanel === 'tabs')}

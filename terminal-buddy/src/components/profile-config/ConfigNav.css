@@ -191,3 +191,57 @@
   cursor: pointer;
 }
 .project-edit-dialog .project-edit-agent-toggle input { width: auto; min-height: 0; accent-color: var(--accent); cursor: pointer; }
+
+/* 「项目与任务」实验性统一树样式：复用 TabNav 的呼吸灯、Logo 与项目分组条，并增加「配置」子分组层次。 */
+.project-tasks-tree > .tree-node:first-child > .tree-item.tree-group-item {
+  margin-top: 0;
+}
+
+.project-tasks-tree .tree-item.tree-group-item.selected {
+  background: var(--list-active-bg);
+  color: var(--list-active-fg);
+  box-shadow: inset 0 0 0 var(--list-active-border-width) var(--list-active-border-color);
+}
+
+.project-tasks-tree .tree-item.tree-group-item.selected .tree-group-name,
+.project-tasks-tree .tree-item.tree-group-item.selected .tree-arrow,
+.project-tasks-tree .tree-item.tree-group-item.selected .tree-group-icon {
+  color: var(--list-active-fg);
+}
+
+.project-tasks-config-group {
+  min-height: 26px;
+  color: var(--text-secondary);
+}
+
+.project-tasks-config-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.project-tasks-config-icon svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 1.8;
+}
+
+.project-tasks-config-name {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.project-tasks-config-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted, var(--text-secondary));
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.project-tasks-section-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border-subtle);
+}

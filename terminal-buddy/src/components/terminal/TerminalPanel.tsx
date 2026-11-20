@@ -310,7 +310,7 @@ export const TerminalPanel: FC = () => {
 
   return (
     <div className="terminal-panel">
-      {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab || gitChangesTab || claudeReplayTab || agentTabs.length > 0 || scheduledTasksTabOpen) && (
+      {!settings.experimentalProjectTasks && !settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab || gitChangesTab || claudeReplayTab || agentTabs.length > 0 || scheduledTasksTabOpen) && (
         <TerminalTabBar />
       )}
       <div

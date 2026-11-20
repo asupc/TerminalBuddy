@@ -7,6 +7,7 @@ export type SidebarPanel = 'config' | 'files' | 'tabs' | 'history';
 interface ActivityBarProps {
   activePanel: SidebarPanel | null;
   tabNavigationEnabled: boolean;
+  experimentalProjectTasks?: boolean;
   onSelectPanel: (panel: SidebarPanel) => void;
   onSettings: () => void;
 }
@@ -21,13 +22,15 @@ const NAV_ITEMS = [
 export const ActivityBar: FC<ActivityBarProps> = ({
   activePanel,
   tabNavigationEnabled,
+  experimentalProjectTasks = false,
   onSelectPanel,
   onSettings,
 }) => (
   <aside className="activity-bar" aria-label="主侧边栏">
     <nav className="activity-bar-nav" aria-label="导航面板">
-      {NAV_ITEMS.map(item => {
+      {NAV_ITEMS.filter(item => !(experimentalProjectTasks && item.id === 'tabs')).map(item => {
         const Icon = item.icon;
+        const label = item.id === 'config' && experimentalProjectTasks ? '项目与任务' : item.label;
         const isDisabled = item.id === 'tabs' && !tabNavigationEnabled;
         const isActive = activePanel === item.id && !isDisabled;
         return (
@@ -37,8 +40,8 @@ export const ActivityBar: FC<ActivityBarProps> = ({
             type="button"
             onClick={() => onSelectPanel(item.id)}
             disabled={isDisabled}
-            title={isDisabled ? '会话标签导航已在设置中关闭' : item.label}
-            aria-label={item.label}
+            title={isDisabled ? '会话标签导航已在设置中关闭' : label}
+            aria-label={label}
             aria-pressed={isActive}
           >
             <Icon size={20} strokeWidth={1.7} aria-hidden="true" />

@@ -9,13 +9,15 @@ import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../
 import { currentClaudeCommand } from '../../utils/agentCommands';
 import type { ExtraParamMode, Profile } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
-import { ConfirmDialog } from '../shared/Dialog';
+import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { ProjectContextMenu } from '../shared/ProjectContextMenu';
 import { ProjectEditDialog } from '../shared/ProjectEditDialog';
 import { ProjectDeleteDialog } from '../shared/ProjectDeleteDialog';
+import { ProjectTasksView } from './ProjectTasksView';
+import { useSessionCloseActions } from '../../hooks/useSessionCloseActions';
 import { effectiveProfilePath } from '../../utils/projectPath';
-import { isDockerClient, supportsSystemExplorerOpen } from '../../services/platform';
+import { defaultShellType, isDockerClient, serverUsesWindowsPaths, supportsSystemExplorerOpen } from '../../services/platform';
 import './ConfigNav.css';
 
 const TYPE_ICONS: Record<string, string> = {
@@ -28,7 +30,10 @@ const PINNED_GROUP_ID = '__pinned__';
 interface ConfigPanelProps {
   isActive: boolean;
   isSidebarMode: boolean;
+  experimentalProjectTasks?: boolean;
   onStartTerminal: (profile: Profile, extraParams?: string, tabName?: string, extraParamMode?: ExtraParamMode) => void;
+  onStartBlankTerminal?: (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => void;
+  onStartTextEditor?: () => void;
   onEditProfile: (profile: Profile) => void;
   onCopyProfile: (profile: Profile) => void;
   onAddProfile: (defaultGroup?: string) => void;
@@ -37,13 +42,22 @@ interface ConfigPanelProps {
 export const ConfigNav: FC<ConfigPanelProps> = ({
   isActive,
   isSidebarMode,
+  experimentalProjectTasks = false,
   onStartTerminal,
+  onStartBlankTerminal,
+  onStartTextEditor,
   onEditProfile,
   onCopyProfile,
   onAddProfile,
 }) => {
   const profiles = useAppStore(s => s.profiles);
   const projects = useAppStore(s => s.projects);
+  const sessions = useAppStore(s => s.sessions);
+  const agentTabs = useAppStore(s => s.agentTabs);
+  const gitChangesTab = useAppStore(s => s.gitChangesTab);
+  const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
+  const scheduledTasksTabOpen = useAppStore(s => s.scheduledTasksTabOpen);
+  const claudeReplayTabs = useAppStore(s => s.claudeReplayTabs);
   const selectedProfileId = useAppStore(s => s.selectedProfileId);
   const selectProfile = useAppStore(s => s.selectProfile);
   const removeProfile = useAppStore(s => s.removeProfile);
@@ -55,6 +69,17 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
+  const {
+    confirmDialog: sessionConfirmDialog,
+    setConfirmDialog: setSessionConfirmDialog,
+    draftCloseDialog,
+    setDraftCloseDialog,
+    handleCloseTerminal,
+    handleDraftSaveAs,
+    handleDraftDiscard,
+    handleCloseGroup,
+    handleCloseAllTabs,
+  } = useSessionCloseActions();
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
@@ -199,11 +224,24 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     }
   }, [selectProfile]);
 
-  const closeContextMenu = () => {
+  const closeContextMenu = useCallback(() => {
     setContextMenu(null);
     setGroupContextMenu(null);
     setBlankContextMenu(null);
-  };
+  }, []);
+
+  const handleTaskProfileContextMenu = useCallback((e: React.MouseEvent, profileId: string) => {
+    selectProfile(profileId);
+    setGroupContextMenu(null);
+    setBlankContextMenu(null);
+    setContextMenu({ x: e.clientX, y: e.clientY, profileId });
+  }, [selectProfile]);
+
+  const handleTaskGroupContextMenu = useCallback((e: React.MouseEvent, groupId: string) => {
+    setContextMenu(null);
+    setBlankContextMenu(null);
+    setGroupContextMenu({ x: e.clientX, y: e.clientY, group: groupId });
+  }, []);
 
   const isLocalProfile = (p: Profile) => p.terminalType === 'powershell' || p.terminalType === 'pwsh' || p.terminalType === 'cmd';
   const hasStartupPath = (p: Profile) => !!effectiveProfilePath(p, projects);
@@ -384,12 +422,16 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     };
   }, [isResizing, handleResizeMouseMove, handleResizeMouseUp]);
 
-  // 跟踪上次点击区域
+  // 跟踪上次点击区域（项目与任务模式下点击会话条目/配置子分组时由子元素自行控制，不覆盖为 config）
   useEffect(() => {
     const panel = containerRef.current;
     if (!panel) return;
     const handler = (e: MouseEvent) => {
       if (e.button !== 0) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('.tab-nav-item, .tab-nav-settings-btn, .project-tasks-config-group, .context-menu, .context-menu-overlay')) {
+        return;
+      }
       useAppStore.getState().setLastClickRegion('config');
     };
     panel.addEventListener('mousedown', handler);
@@ -409,6 +451,21 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       // 'tab'/'history' 等其他面板会把 region 设成自己的值，从而屏蔽此处。
       if (region && region !== 'config') return;
       if (!selectedProfileId) return;
+      if (experimentalProjectTasks) {
+        const profile = profiles.find(p => p.id === selectedProfileId);
+        if (profile) {
+          setRenamingProfileId(profile.id);
+          setRenamingProfileName(profile.name);
+          return;
+        }
+        const hasProjectOrGroup =
+          projects.some(p => p.name === selectedProfileId)
+          || profiles.some(p => (p.group || '默认') === selectedProfileId);
+        if (hasProjectOrGroup) {
+          editProject(selectedProfileId);
+        }
+        return;
+      }
       const item = findTreeItemById(treeItems, selectedProfileId);
       if (item?.isGroup || (item?.children && item.children.length > 0)) {
         editProject(selectedProfileId);
@@ -420,63 +477,108 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [isActive, selectedProfileId, treeItems]);
+  }, [isActive, selectedProfileId, treeItems, experimentalProjectTasks, profiles, projects]);
+
+  const nativeAgentTabCount = agentTabs.filter(tab => tab.shape === 'native').length;
+  const openSessionCount = sessions.length + nativeAgentTabCount;
+  const hasAnyProjectTasksContent =
+    projects.length > 0
+    || profiles.length > 0
+    || sessions.length > 0
+    || agentTabs.length > 0
+    || Boolean(gitChangesTab)
+    || Boolean(gitHistoryTab)
+    || scheduledTasksTabOpen
+    || claudeReplayTabs.length > 0;
 
   return (
     <div
       ref={containerRef}
       className={`config-nav${isSidebarMode ? ' sidebar-mode' : ''} ${!configPanelVisible ? 'collapsed' : ''}`}
       style={{ width }}
-      onMouseDown={() => { useAppStore.getState().setLastClickRegion('config'); }}
+      onMouseDown={(e) => {
+        if (e.button !== 0) return;
+        const target = e.target as HTMLElement | null;
+        if (target?.closest('.tab-nav-item, .tab-nav-settings-btn, .project-tasks-config-group, .context-menu, .context-menu-overlay')) {
+          return;
+        }
+        useAppStore.getState().setLastClickRegion('config');
+      }}
       onClick={closeContextMenu}
     >
       <div className="panel-titlebar">
-        <span className="panel-title">项目与命令</span>
-        <span className="panel-title-count">{profiles.length}</span>
+        <span className="panel-title">{experimentalProjectTasks ? '项目与任务' : '项目与命令'}</span>
+        <span className="panel-title-count">{experimentalProjectTasks ? openSessionCount : profiles.length}</span>
         <button type="button" className="config-nav-add-project" title="添加项目" onClick={() => editProject()}>+ 项目</button>
       </div>
       <div className="config-nav-search-bar">
         <input
           type="text"
           className="config-nav-search-input"
-          placeholder="搜索配置..."
+          placeholder={experimentalProjectTasks ? '搜索项目、配置或会话...' : '搜索配置...'}
           value={configSearchQuery}
           onChange={(e) => setConfigSearchQuery(e.target.value)}
         />
       </div>
       <div className="config-nav-list" onContextMenu={(e) => {
-        if ((e.target as HTMLElement).closest('.tree-item')) return;
+        if ((e.target as HTMLElement).closest('.tree-item, .tab-nav-settings-btn')) return;
         e.preventDefault();
         setContextMenu(null);
         setGroupContextMenu(null);
         setBlankContextMenu({ x: e.clientX, y: e.clientY });
       }}>
-        <TreeView
-          items={treeItems}
-          expandedIds={expandedGroups}
-          onToggle={handleToggle}
-          selectedId={selectedProfileId}
-          onSelect={handleSelect}
-          onDoubleClick={handleDoubleClick}
-          onContextMenu={handleItemContextMenu}
-          renamingProfileId={renamingProfileId}
-          renamingProfileValue={renamingProfileName}
-          onRenamingProfileChange={setRenamingProfileName}
-          onRenamingProfileSubmit={handleFinishRenameProfile}
-          onRenamingProfileCancel={() => setRenamingProfileId(null)}
-          itemDraggable
-          showEmptyGroupArrow
-          onItemDragStart={(e, item) => {
-            const profile = item.data as Profile | undefined;
-            if (!profile) return;
-            setDragProfileId(profile.id);
-            e.dataTransfer.effectAllowed = 'copy';
-            e.dataTransfer.setData('text/plain', profile.id);
-          }}
-          onItemDragEnd={() => setDragProfileId(null)}
-        />
-        {projects.length === 0 && profiles.length === 0 && (
-          <div className="empty-state">暂无配置，点击新建</div>
+        {experimentalProjectTasks ? (
+          <>
+            <ProjectTasksView
+              isActive={isActive}
+              searchQuery={configSearchQuery}
+              selectedProfileId={selectedProfileId}
+              renamingProfileId={renamingProfileId}
+              renamingProfileName={renamingProfileName}
+              onRenamingProfileChange={setRenamingProfileName}
+              onRenamingProfileSubmit={handleFinishRenameProfile}
+              onRenamingProfileCancel={() => setRenamingProfileId(null)}
+              onStartTerminal={onStartTerminal}
+              onProfileContextMenu={handleTaskProfileContextMenu}
+              onGroupContextMenu={handleTaskGroupContextMenu}
+              onCloseSession={handleCloseTerminal}
+              onCloseGroup={handleCloseGroup}
+              onCloseExternalMenus={closeContextMenu}
+            />
+            {!hasAnyProjectTasksContent && !configSearchQuery.trim() && (
+              <div className="empty-state">暂无项目或会话，点击新建</div>
+            )}
+          </>
+        ) : (
+          <>
+            <TreeView
+              items={treeItems}
+              expandedIds={expandedGroups}
+              onToggle={handleToggle}
+              selectedId={selectedProfileId}
+              onSelect={handleSelect}
+              onDoubleClick={handleDoubleClick}
+              onContextMenu={handleItemContextMenu}
+              renamingProfileId={renamingProfileId}
+              renamingProfileValue={renamingProfileName}
+              onRenamingProfileChange={setRenamingProfileName}
+              onRenamingProfileSubmit={handleFinishRenameProfile}
+              onRenamingProfileCancel={() => setRenamingProfileId(null)}
+              itemDraggable
+              showEmptyGroupArrow
+              onItemDragStart={(e, item) => {
+                const profile = item.data as Profile | undefined;
+                if (!profile) return;
+                setDragProfileId(profile.id);
+                e.dataTransfer.effectAllowed = 'copy';
+                e.dataTransfer.setData('text/plain', profile.id);
+              }}
+              onItemDragEnd={() => setDragProfileId(null)}
+            />
+            {projects.length === 0 && profiles.length === 0 && (
+              <div className="empty-state">暂无配置，点击新建</div>
+            )}
+          </>
         )}
       </div>
 
@@ -585,6 +687,37 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             添加配置
           </div>
           <div className="context-menu-item" onClick={() => editProject()}>添加项目</div>
+          {experimentalProjectTasks && (
+            <>
+              <div className="context-menu-separator" />
+              {onStartBlankTerminal && (
+                <>
+                  <div className="context-menu-item" onClick={() => { onStartBlankTerminal(defaultShellType()); closeContextMenu(); }}>
+                    {serverUsesWindowsPaths() ? 'PowerShell' : 'Bash'}
+                  </div>
+                  <div className="context-menu-item" onClick={() => { onStartBlankTerminal(serverUsesWindowsPaths() ? 'cmd' : 'sh'); closeContextMenu(); }}>
+                    {serverUsesWindowsPaths() ? 'CMD' : 'Shell'}
+                  </div>
+                </>
+              )}
+              {onStartTextEditor && (
+                <div className="context-menu-item" onClick={() => { onStartTextEditor(); closeContextMenu(); }}>
+                  文本编辑器
+                </div>
+              )}
+              {openSessionCount > 0 && (
+                <>
+                  <div className="context-menu-separator" />
+                  <div className="context-menu-item danger" onClick={() => {
+                    closeContextMenu();
+                    handleCloseAllTabs();
+                  }}>
+                    关闭所有会话
+                  </div>
+                </>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -602,6 +735,31 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           onConfirm={confirmDeleteProfile}
           confirmText="删除"
         />
+      )}
+      {sessionConfirmDialog && (
+        <ConfirmDialog
+          title={sessionConfirmDialog.title}
+          message={sessionConfirmDialog.message}
+          onClose={() => setSessionConfirmDialog(null)}
+          onConfirm={sessionConfirmDialog.onConfirm}
+        />
+      )}
+      {draftCloseDialog && (
+        <Dialog
+          title="草稿有未保存的内容"
+          role="alertdialog"
+          className="tb-confirm-dialog"
+          onClose={() => setDraftCloseDialog(null)}
+          footer={(
+            <>
+              <button className="btn-secondary" onClick={() => setDraftCloseDialog(null)}>取消</button>
+              <button className="btn-danger" onClick={handleDraftDiscard}>不保存</button>
+              <button className="btn-primary" onClick={handleDraftSaveAs}>另存为...</button>
+            </>
+          )}
+        >
+          <div className="tb-confirm-message">是否保存此草稿？</div>
+        </Dialog>
       )}
       <div
         className={`config-nav-resize-handle ${isResizing ? 'active' : ''}`}
