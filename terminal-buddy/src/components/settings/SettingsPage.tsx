@@ -117,7 +117,7 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
     id: 'general',
     label: '常规与偏好',
     sections: [
-      { id: 'behavior', label: '行为设置', icon: SlidersHorizontal, description: '内核引擎、启动与窗口行为、恢复选项卡与 Claude 会话', keywords: ['loading', 'vscode', 'window', 'startup', 'resume', '默认终端', '归档', 'archive', '自动归档', '空闲', '进程', '回收', 'idle', 'recycle'] },
+      { id: 'behavior', label: '行为设置', icon: SlidersHorizontal, description: '内核引擎、启动与窗口行为、恢复选项卡与 Claude 会话', keywords: ['loading', 'vscode', 'window', 'startup', 'resume', '默认终端', '归档', 'archive', '自动归档', '空闲', '进程', '回收', 'idle', 'recycle', '实验', '实验性', '项目与任务', '任务', '会话'] },
       { id: 'appearance', label: '外观设置', icon: Palette, description: '主题、界面风格、显示任务摘要、呼吸指示灯与色彩方案', keywords: ['theme', 'dark', 'light', 'color', 'sidebar', 'indicator', '任务', '摘要', '标题', 'summary', 'codex'] },
       { id: 'hotkeys', label: '快捷键设置', icon: Keyboard, description: '唤起主窗口、新建终端与关闭标签快捷键录制', keywords: ['key', 'shortcut', 'bind'] },
       { id: 'data', label: '数据管理', icon: Database, description: '数据存储路径迁移、完整备份与恢复导入', keywords: ['path', 'backup', 'export', 'import'] },

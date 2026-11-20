@@ -97,6 +97,8 @@ export interface AppSettings {
   terminalFontSizeOff: number;
   terminalFontSize2x1: number;
   terminalFontSize2x2: number;
+  /** 实验性功能：隐藏独立会话标签导航，在「项目与任务」树中直接展示已打开会话。 */
+  experimentalProjectTasks: boolean;
   /** 整体界面表面不透明度百分比：0 为完全透明，最大值为 80。 */
   appOpacityBySkin: Record<DecorativeThemeSkin, number>;
 }
@@ -148,6 +150,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   terminalFontSizeOff: 14,
   terminalFontSize2x1: 12,
   terminalFontSize2x2: 11,
+  experimentalProjectTasks: false,
   appOpacityBySkin: {
     cartoon: 0,
     starry: 0,

@@ -506,8 +506,12 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
 
         <div className="settings-row">
           <div className="settings-row-info">
-            <div className="settings-row-title">启动时展开项目与命令面板</div>
-            <p className="settings-row-desc">启动时自动展开左侧项目与命令面板</p>
+            <div className="settings-row-title">
+              {settings.experimentalProjectTasks ? '启动时展开项目与任务面板' : '启动时展开项目与命令面板'}
+            </div>
+            <p className="settings-row-desc">
+              {settings.experimentalProjectTasks ? '启动时自动展开左侧项目与任务面板' : '启动时自动展开左侧项目与命令面板'}
+            </p>
           </div>
           <div className="settings-row-ctrl">
             <label className="settings-toggle">
@@ -516,7 +520,9 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                 checked={settings.configPanelAutoExpand}
                 onChange={(e) => updateSetting('configPanelAutoExpand', e.target.checked)}
               />
-              <span className="settings-sr-only">启动时展开项目与命令面板</span>
+              <span className="settings-sr-only">
+                {settings.experimentalProjectTasks ? '启动时展开项目与任务面板' : '启动时展开项目与命令面板'}
+              </span>
             </label>
           </div>
         </div>
@@ -565,13 +571,18 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
         <div className="settings-row">
           <div className="settings-row-info">
             <div className="settings-row-title">纵向会话标签</div>
-            <p className="settings-row-desc">勾选时会话标签显示在左侧面板（纵向），未勾选时显示在终端上方（横向）</p>
+            <p className="settings-row-desc">
+              {settings.experimentalProjectTasks
+                ? '已开启「项目与任务」实验性模式，独立会话标签导航已隐藏。'
+                : '勾选时会话标签显示在左侧面板（纵向），未勾选时显示在终端上方（横向）'}
+            </p>
           </div>
           <div className="settings-row-ctrl">
             <label className="settings-toggle">
               <input
                 type="checkbox"
                 checked={settings.enableTabNavigation}
+                disabled={settings.experimentalProjectTasks}
                 onChange={(e) => {
                   const value = e.target.checked;
                   updateSetting('enableTabNavigation', value);
@@ -618,6 +629,35 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                 }}
               />
               <span className="settings-sr-only">双击运行 .bat 文件</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* 卡片组 5: 实验性功能 */}
+      <div className="settings-card-group">
+        <div className="card-group-header">
+          <span className="card-group-title">实验性功能</span>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">
+              项目与任务视图
+              <span className="s-status-chip muted">实验</span>
+            </div>
+            <p className="settings-row-desc">
+              开启后隐藏独立的会话标签导航，将「项目与命令」切换为「项目与任务」，已打开的会话直接归类到对应项目下，项目原有命令收纳到「配置」分组中。
+            </p>
+          </div>
+          <div className="settings-row-ctrl">
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={settings.experimentalProjectTasks}
+                onChange={(e) => updateSetting('experimentalProjectTasks', e.target.checked)}
+              />
+              <span className="settings-sr-only">项目与任务视图</span>
             </label>
           </div>
         </div>
