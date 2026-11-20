@@ -1,5 +1,19 @@
 import { invoke } from './core';
-import { request, serverPlatform, uploadFiles } from './connection';
+import { request as localRequest, serverPlatform, uploadFiles } from './connection';
+import { isRemoteWorkspace } from '../remoteWorkspace/config';
+import { remoteRequest } from '../remoteWorkspace/http';
+
+// 桌面远程工作区的目录选择器属于远程服务端文件系统，接口必须打到远程。
+const request = <T>(path: string, init?: RequestInit): Promise<T> =>
+  isRemoteWorkspace() ? remoteRequest<T>(path, init) : localRequest<T>(path, init);
+
+/** 桌面远程模式的浏览器 File 对象没有本机路径，只能走 multipart 代理上传。 */
+async function uploadRemoteFiles(files: File[]): Promise<string[]> {
+  const body = new FormData();
+  files.forEach(file => body.append('files', file, file.name));
+  const result = await remoteRequest<{ paths: string[] }>('/api/desktop/upload', { method: 'POST', body });
+  return result.paths;
+}
 interface Options { directory?: boolean; multiple?: boolean; defaultPath?: string; title?: string; filters?: unknown[] }
 interface Directory { name: string; path: string }
 interface Node extends Directory { is_directory: boolean }
@@ -82,7 +96,10 @@ async function choose(options: Options, saving: boolean): Promise<string | strin
       try {
         const nodes: Node[] = browsingDirectories
           ? (await request<Directory[]>(`/api/fs/directories?path=${encodeURIComponent(path)}`)).map(node => ({ ...node, is_directory: true }))
-          : await invoke<Node[]>('list_directory', { path, exclusions: null });
+          // 远程模式必须走服务端文件接口，本机 invoke 无法读取容器路径。
+          : isRemoteWorkspace()
+            ? await remoteRequest<Node[]>(`/api/fs/list?path=${encodeURIComponent(path)}`)
+            : await invoke<Node[]>('list_directory', { path, exclusions: null });
         if (revision !== generation) return;
         currentPath = path; list.replaceChildren(); showParent(path);
         const visible = nodes.filter(node => !options.directory || node.is_directory);
@@ -106,7 +123,14 @@ async function choose(options: Options, saving: boolean): Promise<string | strin
     if (!saving && !options.directory) controls.append(button('上传本机文件', () => {
       const input = document.createElement('input'); input.type = 'file'; input.multiple = Boolean(options.multiple);
       input.onchange = async () => {
-        try { const paths = await uploadFiles(Array.from(input.files ?? [])); if (paths.length) close(options.multiple ? paths : paths[0]); }
+        try {
+          // 浏览器直接上传到同源服务端；桌面远程模式需经本机代理上传到远程服务。
+          const files = Array.from(input.files ?? []);
+          const paths = isRemoteWorkspace()
+            ? await uploadRemoteFiles(files)
+            : await uploadFiles(files);
+          if (paths.length) close(options.multiple ? paths : paths[0]);
+        }
         catch (reason) { error.textContent = reason instanceof Error ? reason.message : '上传失败'; }
       }; input.click();
     }));

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../services/remoteWorkspace/core';
 
 /**
  * 启动日志：同时输出到 devtools console 和 Rust 终端（统一时间线）。

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { UnlistenFn } from './../../services/remoteWorkspace/events';
 import {
   AlertTriangle,
   Bot,

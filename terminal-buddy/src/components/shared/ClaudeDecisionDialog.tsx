@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '../../services/remoteWorkspace/window';
 import { Bot, Check, Terminal } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import {

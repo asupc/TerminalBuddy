@@ -19,7 +19,7 @@ import { currentCodexCommand } from '../utils/agentCommands';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
 import type { AgentSessionBinding, TerminalSession } from '../types';
-import { isBrowserClient, clientTerminalOwner, defaultShellType } from './platform';
+import { isWebBackend, clientTerminalOwner, defaultShellType } from './platform';
 import { stripCodexResumeArgs, stripResumeArgs } from '../utils/commandParams';
 import {
   agentChatTabKey,
@@ -353,7 +353,7 @@ export function ensureBrowserSessionsRestored(): Promise<BrowserSessionRestoreOu
 }
 
 async function runBrowserSessionRestore(): Promise<BrowserSessionRestoreOutcome> {
-  if (!isBrowserClient() || !isAppSettingsInitialized()) return 'not-needed';
+  if (!isWebBackend() || !isAppSettingsInitialized()) return 'not-needed';
   const settings = getAppSettings();
   // dev 下 Vite 重启频繁，自动拉起 claude --resume 会很吵；与启动恢复保持一致。
   if (!settings.restoreTabsOnStartup || import.meta.env.DEV) return 'not-needed';
@@ -425,7 +425,7 @@ async function runBrowserSessionRestore(): Promise<BrowserSessionRestoreOutcome>
 
 /** 关闭恢复开关但页面跨容器重启时，清掉前端残留的失效页签。 */
 async function clearStaleBrowserSessions(): Promise<void> {
-  if (!isBrowserClient()) return;
+  if (!isWebBackend()) return;
   const terminals = await listTerminals().catch(() => null);
   if (!terminals || terminals.length > 0) return;
   const stale = useAppStore.getState().sessions.filter(session => session.sessionType !== 'editor');
@@ -456,7 +456,7 @@ interface BrowserResyncOptions {
  * 串行处理，避免同一客户端并发执行恢复/对账。
  */
 export function scheduleBrowserResync(options: BrowserResyncOptions = {}): void {
-  if (!isBrowserClient()) return;
+  if (!isWebBackend()) return;
   resyncChain = resyncChain.then(async () => {
     if (!startupRestoreComplete) return;
     const settings = getAppSettings();
@@ -518,7 +518,7 @@ export async function restoreTabs() {
   const { tabs, activeIndex, agentTabs: savedAgentTabs, activeAgentTabKey, agentChatActive, recentTabs } = await loadSavedTabs();
   // 先恢复聊天标签：终端恢复流程结尾会落盘，若此时 agentTabs 还是空，会把保存的聊天标签覆盖掉。
   await restoreNativeAgentTabs(savedAgentTabs, activeAgentTabKey);
-  if (isBrowserClient()) {
+  if (isWebBackend()) {
     // 每次页面加载都恢复 editor 页签（幂等）；终端页签只在服务端重启后重建。
     for (const tab of tabs) {
       if (tab.sessionType === 'editor') await restoreEditorTab(tab);
@@ -573,7 +573,7 @@ export async function reconcileBackendSessions() {
   // 浏览器端只有拿到非空列表才能判断“哪些会话已失效”。容器重启窗口里后端可能
   // 暂时为 0，此时按空列表清空会触发保存，把 web_saved_tabs 覆盖成空文件，
   // 必须等恢复流程先跑完。
-  if (isBrowserClient() && terminals.length > 0) {
+  if (isWebBackend() && terminals.length > 0) {
     const ids = new Set(terminals.map(terminal => terminal.id));
     useAppStore.getState().removeSessions(useAppStore.getState().sessions
       .filter(session => session.sessionType !== 'editor' && !session.starting && !ids.has(session.id)).map(session => session.id));

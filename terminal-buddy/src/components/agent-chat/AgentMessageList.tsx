@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Bot, ChevronUp, CornerDownLeft } from 'lucide-react';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc } from './../../services/remoteWorkspace/core';
 import { AgentIcon } from './AgentIcon';
 import { ChatMarkdown } from './ChatMarkdown';
 import { SkillEntry } from './SkillEntry';

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 import type { FetchedModel } from './claudeEnhance';
 
 export const CODEX_EFFORT_OPTIONS = [

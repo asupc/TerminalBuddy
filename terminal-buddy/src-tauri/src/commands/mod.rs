@@ -26,6 +26,8 @@ pub mod mstsc;
 pub mod notification;
 pub mod profile;
 pub mod remote_file;
+#[cfg(feature = "desktop")]
+pub mod remote_workspace;
 pub mod scheduled_task;
 pub mod server_monitor;
 pub mod session_restore;
@@ -66,6 +68,8 @@ pub use mstsc::*;
 pub use notification::*;
 pub use profile::*;
 pub use remote_file::*;
+#[cfg(feature = "desktop")]
+pub use remote_workspace::*;
 pub use scheduled_task::*;
 pub use server_monitor::*;
 pub use session_restore::*;

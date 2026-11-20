@@ -38,6 +38,8 @@ pub mod path_service;
 pub mod platform_service;
 pub(crate) mod process_tree;
 pub mod profile_service;
+#[cfg(feature = "desktop")]
+pub mod remote_workspace_service;
 pub mod session_auto_archive_service;
 pub mod scheduled_task_service;
 pub mod settings_service;

@@ -1,0 +1,51 @@
+.desktop-workspace-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 32px;
+  background: var(--bg-primary, #1e1e1e);
+  color: var(--text-primary, #ddd);
+  text-align: center;
+}
+
+.desktop-workspace-loading > svg {
+  width: 34px;
+  height: 34px;
+  color: var(--accent-color, #4abf9a);
+}
+
+.desktop-workspace-loading h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.desktop-workspace-loading p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-secondary, #aaa);
+  font-size: 13px;
+  line-height: 1.7;
+  max-width: 420px;
+}
+
+.desktop-workspace-loading button {
+  padding: 8px 16px;
+  border: 1px solid var(--border-color, #3a3a3a);
+  border-radius: 6px;
+  background: var(--bg-secondary, #2a2a2a);
+  color: var(--text-primary, #ddd);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.desktop-workspace-loading button:hover {
+  border-color: var(--accent-color, #4abf9a);
+}

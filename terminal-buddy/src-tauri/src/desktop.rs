@@ -344,6 +344,7 @@ pub fn run() {
         .manage(TerminalService::new())
         .manage(SshSessionService::new())
         .manage(WebServiceState::new())
+        .manage(crate::services::remote_workspace_service::RemoteWorkspaceService::new())
         .manage(MonitorCache::new());
 
     // COM 激活冷启动（LocalServer32 传 -Embedding）不能走单实例转发：转发后本进程
@@ -599,6 +600,17 @@ pub fn run() {
             scheduled_task_list, scheduled_task_save, scheduled_task_delete,
             scheduled_task_set_enabled, scheduled_task_run_now, scheduled_task_stop,
             scheduled_task_runs, scheduled_task_options, scheduled_task_preview,
+            get_remote_workspace_state,
+            get_remote_workspace_proxy,
+            connect_remote_workspace,
+            authenticate_remote_workspace,
+            set_remote_workspace_active,
+            activate_remote_workspace,
+            disconnect_remote_workspace,
+            remove_remote_workspace_connection,
+            get_remote_workspace_quick_access_url,
+            upload_remote_workspace_files,
+            download_remote_workspace_file,
             log_boot,
         ])
         .run(tauri::generate_context!())

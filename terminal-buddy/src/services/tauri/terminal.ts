@@ -1,7 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import { invoke } from './../remoteWorkspace/core';
+import type { UnlistenFn } from './../remoteWorkspace/events';
 import { listenTauri } from './events';
-import { isBrowserClient } from '../platform';
+import { isWebBackend } from '../platform';
 import type { ExtraParamMode } from '../../types';
 import type { AiTokenUsage } from './aiChat';
 
@@ -118,8 +118,8 @@ export async function onTerminalOutput(
   terminalId: string,
   callback: (output: string) => void
 ): Promise<UnlistenFn> {
-  if (isBrowserClient()) {
-    const { subscribeTerminal } = await import('../browser/core');
+  if (isWebBackend()) {
+    const { subscribeTerminal } = await import('../remoteWorkspace/subscriptions');
     return subscribeTerminal(terminalId, callback);
   }
   return listenTauri<string>(`terminal_output_${terminalId}`, callback);

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 

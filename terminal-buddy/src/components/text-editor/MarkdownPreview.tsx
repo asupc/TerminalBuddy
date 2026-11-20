@@ -10,7 +10,7 @@ import {
   useMemo,
   useRef,
 } from 'react';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc } from './../../services/remoteWorkspace/core';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js';
 import MarkdownIt from 'markdown-it';

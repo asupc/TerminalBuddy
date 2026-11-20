@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 
 // System Commands
 let _windowsBuildNumber: number | null | undefined = undefined;
@@ -10,7 +10,7 @@ export async function getWindowsBuildNumber(): Promise<number | null> {
   } catch {
     _windowsBuildNumber = null;
   }
-  return _windowsBuildNumber;
+  return _windowsBuildNumber ?? null;
 }
 
 /** 运行 TerminalBuddy 后端的那台机器的 CPU / 内存占用。 */

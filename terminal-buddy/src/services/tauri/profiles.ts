@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 import type { Profile, Project } from '../../types';
 
 // Profile Commands

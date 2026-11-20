@@ -65,6 +65,19 @@ export const TerminalPanel: FC = () => {
   const [settings, setSettings] = useState(() => getAppSettings());
   const [effectiveTheme, setEffectiveTheme] = useState<ThemeSkin>(() => getEffectiveThemeSkin());
 
+  // 恢复/对账后 activeSessionId 可能指向已清理的会话，或远程切换后变为 null。
+  // 此时所有 .terminal-tab-content 都会保持 visibility:hidden，右侧整块空白；
+  // 有可见会话时必须自动落回一个有效页签。
+  useEffect(() => {
+    if (sessions.length === 0) return;
+    const current = useAppStore.getState();
+    if (current.activeSpecialTab !== null) return;
+    if (current.activeSessionId && sessions.some(session => session.id === current.activeSessionId)) return;
+    if (splitMode !== 'off' && !splitSlots.some(slot => slot.sessionId && sessions.some(session => session.id === slot.sessionId))) return;
+    const fallback = sessions.find(session => session.sessionType !== 'editor') ?? sessions[0];
+    if (fallback) current.setActiveSession(fallback.id);
+  }, [sessions, activeSessionId, activeSpecialTab, splitMode, splitSlots]);
+
   // Drag-to-swap state (grid-internal two-cell swap only).
   const dragSrcRef = useRef<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);

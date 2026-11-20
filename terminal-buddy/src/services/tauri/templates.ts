@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './../remoteWorkspace/core';
 
 // Template Commands
 export async function getCommandTemplates(): Promise<string> {

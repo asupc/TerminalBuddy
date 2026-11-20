@@ -1,4 +1,10 @@
-import { request } from './connection';
+import { isRemoteWorkspace } from '../remoteWorkspace/config';
+import { remoteRequest } from '../remoteWorkspace/http';
+import { request as localRequest } from './connection';
+
+// 桌面远程工作区与浏览器共用同一组容器接口，但必须打到远程服务。
+const request = <T>(path: string, init?: RequestInit): Promise<T> =>
+  isRemoteWorkspace() ? remoteRequest<T>(path, init) : localRequest<T>(path, init);
 
 export type ClaudeAuthType = 'ANTHROPIC_AUTH_TOKEN' | 'ANTHROPIC_API_KEY';
 export interface ClaudeProviderInput {
