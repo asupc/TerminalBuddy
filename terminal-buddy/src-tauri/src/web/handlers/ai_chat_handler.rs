@@ -86,11 +86,11 @@ pub async fn resume_codex_history(claims: ClaimsFromRequest, Path(id): Path<Stri
 pub async fn get(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiSession>, ApiError> {
     blocking(move || service::get(&id, &claims.0.sub)).await
 }
-pub async fn send(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<SendAiMessage>) -> Result<Json<AiSession>, ApiError> {
+pub async fn send(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<SendAiMessage>) -> Result<Json<SendAiMessageResult>, ApiError> {
     tokio::task::spawn_blocking(move || {
         let session = service::get(&id, &claims.0.sub).map_err(service_error)?;
         super::ensure_project_scope(&session.project_path)?;
-        service::send(&id, &claims.0.sub, input).map(Json).map_err(service_error)
+        service::send_result(&id, &claims.0.sub, input).map(Json).map_err(service_error)
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
 /// 把指定排队消息立即插话到当前 CLI 进程（worker 已退出时按队首启动新回合）。
@@ -119,6 +119,10 @@ pub async fn delete_pending_input(
 pub async fn stop(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<()>, ApiError> {
     blocking(move || service::stop(&id, &claims.0.sub)).await
 }
+/// 强制结束：立即终止会话进程并清理审批/排队，不等待 CLI 的停止握手。
+pub async fn force_stop(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiSession>, ApiError> {
+    blocking(move || service::force_stop(&id, &claims.0.sub)).await
+}
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -142,6 +146,7 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
     let claims = verify_token(&token, &state.jwt_secret).map_err(|_| ApiError::Unauthorized("登录已过期，请重新登录".into()))?;
     let owner = claims.sub;
     let initial = { let id = id.clone(); let owner = owner.clone(); blocking(move || service::get(&id, &owner)).await?.0 };
+    let mut session_changes = service::subscribe_session_changes(&id);
     Ok(ws.max_message_size(AI_WS_MAX_MESSAGE_SIZE).max_frame_size(AI_WS_MAX_MESSAGE_SIZE).on_upgrade(move |socket| async move {
         let (mut sender, mut receiver) = socket.split();
         let send_updates = async {
@@ -149,18 +154,34 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
             let mut previous: HashMap<String, String> = initial.messages.iter().map(|m| (m.id.clone(), m.text.clone())).collect();
             let first = json!({"type":"session","session":initial}).to_string();
             if sender.send(Message::Text(first.into())).await.is_err() { return; }
-            let mut interval = tokio::time::interval(Duration::from_millis(300));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // 服务端每次真实更新会唤醒这里，避免每 300ms 克隆完整会话做无变化轮询。
+            // 20 秒兜底检查只用于事件丢失或进程恢复，不参与正常流式更新节奏。
+            let mut fallback = tokio::time::interval(Duration::from_secs(20));
+            fallback.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut heartbeat = tokio::time::Instant::now();
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    changed = session_changes.changed() => {
+                        if changed.is_err() { break; }
+                    }
+                    _ = fallback.tick() => {}
+                }
                 if heartbeat.elapsed() > Duration::from_secs(10) {
                     if sender.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
                     heartbeat = tokio::time::Instant::now();
                 }
-                let current = { let id = id.clone(); let owner = owner.clone(); tokio::task::spawn_blocking(move || service::get(&id, &owner)).await };
-                let Ok(Ok(session)) = current else { break; };
-                if session.revision == revision { continue; }
+                // 读取 revision 与完整快照放在同一个阻塞任务中，避免“读到新版本、随后读取旧快照”
+                // 导致版本号前进却漏掉这次内容更新的竞态。无变化时只读取 revision，不克隆正文。
+                let current = { let id = id.clone(); let owner = owner.clone(); tokio::task::spawn_blocking(move || {
+                    let latest = service::revision(&id, &owner)?;
+                    if latest <= revision { return Ok(None); }
+                    service::get(&id, &owner).map(Some)
+                }).await };
+                let session = match current {
+                    Ok(Ok(Some(session))) => session,
+                    Ok(Ok(None)) => continue,
+                    _ => break,
+                };
                 revision = session.revision;
                 // 首帧完整恢复，后续仅推送发生变化的消息，避免每段回复都重传全部历史。
                 let changed: Vec<_> = session.messages.iter().filter(|m| previous.get(&m.id) != Some(&m.text)).cloned().collect();

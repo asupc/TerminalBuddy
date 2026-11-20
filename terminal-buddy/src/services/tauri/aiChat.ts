@@ -246,6 +246,7 @@ export const aiSessionGet = (id: string) => invoke<AiSession>('ai_session_get', 
 export const aiSessionCreate = (input: CreateAiSession) => invoke<AiSession>('ai_session_create', { input });
 export const aiSessionSend = (id: string, input: SendAiMessage) => invoke<AiSession>('ai_session_send', { id, input });
 export const aiSessionStop = (id: string) => invoke<void>('ai_session_stop', { id });
+export const aiSessionForceStop = (id: string) => invoke<AiSession>('ai_session_force_stop', { id });
 /** 空闲时切换供应商与模型（仅 Claude）；下一条消息以新配置 --resume 续接。 */
 export const aiSessionSwitchModel = (id: string, providerId: string, model: string) =>
   invoke<AiSession>('ai_session_switch_model', { id, providerId, model });
