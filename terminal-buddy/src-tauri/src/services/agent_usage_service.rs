@@ -5,7 +5,7 @@
 //! 供状态栏按终端轮询。
 use crate::models::ai_chat::AiTokenUsage;
 use crate::services::{
-    ai_catalog_service, antigravity_provider_service, claude_hook_settings, llm_provider_service,
+    ai_catalog_service, claude_hook_settings, llm_provider_service,
     terminal_task_service,
 };
 use serde::Serialize;
@@ -378,38 +378,12 @@ fn antigravity_model_effort_suffix(model: Option<&str>) -> Option<String> {
     None
 }
 
-fn antigravity_config_effort_from(
-    config: &antigravity_provider_service::AntigravityProviderConfig,
-    model: Option<&str>,
-) -> Option<String> {
-    if let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) {
-        if let Some(entry) = config
-            .enabled_models
-            .iter()
-            .find(|entry| entry.id.eq_ignore_ascii_case(model))
-        {
-            let own = entry.effort_level.trim();
-            if !own.is_empty() {
-                return Some(own.to_ascii_lowercase());
-            }
-        }
-    }
-    let fallback = config.default_effort_level.trim();
-    (!fallback.is_empty()).then(|| fallback.to_ascii_lowercase())
-}
-
-fn antigravity_config_effort(model: Option<&str>) -> Option<String> {
-    let config = antigravity_provider_service::get_config().ok()?;
-    antigravity_config_effort_from(&config, model)
-}
-
 fn resolve_antigravity_effort(launch_effort: Option<&str>, model: Option<&str>) -> Option<String> {
     launch_effort
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.to_ascii_lowercase())
         .or_else(|| antigravity_model_effort_suffix(model))
-        .or_else(|| antigravity_config_effort(model))
 }
 
 fn default_antigravity_window(model: Option<&str>, context_used: Option<u64>) -> Option<u64> {
@@ -625,21 +599,15 @@ mod tests {
         assert_eq!(antigravity_model_effort_suffix(Some("gpt-oss-120b-medium")).as_deref(), Some("medium"));
         assert_eq!(antigravity_model_effort_suffix(Some("claude-opus-4-6-thinking")), None);
 
-        let cfg = antigravity_provider_service::AntigravityProviderConfig {
-            default_effort_level: "medium".into(),
-            available_models: Vec::new(),
-            enabled_models: vec![antigravity_provider_service::AntigravityModelEntry {
-                id: "claude-opus-4-6-thinking".into(),
-                name: "Claude Opus 4.6".into(),
-                effort_level: "xhigh".into(),
-            }],
-        };
-        assert_eq!(antigravity_config_effort_from(&cfg, Some("claude-opus-4-6-thinking")).as_deref(), Some("xhigh"));
-        assert_eq!(antigravity_config_effort_from(&cfg, Some("other-model")).as_deref(), Some("medium"));
         assert_eq!(
             resolve_antigravity_effort(Some("MAX"), Some("gemini-3.1-pro-low")).as_deref(),
             Some("max")
         );
+        assert_eq!(
+            resolve_antigravity_effort(None, Some("gemini-3.1-pro-low")).as_deref(),
+            Some("low")
+        );
+        assert_eq!(resolve_antigravity_effort(None, Some("claude-opus-4-6-thinking")), None);
     }
 
     #[test]

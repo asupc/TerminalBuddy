@@ -258,7 +258,6 @@ pub async fn invoke(State(state): State<AppState>, claims: ClaimsFromRequest, he
             | "claude_history_rescan"
             | "codex_history_rescan"
             | "antigravity_history_rescan"
-            | "fetch_antigravity_provider_models"
     );
     if long_operation {
         let lease = if git_mutation {

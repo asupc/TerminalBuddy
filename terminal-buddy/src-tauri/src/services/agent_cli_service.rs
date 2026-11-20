@@ -2,7 +2,6 @@
 //! Claude / Codex 国内源通过 npm 安装官方包，官方源保留原生安装器；
 //! Antigravity CLI 使用 Google 官方发布清单下载并校验 SHA-512。
 use std::{
-    collections::HashSet,
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -549,14 +548,8 @@ pub async fn start_operation(tool: CliTool, operation: Operation) -> Result<CliS
     tokio::spawn(async move {
         let result = if tool == CliTool::Antigravity {
             match fetch_antigravity_manifest().await {
-                Ok(manifest) => {
-                    let result = tokio::task::spawn_blocking(move || run_antigravity_install(&manifest, target.as_deref())).await
-                        .unwrap_or_else(|error| Err(format!("工具任务异常：{error}")));
-                    if result.is_ok() {
-                        clear_antigravity_models_cache();
-                    }
-                    result
-                }
+                Ok(manifest) => tokio::task::spawn_blocking(move || run_antigravity_install(&manifest, target.as_deref())).await
+                    .unwrap_or_else(|error| Err(format!("工具任务异常：{error}"))),
                 Err(error) => Err(error),
             }
         } else {
@@ -921,27 +914,6 @@ fn npm_package(tool: CliTool, target: Option<&str>) -> Result<String, String> {
 
 // ==================== Antigravity CLI（agy）：Google 官方发布清单 + SHA-512 ====================
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AntigravityModel {
-    pub id: String,
-    pub name: String,
-}
-
-const ANTIGRAVITY_MODELS_CACHE_TTL: Duration = Duration::from_secs(600);
-const ANTIGRAVITY_MODELS_TIMEOUT: Duration = Duration::from_secs(20);
-
-fn antigravity_models_cache() -> &'static Mutex<Option<(Instant, Vec<AntigravityModel>)>> {
-    static CACHE: OnceLock<Mutex<Option<(Instant, Vec<AntigravityModel>)>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(None))
-}
-
-pub(crate) fn clear_antigravity_models_cache() {
-    if let Ok(mut guard) = antigravity_models_cache().lock() {
-        *guard = None;
-    }
-}
-
 fn default_antigravity_target_path() -> Result<PathBuf, String> {
     #[cfg(windows)]
     {
@@ -1251,158 +1223,6 @@ pub(crate) fn run_antigravity_install(manifest: &AntigravityManifest, target: Op
     validate_installed_version(CliTool::Antigravity, version, target)
 }
 
-fn strip_ansi_sequences(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            match chars.peek().copied() {
-                Some('[') => {
-                    chars.next();
-                    for c in chars.by_ref() {
-                        if ('@'..='~').contains(&c) {
-                            break;
-                        }
-                    }
-                }
-                Some(']') => {
-                    chars.next();
-                    while let Some(c) = chars.next() {
-                        if c == '\x07' {
-                            break;
-                        }
-                        if c == '\x1b' && chars.peek() == Some(&'\\') {
-                            chars.next();
-                            break;
-                        }
-                    }
-                }
-                _ => {}
-            }
-            continue;
-        }
-        out.push(ch);
-    }
-    out
-}
-
-fn is_valid_antigravity_model_id(id: &str) -> bool {
-    !id.is_empty()
-        && !id.ends_with(':')
-        && !id.ends_with('.')
-        && id.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'/' | b'-')
-        })
-}
-
-fn split_antigravity_model_columns(line: &str) -> Option<(&str, &str)> {
-    if let Some((left, right)) = line.split_once('\t') {
-        let id = left.trim();
-        let name = right.trim();
-        return is_valid_antigravity_model_id(id).then(|| (id, if name.is_empty() { id } else { name }));
-    }
-    if let Some(pos) = line.find("  ") {
-        let id = line[..pos].trim();
-        let name = line[pos..].trim();
-        if !name.is_empty() && is_valid_antigravity_model_id(id) {
-            return Some((id, name));
-        }
-    }
-    let single = line.trim();
-    if is_valid_antigravity_model_id(single) && (single.contains('-') || single.contains('/') || single.contains('.')) {
-        return Some((single, single));
-    }
-    None
-}
-
-pub(crate) fn parse_antigravity_models(stdout: &str) -> Vec<AntigravityModel> {
-    let cleaned = strip_ansi_sequences(stdout);
-    let mut seen = HashSet::new();
-    let mut models = Vec::new();
-    for line in cleaned.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Some((id, name)) = split_antigravity_model_columns(trimmed) else { continue; };
-        if seen.insert(id.to_string()) {
-            models.push(AntigravityModel {
-                id: id.to_string(),
-                name: name.to_string(),
-            });
-        }
-    }
-    models
-}
-
-fn concise_cli_error(stderr: &[u8], stdout: &[u8]) -> String {
-    let raw = {
-        let err = decode_log(stderr);
-        if err.is_empty() { decode_log(stdout) } else { err }
-    };
-    let cleaned = strip_ansi_sequences(&raw);
-    let joined: String = cleaned
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .take(3)
-        .collect::<Vec<_>>()
-        .join("；");
-    let mut excerpt: String = joined.chars().take(240).collect();
-    if joined.chars().count() > 240 {
-        excerpt.push('…');
-    }
-    excerpt
-}
-
-pub fn list_antigravity_models(force_refresh: bool) -> Result<Vec<AntigravityModel>, String> {
-    if !force_refresh {
-        if let Ok(guard) = antigravity_models_cache().lock() {
-            if let Some((fetched_at, models)) = guard.as_ref() {
-                if fetched_at.elapsed() < ANTIGRAVITY_MODELS_CACHE_TTL && !models.is_empty() {
-                    return Ok(models.clone());
-                }
-            }
-        }
-    }
-
-    let executable = find_executable(CliTool::Antigravity)
-        .ok_or_else(|| "未检测到 Antigravity CLI（agy），请先在设置中安装".to_string())?;
-    let command = executable_command(&executable, &["models"]);
-    let output = run_capture_output(command, ANTIGRAVITY_MODELS_TIMEOUT).map_err(|error| {
-        if error.contains("超时") {
-            "获取 Antigravity 模型列表超时，请检查网络或代理设置后重试".to_string()
-        } else {
-            format!("获取 Antigravity 模型列表失败：{error}")
-        }
-    })?;
-
-    if !output.status.success() {
-        let detail = concise_cli_error(&output.stderr, &output.stdout);
-        return Err(if detail.is_empty() {
-            "获取模型列表失败，请确认已在终端执行 agy 完成 Google 账号登录或检查网络".into()
-        } else {
-            format!("获取模型列表失败，请确认已完成 Google 账号登录或检查网络：{detail}")
-        });
-    }
-
-    let stdout_text = decode_log(&output.stdout);
-    let models = parse_antigravity_models(&stdout_text);
-    if models.is_empty() {
-        let detail = concise_cli_error(&output.stderr, &output.stdout);
-        return Err(if detail.is_empty() {
-            "Antigravity CLI 未返回可用模型，请确认已在终端登录 Google 账号后重试".into()
-        } else {
-            format!("未获取到可用模型（请确认已登录 Google 账号）：{detail}")
-        });
-    }
-
-    if let Ok(mut guard) = antigravity_models_cache().lock() {
-        *guard = Some((Instant::now(), models.clone()));
-    }
-    Ok(models)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1587,26 +1407,6 @@ mod tests {
         assert_eq!(npm_package(CliTool::Codex, None).unwrap(), "@openai/codex");
         assert_eq!(npm_package(CliTool::Claude, Some("2.1.0")).unwrap(), "@anthropic-ai/claude-code@2.1.0");
         assert!(npm_package(CliTool::Antigravity, None).is_err());
-    }
-
-    #[test]
-    fn parses_antigravity_models_and_filters_noise() {
-        let sample = "\x1b[2KFetching available models...\n\n\
-            gemini-4-neon-high\tGemini 4 Neon (High)\n\
-            gemini-pro-orchestrator-neon\tOrchestrator (Neon)\n\
-            claude-opus-5-5-medium\tClaude Opus 5.5 (Medium)\n\
-            gemini-4-neon-high\tDuplicate Should Be Dropped\n\
-            gpt-oss-120b-medium  GPT-OSS 120B (Medium)\n\
-            Warning: something unrelated\n\
-            standalone-model-1\n";
-        let parsed = parse_antigravity_models(sample);
-        assert_eq!(parsed, vec![
-            AntigravityModel { id: "gemini-4-neon-high".into(), name: "Gemini 4 Neon (High)".into() },
-            AntigravityModel { id: "gemini-pro-orchestrator-neon".into(), name: "Orchestrator (Neon)".into() },
-            AntigravityModel { id: "claude-opus-5-5-medium".into(), name: "Claude Opus 5.5 (Medium)".into() },
-            AntigravityModel { id: "gpt-oss-120b-medium".into(), name: "GPT-OSS 120B (Medium)".into() },
-            AntigravityModel { id: "standalone-model-1".into(), name: "standalone-model-1".into() },
-        ]);
     }
 
     #[test]
