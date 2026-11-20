@@ -119,6 +119,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         /** 与服务端保持一致的单条消息图片数量与体积上限。 */
         const val MAX_ATTACHMENTS = 8
         const val MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+        /** 强制结束的请求上限：服务端是毫秒级操作，超时说明连接已失效而不是任务太慢。 */
+        const val FORCE_STOP_TIMEOUT_MS = 15_000L
     }
     private val repository = (application as TerminalBuddyApplication).aiRepository
     private val store = repository.store
@@ -1301,8 +1303,16 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(working = true, error = null) }
         actionJob = viewModelScope.launch {
             try {
-                val snapshot = repository.forceStop(session.id)
-                if (epoch == generation) {
+                // 强制结束本身是服务端毫秒级操作；AI 客户端默认不设超时，
+                // 代理切换或半开连接会让按钮永久卡在「处理中」，这里显式限时。
+                val snapshot = withTimeoutOrNull(FORCE_STOP_TIMEOUT_MS) { repository.forceStop(session.id) }
+                if (snapshot == null) {
+                    if (epoch == generation) {
+                        mutable.update { it.copy(error = "强制结束请求超时，请检查网络后重试") }
+                        // 超时后用普通超时的客户端补拉一次，确认是否其实已成功。
+                        withTimeoutOrNull(3_000) { repository.session(session.id) }?.let(::receive)
+                    }
+                } else if (epoch == generation) {
                     receive(snapshot)
                     // 终止结果不是执行故障：清掉任何旧错误，只保留状态文案。
                     mutable.update {

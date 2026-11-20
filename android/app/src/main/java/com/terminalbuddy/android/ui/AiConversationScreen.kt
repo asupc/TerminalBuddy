@@ -55,6 +55,12 @@ import com.terminalbuddy.android.data.*
 import com.terminalbuddy.android.notifications.AiBackgroundCompatibility
 import com.terminalbuddy.android.notifications.AiTaskNotifications
 
+/**
+ * 明确已经结束的原生 AI 会话状态：这些状态下没有进程可终止，
+ * 「强制结束」不提供入口，避免对已完成的结果反复执行无意义的重置。
+ */
+private val TERMINAL_AI_STATUSES = setOf("idle", "forceStopped", "interrupted", "error")
+
 /** 对话二级页：会话摘要、自然段回复与紧凑输入区。 */
 @Composable
 fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
@@ -121,7 +127,9 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
                 AiConversationAction(Icons.Outlined.FolderOpen, "返回首页选择模型", { menu = false; vm.closeSession() })
                 AiConversationAction(
                     Icons.Outlined.PowerSettingsNew, "强制结束会话", { menu = false; forceStopping = true },
-                    enabled = session.running && !ui.working, color = TbColors.Danger,
+                    // 服务端偶尔会残留「执行中」但进程已消失的状态，此时 running 为真而
+                    // 进程早已退出；只要不是明确的终态就允许点，避免用户被卡死没有出口。
+                    enabled = session.status !in TERMINAL_AI_STATUSES && !ui.working, color = TbColors.Danger,
                 )
                 AiConversationAction(
                     Icons.Outlined.DeleteOutline, "删除对话", { menu = false; deleting = true },

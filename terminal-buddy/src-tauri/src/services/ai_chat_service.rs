@@ -212,9 +212,40 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
 }
 pub fn get(id: &str, owner: &str) -> Result<AiSession> {
     let cell = load(id, owner)?;
+    heal_orphaned_running(&cell);
     let mut snapshot = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     snapshot.desktop_open = is_desktop_open(&snapshot.id);
     Ok(snapshot)
+}
+
+/// 自愈：状态仍是「执行中」却没有任何 worker 时把它落为终止态。
+///
+/// 正常路径由 worker 线程收尾改状态；但 `finish()` 在拿不到 control 锁、
+/// 或 worker 代次已被交接时会提前返回，`Process::drop` 也已把进程树交给回收线程。
+/// 这种情况下磁盘与会话内存会永久停在 running，手机端由此一直显示「思考中」，
+/// 而 `send` 又会因为「control 存在」而把新消息丢进一个没人消费的队列。
+/// 每次读取会话前做一次校验，最多付出一次互斥锁的开销。
+fn heal_orphaned_running(cell: &Cell) {
+    // 锁顺序必须与 send_locked / start_turn / finish 一致：先 control 再 data。
+    // 反过来会与「持有 control 后申请 data」的路径互等，直接死锁。
+    let Ok(control) = cell.control.lock() else { return; };
+    // worker 仍在时绝不改写状态，否则会把正常执行误判成结束。
+    if control.is_some() { return; }
+    let Ok(mut data) = cell.data.lock() else { return; };
+    if !matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping") { return; }
+    data.status = "error".into();
+    data.error = Some("执行进程已退出但未收到结束事件，已自动结束；聊天记录已保留，可重新发送消息继续".into());
+    data.approvals.clear();
+    data.pending_inputs.clear();
+    usage::finish_turn(&mut data);
+    settle_agents(&mut data, "stopped");
+    thinking_clear(&mut data);
+    touch(&mut data);
+    data.result_revision = data.revision;
+    let _ = persist_data(cell, &data);
+    drop(data);
+    drop(control);
+    emit_update(cell);
 }
 
 /// 实时推送只读取当前 revision；没有变化时不必锁会话、克隆正文。
@@ -228,6 +259,8 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
         if entry.path().extension().is_some_and(|ext| ext == "json") {
             if let Some(id) = entry.path().file_stem().and_then(|id| id.to_str()) {
                 if let Ok(cell) = load(id, owner) {
+                    // 列表是手机端最常用的入口：先自愈残留的「执行中」，避免首页一直显示运行中。
+                    heal_orphaned_running(&cell);
                     refresh_title(&cell, false);
                     if let Ok(data) = cell.data.lock() {
                         let mut meta = data.metadata();
@@ -2330,6 +2363,8 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
     let mut idle_since = None;
     // 最近一次活动（CLI 输出或用户操作）时间，用于识别模型接口挂起导致的回合停滞。
     let mut last_event = Instant::now();
+    // 主回合（不含子代理 / 后台 Bash 输出）最近一次真实进展的时间，判停只认它。
+    let mut turn_progress = Instant::now();
     loop {
         while let Ok(event) = hooks.receiver.try_recv() {
             update(cell, |data| match event {
@@ -2433,9 +2468,12 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
             .any(|item| item.method == approval::CLAUDE_HOOK_METHOD);
         // 回合未结算且长时间无任何输出（模型接口挂起、CLI 静默重试）时主动判停，
         // 否则 status 永远停在 running，App 端会一直显示「思考中」。等待用户决策不算停滞。
+        //
+        // 计时必须只认主线程的正文与工具事件：子代理、后台 Bash 的输出同样会刷新
+        // 活动时间，主回合卡死时它们只要还在写日志，判停就永远不会触发。
         if !output_closed && pending_results > 0 && pending.is_empty() && !waiting_for_hook
-            && last_event.elapsed() > AGENT_STALL_TIMEOUT {
-            return Err(format!("Claude 已超过 {} 分钟没有任何输出，任务可能已停止；聊天记录已保留，可重新发送消息继续",
+            && turn_progress.elapsed() > AGENT_STALL_TIMEOUT {
+            return Err(format!("Claude 已超过 {} 分钟没有任何主回合进展，任务可能已停止；聊天记录已保留，可重新发送消息继续",
                 AGENT_STALL_TIMEOUT.as_secs() / 60));
         }
         if pending_results == 0 && tasks.tasks.is_empty() && pending.is_empty() && !waiting_for_hook {
@@ -2459,6 +2497,8 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
                 if take_pending_for_claude(cell, stdin)?.is_some() {
                     turn = Uuid::new_v4().to_string();
                     pending_results = 1;
+                    // 排队消息开启了新回合，计时必须从这一刻重新开始。
+                    turn_progress = Instant::now();
                 }
             }
         } else if pending_results == 0 && pending.is_empty() && !waiting_for_hook {
@@ -2524,6 +2564,15 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
             }
             tasks.observe(cell, &turn, &value);
             agents.observe(cell, &value);
+            // 判停只看主线程回合事件；子代理与后台 Bash 的输出不重置计时，
+            // 否则主回合卡死时它们仍会持续刷新，手机端就一直显示「思考中」。
+            if value["parent_tool_use_id"].is_null() {
+                match value["type"].as_str().unwrap_or("") {
+                    "assistant" | "user" | "result" => turn_progress = Instant::now(),
+                    "stream_event" => turn_progress = Instant::now(),
+                    _ => {}
+                }
+            }
             if apply_claude_event(cell, &turn, &mut state, &value)? {
                 pending_results = pending_results.saturating_sub(1);
                 // result 表示这一段回复及用量已结算；后台唤醒产生的新 result 也会走到这里。
@@ -2754,8 +2803,9 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
     let mut agent_checkpoint = Instant::now();
     let mut settle_at: Option<Instant> = None;
     let mut idle_since = None;
-    // 最近一次活动（app-server 输出或用户操作）时间，用于识别模型接口挂起导致的回合停滞。
-    let mut last_event = Instant::now();
+    // 主回合（不含后台命令 / 子代理输出）最近一次真实进展的时间。
+    // 判停只认它，避免后台刷日志把卡死的主回合一直拖着显示「思考中」。
+    let mut turn_progress = Instant::now();
     if let Ok(mut data) = cell.data.lock() { usage::begin_turn(&mut data); state.usage.start(&mut data); }
     loop {
         while let Ok(control) = controls.try_recv() {
@@ -2782,14 +2832,14 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
                         queued_prompt = Some(PendingInput { text, request_id: accepted_id, images });
                         state.turn_id = None;
                     }
-                    last_event = Instant::now();
+                    turn_progress = Instant::now();
                 }
                 Control::Approval(answer) => {
                     if let Some((id, method)) = pending.remove(&answer.approval_id) {
                         let result = approval::codex_response(&method, &answer);
                         write_json(stdin, json!({"id":id,"result":result}))?;
                         update(cell, |data| { data.approvals.retain(|a| a.id != answer.approval_id); });
-                        last_event = Instant::now();
+                        turn_progress = Instant::now();
                     }
                 }
             }
@@ -2814,6 +2864,8 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
                 resume_request = Some(codex_request(stdin, &mut next_id, "thread/resume", params)?);
                 queued_prompt = Some(next);
                 state.turn_id = None;
+                // 新回合刚启动：不重置就会沿用上一轮的计时，直接被判停。
+                turn_progress = Instant::now();
                 continue;
             }
         }
@@ -2836,9 +2888,12 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
         // 回合未结算且长时间无任何输出（模型接口挂起、app-server 静默）时主动判停，
         // 否则 status 永远停在 running，App 端会一直显示「思考中」。等待用户决策不算停滞；
         // 回合已结算、仅后台命令在执行的场景显示为 background，也不在此列。
+        //
+        // 这里必须用 turn_progress 而不是 last_event：后台命令 / 子代理的输出也会刷新
+        // last_event，主回合一旦卡死而它们仍在写日志，判停就永远等不到，手机端会无限「思考中」。
         if (resume_request.is_some() || turn_request.is_some() || settle_at.is_some() || !state.finished)
-            && pending.is_empty() && last_event.elapsed() > AGENT_STALL_TIMEOUT {
-            return Err(format!("Codex 已超过 {} 分钟没有任何输出，任务可能已停止；聊天记录已保留，可重新发送消息继续",
+            && pending.is_empty() && turn_progress.elapsed() > AGENT_STALL_TIMEOUT {
+            return Err(format!("Codex 已超过 {} 分钟没有任何主回合进展，任务可能已停止；聊天记录已保留，可重新发送消息继续",
                 AGENT_STALL_TIMEOUT.as_secs() / 60));
         }
         let idle_ready = state.finished && !background.running(&state) && pending.is_empty()
@@ -2849,7 +2904,6 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
             continue;
         };
         idle_since = None;
-        last_event = Instant::now();
         if let Some(id) = value["id"].as_u64().filter(|_| value.get("method").is_none()) {
             if let Some(agent_id) = agent_queries.remove(&id) {
                 if value.get("error").is_none() {
@@ -2929,6 +2983,15 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
         }
         // 恢复请求尚未完成时，旧主回合的回复不能冒充新消息的执行结果。
         if resume_request.is_some() && params["threadId"] == main { continue; }
+        // 判定主回合是否真的在推进：只认属于当前 turn 的主线程事件。
+        // 后台命令与子代理线程的输出（threadId != main / turnId 不符）不算进展。
+        if params["threadId"] == main && state.accepts(params) {
+            if method == "turn/started" { turn_progress = Instant::now(); }
+            else if matches!(method, "item/started" | "item/completed" | "item/agentMessage/delta"
+                | "item/commandExecution/outputDelta" | "item/reasoning/delta" | "turn/completed") {
+                turn_progress = Instant::now();
+            }
+        }
         let completed = apply_codex_event(cell, &turn, &mut state, &value)?;
         if state.finished && (completed || method == "thread/tokenUsage/updated" && state.accepts(params)) {
             update(cell, |data| state.usage.completed(data));
