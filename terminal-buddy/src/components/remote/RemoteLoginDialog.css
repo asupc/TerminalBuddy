@@ -1,0 +1,65 @@
+.remote-workspace-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--text-primary);
+}
+
+.remote-workspace-intro {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.remote-workspace-dialog > label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.remote-workspace-dialog > label input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 6px);
+  outline: none;
+  background: var(--surface-input, var(--bg-primary));
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.remote-workspace-dialog > label input:focus {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.remote-workspace-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.remote-workspace-error {
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--danger) 65%, var(--border-color));
+  border-radius: var(--radius-sm, 6px);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.remote-workspace-spin {
+  animation: remote-workspace-spin 1s linear infinite;
+}
+
+@keyframes remote-workspace-spin {
+  to { transform: rotate(360deg); }
+}

@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { LoaderCircle, LogIn } from 'lucide-react';
 import { Dialog } from '../shared/Dialog';
 import { authenticateRemoteWorkspace, enterRemoteWorkspace } from '../../services/remoteWorkspace/session';
-import './RemoteWorkspaceDialog.css';
+import './RemoteLoginDialog.css';
 
 /** 令牌过期只做增量重新登录；已运行的远程终端保留，不重新创建。 */
 export function RemoteLoginDialog({ username, onCancel }: { username?: string; onCancel: () => void }) {

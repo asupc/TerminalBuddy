@@ -5,7 +5,6 @@ import {
   Bell,
   Check,
   Columns2,
-  Cloud,
   Flower2,
   Folder,
   Grid2X2,
@@ -30,6 +29,7 @@ import type { UpdateInfo } from '../../services/tauri';
 import { AiUsagePanel } from '../settings/AiUsagePanel';
 import { AboutDialog } from '../settings/AboutDialog';
 import { UpdatePopover, type UpdateCheckStatus } from '../settings/UpdatePopover';
+import { WorkspaceSwitcher } from '../remote/WorkspaceSwitcher';
 import { APP_VERSION } from '../../version';
 import appIcon from '../../assets/app-icon.webp';
 import './TitleBar.css';
@@ -344,13 +344,7 @@ export const TitleBar: FC<TitleBarProps> = ({
       </div>
       <div className="titlebar-right">
         <div className="titlebar-action-group">
-          {!isBrowserClient() && <button
-            type="button"
-            className="titlebar-btn titlebar-action-btn"
-            title="切换本地 / 远程工作区，管理远程连接"
-            aria-label="工作区切换"
-            onClick={() => window.dispatchEvent(new Event('terminal-buddy-open-workspace'))}
-          ><Cloud aria-hidden="true" /></button>}
+          {!isBrowserClient() && <WorkspaceSwitcher />}
           <div
             className="ai-usage-trigger"
             onMouseEnter={handleRefreshEnter}
