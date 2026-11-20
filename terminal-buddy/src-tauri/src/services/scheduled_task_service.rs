@@ -12,7 +12,8 @@ use crate::models::{TerminalActor, TerminalCreator, TerminalOwner};
 use crate::runtime::{AppHandle, Emitter, Manager};
 use crate::services::{
     agent_usage_service, ai_catalog_service, ai_chat_service, ai_permission_service,
-    terminal_agent_relay, AppNotificationService, PathService, ProfileService, SettingsService,
+    terminal_agent_relay, terminal_task_service, AppNotificationService, PathService,
+    ProfileService, SettingsService,
 };
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use chrono_tz::Tz;
@@ -706,13 +707,16 @@ fn try_admit(
 }
 
 fn agent_run_mode(task: &ScheduledTask) -> Option<AgentRunMode> {
-    match task.target {
+    match &task.target {
         TaskTarget::ProjectProfile { .. } => None,
-        TaskTarget::AgentPrompt { .. } => Some(if SettingsService::get_settings().native_chat_sessions {
-            AgentRunMode::Native
-        } else {
-            AgentRunMode::Terminal
-        }),
+        // Antigravity CLI 没有原生会话协议，始终走终端接力。
+        TaskTarget::AgentPrompt { agent, .. } => {
+            Some(if agent == "antigravity" || !SettingsService::get_settings().native_chat_sessions {
+                AgentRunMode::Terminal
+            } else {
+                AgentRunMode::Native
+            })
+        }
     }
 }
 
@@ -1222,8 +1226,23 @@ fn agent_binary(agent: &str) -> Result<&'static str> {
     match agent {
         "claude" => Ok("claude"),
         "codex" => Ok("codex"),
-        _ => Err("请选择 Claude 或 Codex".into()),
+        "antigravity" => Ok("agy"),
+        _ => Err("请选择 Claude、Codex 或 Antigravity".into()),
     }
+}
+
+/// Antigravity CLI 的基础启动命令（与前端 `DEFAULT_ANTIGRAVITY_COMMAND` 一致）。
+const DEFAULT_ANTIGRAVITY_COMMAND: &str = "agy --dangerously-skip-permissions";
+
+/// Antigravity CLI 不走供应商 / 模型引用：直接使用「Agent 管理」里的基础启动命令，
+/// 空值回退到默认的免确认命令。
+fn antigravity_launch_command() -> String {
+    resolve_antigravity_command(&SettingsService::get_settings().agent_commands.antigravity)
+}
+
+fn resolve_antigravity_command(configured: &str) -> String {
+    let command = configured.trim();
+    if command.is_empty() { DEFAULT_ANTIGRAVITY_COMMAND.to_string() } else { command.to_string() }
 }
 
 /// 组装终端里的 Agent 启动命令：供应商引用/裸命令 + 权限参数。
@@ -1234,6 +1253,10 @@ fn build_terminal_agent_command(
     model: Option<&str>,
     terminal_type: &str,
 ) -> Result<String> {
+    // Antigravity 的基础命令自带全部参数（含免确认开关），不再追加供应商或权限参数。
+    if agent == "antigravity" {
+        return Ok(antigravity_launch_command());
+    }
     let head = terminal_command_head(agent, catalog_id, model)?;
     let permissions = ai_permission_service::for_agent(agent)?;
     let args = if agent == "claude" { permissions.claude_args } else { permissions.codex_args };
@@ -1251,6 +1274,9 @@ fn terminal_command_head(
     catalog_id: Option<&str>,
     model: Option<&str>,
 ) -> Result<String> {
+    if agent == "antigravity" {
+        return Ok(antigravity_launch_command());
+    }
     let binary = agent_binary(agent)?;
     let model = model.unwrap_or_default().trim();
     let head = match catalog_id {
@@ -1437,7 +1463,8 @@ async fn run_agent_terminal(app: AppHandle, task: &ScheduledTask, run: &Schedule
     // 等待 Agent 就绪后注入任务描述。不能把描述塞进启动参数：
     // 首条 argv 不经过 REPL 输入框，斜杠命令不会展开。
     let inject_started = std::time::Instant::now();
-    let codex_fallback_at = inject_started + std::time::Duration::from_secs(8);
+    // Codex / Antigravity 没有可用的启动阶段信号时，等一小段时间后照常键入。
+    let agent_fallback_at = inject_started + std::time::Duration::from_secs(8);
     loop {
         if stop_requested(&task.id, &run.id) {
             teardown_terminal(&app, &terminal_id, TerminalCloseReason::ScheduledClose);
@@ -1476,14 +1503,20 @@ async fn run_agent_terminal(app: AppHandle, task: &ScheduledTask, run: &Schedule
             };
         };
         let ready = if agent == "codex" {
-            snapshot.provider.is_some() || std::time::Instant::now() >= codex_fallback_at
+            snapshot.provider.is_some() || std::time::Instant::now() >= agent_fallback_at
+        } else if agent == "antigravity" {
+            // 优先等进程发现链绑定 conversation；新会话可能在首条消息后才有 id，
+            // 超时后直接按启动命令已识别出的 Antigravity 就绪处理。
+            snapshot.provider.as_deref() == Some("antigravity")
+                && (terminal_task_service::current_binding(&terminal_id).is_some()
+                    || std::time::Instant::now() >= agent_fallback_at)
         } else {
             snapshot.provider.as_deref() == Some("claude") && snapshot.phase == "idle"
         };
         if ready {
-            // SessionStart 只代表会话已建立，输入框与 MCP/技能初始化可能还在跑；
-            // 留 1.5 秒再键入，过早写入会落进尚未挂载的输入框。
-            tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+            // SessionStart / 进程发现只代表会话已建立，输入框与 MCP/技能初始化可能还在跑；
+            // 留一段时间再键入，过早写入会落进尚未挂载的输入框。
+            tokio::time::sleep(std::time::Duration::from_millis(if agent == "antigravity" { 2_500 } else { 1_500 })).await;
             if let Err(error) =
                 terminal_agent_relay::submit_task_prompt(&app, actor, &terminal_id, &prompt).await
             {
@@ -2016,6 +2049,16 @@ mod tests {
         assert!(terminal_command_head("codex", Some("llm:abc"), Some("m")).is_err());
         assert!(terminal_command_head("claude", Some("llm:abc"), None).is_err());
         assert!(terminal_command_head("claude", Some("codex:abc"), Some("m")).is_err());
+    }
+
+    #[test]
+    fn antigravity_command_uses_configured_base_or_default() {
+        assert_eq!(resolve_antigravity_command(""), DEFAULT_ANTIGRAVITY_COMMAND);
+        assert_eq!(resolve_antigravity_command("   "), DEFAULT_ANTIGRAVITY_COMMAND);
+        assert_eq!(
+            resolve_antigravity_command("agy --model gemini-3.1-pro-high"),
+            "agy --model gemini-3.1-pro-high"
+        );
     }
 
     #[test]

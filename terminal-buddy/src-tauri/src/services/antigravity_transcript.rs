@@ -175,6 +175,39 @@ fn extract_tools(row: &Value) -> Vec<SessionReplayTool> {
         .collect()
 }
 
+/// 转录末尾的回合状态，供定时任务判定完成：
+/// - 最后一条可识别记录是「无工具调用且有文本」的 `PLANNER_RESPONSE` → `idle`（回合已结束）；
+/// - 用户输入、工具结果或带工具调用的计划响应 → `running`；
+/// - 没有可识别记录 → `idle`（会话尚未产生消息）。
+///
+/// Antigravity 没有 Hook，这是唯一可靠的完成信号：正常回合总是以一条纯文本
+/// `PLANNER_RESPONSE` 收尾，工具执行期间最后一条则是 `GENERIC` / 带工具的响应。
+pub(super) fn turn_phase(content: &str) -> &'static str {
+    for line in content.lines().rev() {
+        let Ok(row) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        let row_type = row.get("type").and_then(Value::as_str).unwrap_or("");
+        let source = row.get("source").and_then(Value::as_str).unwrap_or("");
+        match (row_type, source) {
+            ("USER_INPUT", "USER_EXPLICIT") | ("GENERIC", "MODEL") => return "running",
+            ("PLANNER_RESPONSE", "MODEL") => {
+                let has_tools = row
+                    .get("tool_calls")
+                    .and_then(Value::as_array)
+                    .is_some_and(|calls| !calls.is_empty());
+                let has_text = row
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| !text.trim().is_empty());
+                return if has_tools || !has_text { "running" } else { "idle" };
+            }
+            _ => continue,
+        }
+    }
+    "idle"
+}
+
 pub(super) fn parse(content: &str) -> ParsedAntigravityTranscript {
     let mut parsed = ParsedAntigravityTranscript::default();
     let mut next_seq: i64 = 0;
@@ -376,6 +409,42 @@ mod tests {
         assert_eq!(parsed.messages[3].role, "assistant");
         assert_eq!(parsed.messages[3].text, "已完成分析。");
         assert_eq!(parsed.messages[3].seq, 3);
+    }
+
+    #[test]
+    fn turn_phase_follows_the_last_transcript_step() {
+        let user = json!({
+            "step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT",
+            "status": "DONE", "created_at": "2026-11-18T04:00:00Z",
+            "content": "<USER_REQUEST>汇总提交</USER_REQUEST>"
+        });
+        let tool_result = json!({
+            "step_index": 1, "source": "MODEL", "type": "GENERIC",
+            "status": "DONE", "created_at": "2026-11-18T04:00:01Z", "content": "output"
+        });
+        let tool_plan = json!({
+            "step_index": 2, "source": "MODEL", "type": "PLANNER_RESPONSE",
+            "status": "DONE", "created_at": "2026-11-18T04:00:02Z",
+            "content": "", "tool_calls": [{ "name": "read_file", "args": {} }]
+        });
+        let final_answer = json!({
+            "step_index": 3, "source": "MODEL", "type": "PLANNER_RESPONSE",
+            "status": "DONE", "created_at": "2026-11-18T04:00:03Z",
+            "content": "已完成分析。"
+        });
+        let system = json!({
+            "step_index": 4, "source": "SYSTEM", "type": "SYSTEM_MESSAGE",
+            "status": "DONE", "created_at": "2026-11-18T04:00:04Z", "content": "done"
+        });
+        let join = |rows: &[&Value]| rows.iter().map(|row| row.to_string()).collect::<Vec<_>>().join("\n");
+
+        assert_eq!(turn_phase(""), "idle");
+        assert_eq!(turn_phase(&join(&[&user])), "running");
+        assert_eq!(turn_phase(&join(&[&user, &tool_result])), "running");
+        assert_eq!(turn_phase(&join(&[&user, &tool_plan])), "running");
+        assert_eq!(turn_phase(&join(&[&user, &final_answer])), "idle");
+        // 收尾后追加的系统消息不改变判定。
+        assert_eq!(turn_phase(&join(&[&user, &final_answer, &system])), "idle");
     }
 
     #[test]

@@ -72,8 +72,9 @@ pub enum TaskTarget {
     /// 用指定 Agent + 供应商 + 模型执行一段任务描述。
     AgentPrompt {
         project_name: String,
-        /// `claude` | `codex`
+        /// `claude` | `codex` | `antigravity`
         agent: String,
+        /// Antigravity CLI 使用 Google 账号登录，固定为 None。
         #[serde(default)]
         provider_id: Option<String>,
         #[serde(default)]
@@ -316,14 +317,17 @@ fn validate_target(target: &TaskTarget, projects: &[Project], profiles: &[Profil
             }
         }
         TaskTarget::AgentPrompt { agent, provider_id, model, prompt, .. } => {
-            if agent != "claude" && agent != "codex" {
-                return Err("请选择 Claude 或 Codex".into());
+            if !matches!(agent.as_str(), "claude" | "codex" | "antigravity") {
+                return Err("请选择 Claude、Codex 或 Antigravity".into());
             }
-            crate::services::ai_catalog_service::selection(
-                agent,
-                provider_id.as_deref(),
-                model.as_deref(),
-            )?;
+            // Antigravity CLI 固定使用 Google 账号登录，不经过供应商目录。
+            if agent != "antigravity" {
+                crate::services::ai_catalog_service::selection(
+                    agent,
+                    provider_id.as_deref(),
+                    model.as_deref(),
+                )?;
+            }
             let prompt_length = prompt.chars().count();
             if prompt.trim().is_empty() {
                 return Err("任务描述不能为空".into());
@@ -338,11 +342,19 @@ fn validate_target(target: &TaskTarget, projects: &[Project], profiles: &[Profil
 
 /// 保存前统一校验并归一化字段。任务数量上限由存储层按当前列表检查。
 pub fn validate_input(
-    input: ScheduledTaskInput,
+    mut input: ScheduledTaskInput,
     projects: &[Project],
     profiles: &[Profile],
 ) -> Result<ScheduledTask, String> {
     let name = validate_name(&input.name)?;
+    // Antigravity 不使用供应商 / 模型配置，保存时统一归一化为 None，
+    // 避免旧草稿或客户端残留字段让运行器去目录里查不存在的供应商。
+    if let TaskTarget::AgentPrompt { agent, provider_id, model, .. } = &mut input.target {
+        if agent == "antigravity" {
+            *provider_id = None;
+            *model = None;
+        }
+    }
     let tz = parse_timezone(&input.timezone)?;
     let now = Utc::now();
     match &input.schedule {
@@ -547,6 +559,31 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(input.name, "测试任务");
+    }
+
+    #[test]
+    fn antigravity_target_ignores_provider_and_model() {
+        let target = TaskTarget::AgentPrompt {
+            project_name: "TerminalBuddy".into(),
+            agent: "antigravity".into(),
+            provider_id: Some("llm:stale".into()),
+            model: Some("gemini-3-pro".into()),
+            prompt: "汇总今天的提交".into(),
+        };
+        let task = validate_input(
+            input(target, TaskSchedule::Cron { expression: "0 9 * * *".into() }),
+            &projects(),
+            &[],
+        )
+        .unwrap();
+        match task.target {
+            TaskTarget::AgentPrompt { agent, provider_id, model, .. } => {
+                assert_eq!(agent, "antigravity");
+                assert_eq!(provider_id, None);
+                assert_eq!(model, None);
+            }
+            _ => panic!("应为 Agent 任务"),
+        }
     }
 
     #[test]

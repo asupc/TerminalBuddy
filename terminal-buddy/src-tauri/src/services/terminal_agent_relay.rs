@@ -2112,6 +2112,27 @@ pub(crate) async fn scheduled_snapshot(
         // 与 page_for 一致：快照请求顺带驱动镜像刷新，首轮不依赖 watcher。
         let _ = poll_mirror(&terminal_id, &scan);
         let info = find_terminal_info(&app, &terminal_id)?;
+        // Antigravity CLI 没有 Hook，也不参与镜像接力：直接按转录末尾步骤判断回合状态。
+        if let Some((provider, session_id)) = terminal_task_service::current_binding(&terminal_id) {
+            if provider == "antigravity" {
+                return Some(antigravity_snapshot(&terminal_id, &session_id));
+            }
+        }
+        // 新会话在用户发出第一条消息前可能还没有 conversation id / 转录目录。
+        // 启动命令本身已能识别出 `agy`，据此报告「已启动、空回合」，让调度器
+        // 有机会键入任务描述；conversation 建立后自然切到真实转录。
+        if terminal_task_service::launch_hints(&terminal_id)
+            .and_then(|hints| hints.provider)
+            .as_deref() == Some("antigravity")
+        {
+            return Some(ScheduledAgentSnapshot {
+                provider: Some("antigravity".to_string()),
+                phase: "idle".to_string(),
+                pending_decision_count: 0,
+                last_assistant_message: None,
+                turn_end: None,
+            });
+        }
         let Some((session, entry)) = build_session_meta(&app, &info, &scan, actor) else {
             return Some(ScheduledAgentSnapshot {
                 provider: None,
@@ -2144,6 +2165,60 @@ pub(crate) async fn scheduled_snapshot(
     .await
     .ok()
     .flatten()
+}
+
+/// Antigravity 转录尾部窗口：只读最后 2 MiB 即可拿到最后一条步骤与最终回答，
+/// 避免长会话在每 5 秒一次的快照里整文件重读。
+const ANTIGRAVITY_TAIL_BYTES: u64 = 2 * 1024 * 1024;
+
+fn read_antigravity_tail(path: &std::path::Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let length = file.metadata().ok()?.len();
+    let start = length.saturating_sub(ANTIGRAVITY_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(ANTIGRAVITY_TAIL_BYTES).read_to_end(&mut bytes).ok()?;
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    // 从文件中间截断时丢掉第一个半行，避免 JSON 解析噪声。
+    if start > 0 {
+        if let Some(end) = text.find('\n') {
+            text.drain(..=end);
+        }
+    }
+    Some(text)
+}
+
+/// Antigravity 定时任务快照：进程发现链已经绑定 conversation 时，
+/// 按转录文件末尾步骤判断 `running` / `idle`，并取最后一条助手文本作为执行摘要。
+fn antigravity_snapshot(terminal_id: &str, session_id: &str) -> ScheduledAgentSnapshot {
+    let content = terminal_task_service::locate_transcript(terminal_id)
+        .filter(|location| location.provider == "antigravity" && location.session_id == session_id)
+        .and_then(|location| read_antigravity_tail(&location.path));
+    let Some(content) = content else {
+        // 进程已启动但还没写第一条消息：视为就绪的空回合。
+        return ScheduledAgentSnapshot {
+            provider: Some("antigravity".to_string()),
+            phase: "idle".to_string(),
+            pending_decision_count: 0,
+            last_assistant_message: None,
+            turn_end: None,
+        };
+    };
+    let parsed = super::antigravity_transcript::parse(&content);
+    let last_assistant_message = parsed
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "assistant" && !message.text.trim().is_empty())
+        .map(|message| truncate_text(message.text.trim(), 500));
+    ScheduledAgentSnapshot {
+        provider: Some("antigravity".to_string()),
+        phase: super::antigravity_transcript::turn_phase(&content).to_string(),
+        pending_decision_count: 0,
+        last_assistant_message,
+        turn_end: None,
+    }
 }
 
 fn truncate_text(value: &str, limit: usize) -> String {
