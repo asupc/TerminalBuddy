@@ -172,6 +172,7 @@ export function formatTrigger(trigger: string): string {
 export function agentLabel(agent: string | null | undefined): string {
   if (agent === 'codex') return 'Codex';
   if (agent === 'claude') return 'Claude';
+  if (agent === 'antigravity') return 'Antigravity';
   return agent || 'Agent';
 }
 
@@ -186,6 +187,8 @@ export function describeTarget(
     const profile = profiles.find(item => item.id === target.profileId);
     return [target.projectName, profile?.name ?? '配置已删除'].filter(Boolean).join(' · ');
   }
+  // Antigravity 固定使用 Google 账号登录，没有供应商 / 模型可选。
+  if (target.agent === 'antigravity') return agentLabel(target.agent);
   const provider = catalog?.providers.find(item => item.id === target.providerId)
     ?? (target.providerId ? undefined : catalog?.providers.find(item => item.id === `default:${target.agent}`));
   const providerName = provider?.name

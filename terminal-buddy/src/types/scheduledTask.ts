@@ -19,6 +19,9 @@ export type TaskSchedule =
   /** 任务时区下的本地墙钟时间："2026-11-20T09:00" */
   | { kind: 'once'; runAt: string };
 
+/** 定时任务可派发的 Agent；Antigravity 固定走终端接力，不使用供应商 / 模型。 */
+export type ScheduledAgent = 'claude' | 'codex' | 'antigravity';
+
 export type TaskTarget =
   | {
       kind: 'projectProfile';
@@ -29,7 +32,7 @@ export type TaskTarget =
   | {
       kind: 'agentPrompt';
       projectName: string;
-      agent: 'claude' | 'codex' | string;
+      agent: ScheduledAgent | string;
       providerId?: string | null;
       model?: string | null;
       prompt: string;

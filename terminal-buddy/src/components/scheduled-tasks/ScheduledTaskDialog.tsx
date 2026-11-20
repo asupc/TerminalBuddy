@@ -22,6 +22,7 @@ import {
 import { formatInTimezone, profilesForProject } from '../../utils/scheduledTaskFormat';
 import { getAppSettings } from '../../utils/settings';
 import type {
+  ScheduledAgent,
   ScheduledTaskInput,
   ScheduledTaskOptions,
   ScheduledTaskView,
@@ -70,6 +71,12 @@ const AUTO_CLOSE_OPTIONS = [
   { value: 60, label: '1 小时后关闭' },
   { value: 120, label: '2 小时后关闭' },
 ];
+
+const AGENT_LABELS: Record<ScheduledAgent, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex CLI',
+  antigravity: 'Antigravity CLI',
+};
 
 function browserTimezone(): string {
   try {
@@ -142,7 +149,7 @@ function detectCronMode(expression: string): {
   return fallback;
 }
 
-function defaultProvider(options: ScheduledTaskOptions, agent: 'claude' | 'codex') {
+function defaultProvider(options: ScheduledTaskOptions, agent: Exclude<ScheduledAgent, 'antigravity'>) {
   const providers = options.catalog.providers.filter(provider => provider.agent === agent);
   const provider = providers.find(item => item.isDefault)
     ?? providers.find(item => item.id === `default:${agent}`)
@@ -161,20 +168,27 @@ function initialTarget(task: ScheduledTaskView | null, preset: ScheduledTaskPres
   const project = options.projects.find(item => item.name === projectName);
   const enabled = projectEnabledAgents(project);
   const requestedAgent = target?.kind === 'agentPrompt' ? target.agent : '';
-  const agent: 'claude' | 'codex' = requestedAgent === 'codex'
+  const agent: ScheduledAgent = requestedAgent === 'codex'
     ? 'codex'
     : requestedAgent === 'claude'
       ? 'claude'
-      : enabled.claude ? 'claude' : 'codex';
-  const fallbackProvider = defaultProvider(options, agent);
+      : requestedAgent === 'antigravity'
+        ? 'antigravity'
+        : enabled.claude ? 'claude' : enabled.codex ? 'codex' : enabled.antigravity ? 'antigravity' : 'claude';
+  const fallbackProvider = agent === 'antigravity'
+    ? { providerId: '', model: '' }
+    : defaultProvider(options, agent);
   // 已删除的供应商 / 停机模型回退到默认配置，避免下拉框显示与实际提交值不一致。
-  const requestedProviderId = target?.kind === 'agentPrompt' ? target.providerId ?? null : null;
+  // Antigravity 固定使用 Google 账号，不存在供应商 / 模型选择。
+  const requestedProviderId = agent !== 'antigravity' && target?.kind === 'agentPrompt'
+    ? target.providerId ?? null
+    : null;
   const providerId = requestedProviderId
     && options.catalog.providers.some(provider => provider.id === requestedProviderId && provider.agent === agent)
     ? requestedProviderId
     : fallbackProvider.providerId;
   const chosenProvider = options.catalog.providers.find(provider => provider.id === providerId);
-  const requestedModel = target?.kind === 'agentPrompt' ? target.model ?? '' : '';
+  const requestedModel = agent !== 'antigravity' && target?.kind === 'agentPrompt' ? target.model ?? '' : '';
   const model = requestedModel && chosenProvider?.models.some(option => option.id === requestedModel)
     ? requestedModel
     : (chosenProvider?.models[0]?.id ?? fallbackProvider.model);
@@ -237,7 +251,7 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
   const [targetKind, setTargetKind] = useState<'profile' | 'agent'>(initial.targetKind);
   const [profileId, setProfileId] = useState(initial.profileId);
   const [autoCloseMinutes, setAutoCloseMinutes] = useState(initial.autoCloseMinutes);
-  const [agent, setAgent] = useState<'claude' | 'codex'>(initial.agent);
+  const [agent, setAgent] = useState<ScheduledAgent>(initial.agent);
   const [providerId, setProviderId] = useState(initial.providerId);
   const [model, setModel] = useState(initial.model);
   const [prompt, setPrompt] = useState(initial.prompt);
@@ -269,7 +283,7 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
   const zones = useMemo(() => timezoneOptions(timezone), [timezone]);
   const project = options.projects.find(item => item.name === projectName);
   const enabledAgents = projectEnabledAgents(project);
-  const agentChoices = (['claude', 'codex'] as const).filter(item => enabledAgents[item]);
+  const agentChoices = (['claude', 'codex', 'antigravity'] as const).filter(item => enabledAgents[item]);
   const projectProfiles = profilesForProject(options.profiles, projectName);
   const providers = options.catalog.providers.filter(item => item.agent === agent);
   const provider = providers.find(item => item.id === providerId);
@@ -311,16 +325,28 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
     const nextProject = options.projects.find(item => item.name === nextName);
     const agents = projectEnabledAgents(nextProject);
     if (!agents[agent]) {
-      const nextAgent: 'claude' | 'codex' = agents.claude ? 'claude' : 'codex';
+      const nextAgent: ScheduledAgent = agents.claude
+        ? 'claude'
+        : agents.codex ? 'codex' : agents.antigravity ? 'antigravity' : 'claude';
       setAgent(nextAgent);
-      const fallback = defaultProvider(options, nextAgent);
-      setProviderId(fallback.providerId);
-      setModel(fallback.model);
+      if (nextAgent === 'antigravity') {
+        setProviderId('');
+        setModel('');
+      } else {
+        const fallback = defaultProvider(options, nextAgent);
+        setProviderId(fallback.providerId);
+        setModel(fallback.model);
+      }
     }
   };
 
-  const changeAgent = (nextAgent: 'claude' | 'codex') => {
+  const changeAgent = (nextAgent: ScheduledAgent) => {
     setAgent(nextAgent);
+    if (nextAgent === 'antigravity') {
+      setProviderId('');
+      setModel('');
+      return;
+    }
     const fallback = defaultProvider(options, nextAgent);
     setProviderId(fallback.providerId);
     setModel(fallback.model);
@@ -366,8 +392,8 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
           kind: 'agentPrompt',
           projectName,
           agent,
-          providerId: providerId || null,
-          model: model || null,
+          providerId: agent === 'antigravity' ? null : providerId || null,
+          model: agent === 'antigravity' ? null : model || null,
           prompt: prompt.trim(),
         };
     const input: ScheduledTaskInput = {
@@ -457,9 +483,11 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
             {nextRunLabel && <span className="st-dialog-next">下次 {nextRunLabel}</span>}
             <span className="st-dialog-hint-text">
               {targetKind === 'agent'
-                ? (nativeChatSessions
-                    ? '当前将按「原生会话」模式启动；若需要确认，任务会停在等待确认。'
-                    : '到点创建终端运行 Agent，任务描述会自动输入；执行结束后终端保留。')
+                ? (agent === 'antigravity'
+                    ? 'Antigravity 固定使用终端接力：到点创建终端并自动输入任务描述，执行结束后终端保留。'
+                    : nativeChatSessions
+                      ? '当前将按「原生会话」模式启动；若需要确认，任务会停在等待确认。'
+                      : '到点创建终端运行 Agent，任务描述会自动输入；执行结束后终端保留。')
                 : '到点启动终端，不抢当前焦点。'}
             </span>
           </span>
@@ -534,7 +562,7 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
             <span className="st-target-card-ico" aria-hidden="true"><Bot /></span>
             <span className="st-target-card-text">
               <strong>AI Agent 任务</strong>
-              <span>按「新会话形态」以原生会话或终端接力执行 Prompt</span>
+              <span>Claude / Codex 按「新会话形态」执行，Antigravity 固定终端接力</span>
             </span>
           </button>
           <button
@@ -590,32 +618,41 @@ export function ScheduledTaskDialog({ task, preset, options, onClose, onSaved }:
                       key={choice}
                       className={`st-seg-btn${agent === choice ? ' active' : ''}`}
                       onClick={() => changeAgent(choice)}
-                    >{choice === 'claude' ? 'Claude Code' : 'Codex CLI'}</button>
+                    >{AGENT_LABELS[choice]}</button>
                   ))}
                 </div>
               </div>
-              <div className="st-field-row st-field-row-tight">
-                <div className="st-field">
-                  <label className="st-field-label" htmlFor="st-provider">供应商</label>
-                  <select id="st-provider" className="st-select" value={providerId} onChange={event => changeProvider(event.target.value)}>
-                    {providers.length === 0 && <option value="">服务端默认配置</option>}
-                    {providers.map(item => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}{item.isDefault ? '（默认）' : ''}
-                      </option>
-                    ))}
-                  </select>
+              {agent === 'antigravity' ? (
+                <div className="st-field st-field-grow">
+                  <span className="st-field-label">账号</span>
+                  <div className="st-field-hint">
+                    Antigravity CLI 使用 Google 账号登录，按「Agent 管理」中的基础启动命令启动，无需选择供应商或模型。
+                  </div>
                 </div>
-                <div className="st-field">
-                  <label className="st-field-label" htmlFor="st-model">模型</label>
-                  <select id="st-model" className="st-select" value={model} onChange={event => setModel(event.target.value)}>
-                    {models.length === 0 && <option value="">服务端默认模型</option>}
-                    {models.map(item => (
-                      <option key={item.id || 'default'} value={item.id}>{item.label || item.id || '服务端默认模型'}</option>
-                    ))}
-                  </select>
+              ) : (
+                <div className="st-field-row st-field-row-tight">
+                  <div className="st-field">
+                    <label className="st-field-label" htmlFor="st-provider">供应商</label>
+                    <select id="st-provider" className="st-select" value={providerId} onChange={event => changeProvider(event.target.value)}>
+                      {providers.length === 0 && <option value="">服务端默认配置</option>}
+                      {providers.map(item => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}{item.isDefault ? '（默认）' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="st-field">
+                    <label className="st-field-label" htmlFor="st-model">模型</label>
+                    <select id="st-model" className="st-select" value={model} onChange={event => setModel(event.target.value)}>
+                      {models.length === 0 && <option value="">服务端默认模型</option>}
+                      {models.map(item => (
+                        <option key={item.id || 'default'} value={item.id}>{item.label || item.id || '服务端默认模型'}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
             <div className="st-field">
               <label className="st-field-label" htmlFor="st-prompt">

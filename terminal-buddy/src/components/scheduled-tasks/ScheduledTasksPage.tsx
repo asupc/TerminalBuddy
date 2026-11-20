@@ -498,7 +498,7 @@ export function ScheduledTasksPage({ onClose }: ScheduledTasksPageProps) {
           <div className="st-empty-state">
             <div className="st-empty-illustration"><CalendarClock aria-hidden="true" /></div>
             <h4>还没有定时任务</h4>
-            <p>创建一个定时计划，让终端环境在上班前自启，或让 Claude / Codex 定时为你巡检代码。</p>
+            <p>创建一个定时计划，让终端环境在上班前自启，或让 Claude / Codex / Antigravity 定时为你巡检代码。</p>
             <div className="st-empty-samples">
               <button
                 type="button"
