@@ -12,6 +12,12 @@ interface BehaviorSettingsProps {
   vsCodeSupport: VsCodeTerminalSupport | null;
 }
 
+const MARKDOWN_VIEW_MODE_OPTIONS: { value: AppSettings['markdownDefaultViewMode']; label: string; title: string }[] = [
+  { value: 'source', label: '源码', title: '打开时只显示 Markdown 源文本' },
+  { value: 'split', label: '分屏', title: '打开时源码与预览并排显示' },
+  { value: 'preview', label: '预览', title: '打开时只显示渲染后的预览' },
+];
+
 export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSetting, vsCodeSupport }) => {
   const vsCodeAvailable = vsCodeSupport?.available === true;
   const showToast = useAppStore(s => s.showToast);
@@ -630,6 +636,34 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
               />
               <span className="settings-sr-only">双击运行 .bat 文件</span>
             </label>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">Markdown 默认打开方式</div>
+            <p className="settings-row-desc">
+              打开 .md 等 Markdown 文档时默认使用的视图，仅影响之后打开的文件；编辑器右上角可随时切换。
+            </p>
+          </div>
+          <div className="settings-row-ctrl">
+            <div className="breathing-light-mode-options" role="radiogroup" aria-label="Markdown 默认打开方式">
+              {MARKDOWN_VIEW_MODE_OPTIONS.map(({ value, label, title }) => (
+                <label
+                  key={value}
+                  className={`breathing-light-mode ${settings.markdownDefaultViewMode === value ? 'active' : ''}`}
+                  title={title}
+                >
+                  <input
+                    type="radio"
+                    name="markdownDefaultViewMode"
+                    checked={settings.markdownDefaultViewMode === value}
+                    onChange={() => updateSetting('markdownDefaultViewMode', value)}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
       </div>

@@ -46,6 +46,18 @@ export type BreathingLightColorMode = 'tab' | 'custom';
 export type LaunchWindowMode = 'windowed' | 'maximized';
 export type TerminalLoadingMode = 'default' | 'vsCode';
 export type UiStyle = 'default' | 'sidebar';
+/** Markdown 文档默认打开方式：源码 / 分屏 / 预览。 */
+export type MarkdownDefaultViewMode = 'source' | 'split' | 'preview';
+
+export const isMarkdownDefaultViewMode = (value: unknown): value is MarkdownDefaultViewMode => (
+  value === 'source' || value === 'split' || value === 'preview'
+);
+
+/** 读取 Markdown 默认打开方式，非法或缺失时回退为源码模式。 */
+export const getMarkdownDefaultViewMode = (): MarkdownDefaultViewMode => {
+  const value = getAppSettings().markdownDefaultViewMode;
+  return isMarkdownDefaultViewMode(value) ? value : 'source';
+};
 
 export interface AppSettings {
   uiStyle: UiStyle;
@@ -61,6 +73,8 @@ export interface AppSettings {
   singleInstance: boolean;
   rightClickPaste: boolean;
   doubleClickRunBat: boolean;
+  /** Markdown 文档打开时的默认视图：源码 / 分屏 / 预览。 */
+  markdownDefaultViewMode: MarkdownDefaultViewMode;
   hotkeys: Partial<Record<HotkeyActionId, string>>;
   zhipuApiKey: string;
   qianfanCookie: string;
@@ -117,6 +131,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   singleInstance: true,
   rightClickPaste: false,
   doubleClickRunBat: false,
+  markdownDefaultViewMode: 'source',
   hotkeys: {},
   zhipuApiKey: '',
   qianfanCookie: '',

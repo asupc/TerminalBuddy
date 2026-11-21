@@ -8,6 +8,7 @@ import { readFileContent, writeFileContent, remoteUpload, getFileMeta, onTransfe
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '../../stores/appStore';
 import { getMonacoLanguage, isMarkdownFile } from '../../utils/fileExtensions';
+import { getMarkdownDefaultViewMode } from '../../utils/settings';
 import { MarkdownPreview, MarkdownPreviewHandle } from './MarkdownPreview';
 import { showAlert } from '../../services/dialog';
 import './TextEditor.css';
@@ -74,6 +75,11 @@ function cycleMarkdownViewMode(current: MarkdownViewMode): MarkdownViewMode {
   return current === 'source' ? 'split' : current === 'split' ? 'preview' : 'source';
 }
 
+/** 打开文件时的初始视图：Markdown 按设置项，其他文件固定源码模式。 */
+function getInitialMarkdownViewMode(path: string): MarkdownViewMode {
+  return isMarkdownFile(path) ? getMarkdownDefaultViewMode() : 'source';
+}
+
 function getEditorSourceLineAtTop(editor: MonacoEditor.IStandaloneCodeEditor): number {
   const model = editor.getModel();
   const firstVisiblePosition = editor.getVisibleRanges()[0]?.getStartPosition();
@@ -111,7 +117,7 @@ export const TextEditor: FC<TextEditorProps> = memo(({
   const [conflictNotice, setConflictNotice] = useState(false);
   const [diffDiskContent, setDiffDiskContent] = useState<string | null>(null);
   const [saveNotify, setSaveNotify] = useState<{ type: 'saving' | 'success' | 'error'; msg: string } | null>(null);
-  const [markdownViewMode, setMarkdownViewMode] = useState<MarkdownViewMode>('source');
+  const [markdownViewMode, setMarkdownViewMode] = useState<MarkdownViewMode>(() => getInitialMarkdownViewMode(filePath));
   const [markdownPreviewWidth, setMarkdownPreviewWidth] = useState(MARKDOWN_PREVIEW_DEFAULT_WIDTH);
   const [isMarkdownPreviewResizing, setIsMarkdownPreviewResizing] = useState(false);
   const [markdownPreviewToggleRight, setMarkdownPreviewToggleRight] = useState(112);
@@ -299,9 +305,10 @@ export const TextEditor: FC<TextEditorProps> = memo(({
     };
   }, [isActive, checkDiskChange]);
 
+  // 打开 / 切换文件时按默认打开方式设置回到初始视图；非 Markdown 始终源码模式。
   useEffect(() => {
-    if (!isMarkdown) setMarkdownViewMode('source');
-  }, [isMarkdown]);
+    setMarkdownViewMode(getInitialMarkdownViewMode(filePath));
+  }, [filePath, isMarkdown]);
 
   useEffect(() => {
     if (!isMarkdownPreviewResizing) return;
