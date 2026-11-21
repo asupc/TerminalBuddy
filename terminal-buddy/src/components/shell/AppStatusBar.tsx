@@ -652,9 +652,9 @@ const StatusBarResources = memo(function StatusBarResources() {
         <StatusBarClock />
       </span>
 
-      {contextDirectory && (
+      {contextDirectory && fileManagerOpen && (
         <FileManagerDialog
-          open={fileManagerOpen}
+          open
           initialPath={contextDirectory}
           onClose={() => setFileManagerOpen(false)}
         />

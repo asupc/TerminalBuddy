@@ -8,6 +8,7 @@ import App from './App';
 import WebEntry from './components/browser/WebEntry';
 import { installBrowserKeyGuard } from './services/browserKeys';
 import { installRendererMemoryGuard } from './utils/rendererMemoryGuard';
+import { isBrowserClient } from './services/platform';
 import './styles/global.css';
 import './styles/cartoonAnime1.css';
 import './components/browser/WebEntry.css';
@@ -35,7 +36,7 @@ installRendererMemoryGuard();
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    {import.meta.env.MODE === 'browser'
+    {isBrowserClient()
       ? <WebEntry />
       : import.meta.env.MODE === 'browser-demo'
         ? <App />

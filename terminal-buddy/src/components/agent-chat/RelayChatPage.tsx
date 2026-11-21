@@ -47,12 +47,14 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
   const [sending, setSending] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [now, setNow] = useState(Date.now());
+  const terminalId = tab.terminalId;
   const subscriptionRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
+  const latestTerminalIdRef = useRef(terminalId);
+  latestTerminalIdRef.current = terminalId;
   const composing = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
-
-  const terminalId = tab.terminalId;
 
   const applyFrame = useCallback((frame: TerminalAgentFrame) => {
     if (frame.terminalId !== terminalId) return;
@@ -84,16 +86,23 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
   const subscribe = useCallback(async () => {
     try {
       const outcome = await terminalAgentSubscribe(terminalId);
+      if (!mountedRef.current || latestTerminalIdRef.current !== terminalId) {
+        void terminalAgentUnsubscribe(terminalId, outcome.subscriptionId).catch(() => {});
+        return;
+      }
       subscriptionRef.current = outcome.subscriptionId;
       applyFrame(outcome.initialFrame);
       setError(null);
     } catch (reason) {
-      setError(String(reason));
+      if (mountedRef.current && latestTerminalIdRef.current === terminalId) {
+        setError(String(reason));
+      }
     }
-  }, [applyFrame, terminalId, closeAgentTab, tab.key]);
+  }, [applyFrame, terminalId]);
 
   useEffect(() => {
     let disposed = false;
+    mountedRef.current = true;
     setError(null);
     terminalAgentMessages(terminalId).then(page => {
       if (disposed) return;
@@ -110,6 +119,7 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
     });
     return () => {
       disposed = true;
+      mountedRef.current = false;
       void unlisten.then(off => off());
       const lease = subscriptionRef.current;
       subscriptionRef.current = null;
@@ -133,9 +143,17 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
   }, [subscribe, terminalId]);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 500);
+    if (cooldownUntil <= Date.now()) return;
+    setNow(Date.now());
+    const timer = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      if (current >= cooldownUntil) {
+        clearInterval(timer);
+      }
+    }, 500);
     return () => clearInterval(timer);
-  }, []);
+  }, [cooldownUntil]);
 
   useEffect(() => {
     if (!session) return;

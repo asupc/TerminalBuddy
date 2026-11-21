@@ -20,6 +20,7 @@ import { AgentTabContextMenu } from '../shell/AgentTabContextMenu';
 import { SessionTaskLabel } from '../shell/SessionTaskLabel';
 import { TabContextMenu } from '../shell/TabContextMenu';
 import '../file-explorer/TreeView.css';
+import { onPageVisible } from '../../utils/visibility';
 import '../shell/TabNav.css';
 
 const TYPE_ICONS: Record<string, string> = {
@@ -123,11 +124,17 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
   const renameInputRef = useRef<HTMLInputElement>(null);
   const prevSessionKeysRef = useRef<Set<string>>(new Set());
 
-  // 终端运行时长后缀每 60s 刷新一次
+  // 终端运行时长后缀每 60s 刷新一次（页面隐藏时暂停）
   const [, setUptimeTick] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setUptimeTick(t => t + 1), 60_000);
-    return () => clearInterval(id);
+    const id = setInterval(() => {
+      if (!document.hidden) setUptimeTick(t => t + 1);
+    }, 60_000);
+    const unlistenVisible = onPageVisible(() => setUptimeTick(t => t + 1));
+    return () => {
+      clearInterval(id);
+      unlistenVisible();
+    };
   }, []);
 
   const model = useMemo(() => buildProjectTasksTree({

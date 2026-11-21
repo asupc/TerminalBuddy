@@ -2,7 +2,7 @@ import { useTerminalTaskSummaries } from './hooks/useTerminalTaskSummaries';
 import { useAgentTabStatusSync } from './hooks/useAgentTabStatusSync';
 import { useAgentSessionCreatedSync } from './hooks/useAgentSessionCreatedSync';
 import { useDesktopOpenSessionSync } from './hooks/useDesktopOpenSessionSync';
-﻿import { lazy, Suspense, useEffect, useState, useCallback, useRef } from 'react';
+import { lazy, memo, Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from './services/remoteWorkspace/window';
 import { listen } from './services/remoteWorkspace/events';
 import { TitleBar } from "./components/shell/TitleBar";
@@ -10,12 +10,10 @@ import { AppStatusBar } from "./components/shell/AppStatusBar";
 import { ConfigNav } from "./components/profile-config/ConfigNav";
 import { TerminalPanel } from "./components/terminal/TerminalPanel";
 import { FileNav } from "./components/file-explorer/FileNav";
-import { HistoryPanel } from "./components/claude-history/HistoryPanel";
 import { TabNav } from "./components/shell/TabNav";
 import { ActivityBar, type SidebarPanel } from "./components/shell/ActivityBar";
 import { effectiveProfilePath } from './utils/projectPath';
 import { containsClaudeRef } from './utils/claudeLaunch';
-import { ConfigEditDialog } from "./components/profile-config/ConfigEditDialog";
 import { ClaudeDecisionDialog } from "./components/shared/ClaudeDecisionDialog";
 import { ConfirmDialog } from "./components/shared/Dialog";
 import { GlobalDialogHost } from "./components/shared/GlobalDialogHost";
@@ -36,6 +34,16 @@ import { useExitConfirm } from './hooks/useExitConfirm';
 import { clientTerminalOwner, isBrowserClient, isWebBackend } from './services/platform';
 
 const SettingsPage = lazy(() => import('./components/settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
+const HistoryPanel = lazy(() => import('./components/claude-history/HistoryPanel').then(module => ({ default: module.HistoryPanel })));
+const ConfigEditDialog = lazy(() => import('./components/profile-config/ConfigEditDialog').then(module => ({ default: module.ConfigEditDialog })));
+
+const AppBackgroundSync = memo(() => {
+  useTerminalTaskSummaries();
+  useAgentTabStatusSync();
+  useAgentSessionCreatedSync();
+  useDesktopOpenSessionSync();
+  return null;
+});
 
 /**
  * 启动恢复的单次初始化守卫：dev 与 prod 行为一致。
@@ -59,10 +67,6 @@ import type { ExtraParamMode, Profile, TerminalSession } from './types';
 import { PRESET_THEMES } from './types';
 
 function App() {
-  useTerminalTaskSummaries();
-  useAgentTabStatusSync();
-  useAgentSessionCreatedSync();
-  useDesktopOpenSessionSync();
   const setProfiles = useAppStore(s => s.setProfiles);
   const setProjects = useAppStore(s => s.setProjects);
   const addSession = useAppStore(s => s.addSession);
@@ -758,6 +762,7 @@ function App() {
 
   return (
     <div className={`app-container ui-style-${uiStyle}${windowMode === 'panels-hidden' ? ' panels-hidden' : ''}`} tabIndex={0}>
+      <AppBackgroundSync />
       <TitleBar
         uiStyle={uiStyle}
         experimentalProjectTasks={experimentalProjectTasks}
@@ -802,11 +807,13 @@ function App() {
         </div>
         <div className={`nav-panel-slot nav-panel-history${sidebarPanel === 'history' ? ' active' : ''}`}>
           {slowPanelMounted() && (
-            <HistoryPanel
-              isSidebarMode={uiStyle === 'sidebar'}
-              isActive={windowMode !== 'panels-hidden'
-                && (uiStyle === 'sidebar' ? sidebarPanel === 'history' : historyPanelVisible)}
-            />
+            <Suspense fallback={null}>
+              <HistoryPanel
+                isSidebarMode={uiStyle === 'sidebar'}
+                isActive={windowMode !== 'panels-hidden'
+                  && (uiStyle === 'sidebar' ? sidebarPanel === 'history' : historyPanelVisible)}
+              />
+            </Suspense>
           )}
         </div>
         {enableTabNav && !experimentalProjectTasks && (
@@ -831,13 +838,15 @@ function App() {
         <span className="cartoon-anime1-hero" />
       </div>
       {showEditDialog && (
-        <ConfigEditDialog
-          profile={editingProfile}
-          onClose={handleDialogClose}
-          onSave={handleDialogSave}
-          defaultGroup={defaultGroupForNewProfile}
-          profiles={profiles}
-        />
+        <Suspense fallback={null}>
+          <ConfigEditDialog
+            profile={editingProfile}
+            onClose={handleDialogClose}
+            onSave={handleDialogSave}
+            defaultGroup={defaultGroupForNewProfile}
+            profiles={profiles}
+          />
+        </Suspense>
       )}
       {settingsDialogOpen && (
         <Suspense fallback={<div className="settings-dialog-loading">加载设置…</div>}>

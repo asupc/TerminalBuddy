@@ -1,6 +1,6 @@
 import { memo, useMemo, useState } from 'react';
 import DOMPurify from 'dompurify';
-import hljs from 'highlight.js';
+import hljs from '../../utils/hljs';
 import MarkdownIt from 'markdown-it';
 
 /** 聊天消息专用的轻量 Markdown 渲染：无文件路径、无滚动同步，仅做安全 HTML。 */

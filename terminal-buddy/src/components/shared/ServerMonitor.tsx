@@ -3,6 +3,7 @@ import { getServerStats, connectSshSession } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import type { ServerStats } from '../../types';
 import { getAppSettings } from '../../utils/settings';
+import { onPageVisible } from '../../utils/visibility';
 
 interface ServerMonitorProps {
   terminalId: string;
@@ -68,17 +69,27 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh, isAct
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const scheduleNext = () => {
-      if (cancelled) return;
+      if (cancelled || document.hidden) return;
+      if (timer !== null) clearTimeout(timer);
       timer = setTimeout(run, pollingInterval * 1000);
     };
     const run = async () => {
+      if (cancelled || document.hidden) return;
       await fetchStats();
       scheduleNext();
     };
+    const unlistenVisible = onPageVisible(() => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      void run();
+    });
 
     void run();
     return () => {
       cancelled = true;
+      unlistenVisible();
       if (timer !== null) clearTimeout(timer);
     };
   }, [isActive, isSsh, pollingInterval, fetchStats]);

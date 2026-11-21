@@ -8,6 +8,7 @@ import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getIndicatorLight, getIndicatorClassName, getIndicatorColor, getIndicatorTitle, getNativeAgentLight } from '../../utils/claudeIndicator';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
+import { onPageVisible } from '../../utils/visibility';
 import type { TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { buildGroupTree, type GroupNode } from '../../utils/groupTree';
@@ -97,11 +98,17 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   const [renameBaseline, setRenameBaseline] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [submenuExpandedGroups, setSubmenuExpandedGroups] = useState<Set<string>>(new Set());
-  // 终端运行时长后缀每 60s 刷新一次
+  // 终端运行时长后缀每 60s 刷新一次（页面隐藏时暂停）
   const [, setUptimeTick] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setUptimeTick(t => t + 1), 60_000);
-    return () => clearInterval(id);
+    const id = setInterval(() => {
+      if (!document.hidden) setUptimeTick(t => t + 1);
+    }, 60_000);
+    const unlistenVisible = onPageVisible(() => setUptimeTick(t => t + 1));
+    return () => {
+      clearInterval(id);
+      unlistenVisible();
+    };
   }, []);
 
   // F2 快速重命名标签

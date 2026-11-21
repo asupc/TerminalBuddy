@@ -1,5 +1,7 @@
 import { FC, useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
-import { DiffEditor } from '@monaco-editor/react';
+import { DiffEditor, type DiffOnMount } from '@monaco-editor/react';
+import type { editor as MonacoEditor } from 'monaco-editor';
+import { attachSafeDiffModelDisposal } from '../../utils/monacoLoader';
 import { ChevronDown, ChevronRight, Folder, FolderOpen, RefreshCw } from 'lucide-react';
 import {
   gitGetChangedFiles,
@@ -15,6 +17,16 @@ import './GitChangesPage.css';
 
 const LIST_WIDTH_KEY = 'gitChanges.listWidth';
 const DEFAULT_LIST_WIDTH = 420;
+const GIT_CHANGES_DIFF_OPTIONS: MonacoEditor.IDiffEditorConstructionOptions = {
+  readOnly: true,
+  originalEditable: false,
+  automaticLayout: true,
+  renderSideBySide: true,
+  minimap: { enabled: false },
+};
+const handleDiffMount: DiffOnMount = (diffEditor) => {
+  attachSafeDiffModelDisposal(diffEditor);
+};
 
 /** 文件导航宽度按浏览器本地偏好保存；非法值回落到默认宽度。 */
 function readListWidth(): number {
@@ -301,20 +313,16 @@ export const GitChangesPage: FC<GitChangesPageProps> = ({ repoRoot, branch }) =>
           )}
           {selectedPath && !diffLoading && !diffError && diff && !diff.binary && (
             <DiffEditor
-              key={`${diff.path}:${refreshVersion}`}
               height="100%"
               language={getMonacoLanguage(diff.path)}
               original={diff.oldContent}
               modified={diff.newContent}
+              keepCurrentOriginalModel
+              keepCurrentModifiedModel
+              onMount={handleDiffMount}
               theme="vs-dark"
               loading={<div className="git-changes-empty">加载编辑器...</div>}
-              options={{
-                readOnly: true,
-                originalEditable: false,
-                automaticLayout: true,
-                renderSideBySide: true,
-                minimap: { enabled: false },
-              }}
+              options={GIT_CHANGES_DIFF_OPTIONS}
             />
           )}
         </div>

@@ -1,7 +1,25 @@
 import { FC } from 'react';
-import { DiffEditor } from '@monaco-editor/react';
+import { DiffEditor, type DiffOnMount } from '@monaco-editor/react';
+import type { editor as MonacoEditor } from 'monaco-editor';
+import { attachSafeDiffModelDisposal } from '../../utils/monacoLoader';
 import type { GitHistoryFile, GitHistoryFileDiff } from '../../services/tauri';
 import { getMonacoLanguage } from '../../utils/fileExtensions';
+
+const HISTORY_DIFF_OPTIONS: MonacoEditor.IDiffEditorConstructionOptions = {
+  readOnly: true,
+  originalEditable: false,
+  automaticLayout: true,
+  renderSideBySide: true,
+  minimap: { enabled: false },
+  scrollBeyondLastLine: false,
+  wordWrap: 'off',
+  folding: true,
+  renderWhitespace: 'selection',
+};
+
+const handleDiffMount: DiffOnMount = (diffEditor) => {
+  attachSafeDiffModelDisposal(diffEditor);
+};
 
 interface GitHistoryDiffPreviewProps {
   selectedFile: GitHistoryFile | null;
@@ -47,23 +65,15 @@ export const GitHistoryDiffPreview: FC<GitHistoryDiffPreviewProps> = ({
       )}
       {!loading && !error && diff && !diff.binary && (
         <DiffEditor
-          key={`${diff.oldRevision}:${diff.newRevision}:${diff.oldPath ?? ''}:${diff.path}`}
           height="100%"
           language={getMonacoLanguage(diff.path)}
           modified={diff.newContent}
           original={diff.oldContent}
+          keepCurrentOriginalModel
+          keepCurrentModifiedModel
+          onMount={handleDiffMount}
           theme="vs-dark"
-          options={{
-            readOnly: true,
-            originalEditable: false,
-            automaticLayout: true,
-            renderSideBySide: true,
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            wordWrap: 'off',
-            folding: true,
-            renderWhitespace: 'selection',
-          }}
+          options={HISTORY_DIFF_OPTIONS}
         />
       )}
     </div>

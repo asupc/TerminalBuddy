@@ -190,16 +190,19 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const messagesRef = useRef<AiMessage[]>([]);
   const selectedRef = useRef<typeof selected>(null);
   const sessionRef = useRef<AiSession | null>(null);
+  const lastEventAtRef = useRef(0);
 
   useEffect(() => {
     let disposed = false;
     setSession(null);
     setError(null);
+    lastEventAtRef.current = 0;
     aiSessionGet(tab.sessionId)
       .then(value => { if (!disposed) setSession(stripAnswered(value)); })
       .catch(reason => { if (!disposed) setError(String(reason)); });
     const unlisten = listenTauri<AiSessionUpdateFrame>(AI_SESSION_UPDATE_EVENT, frame => {
       if (disposed || frame.session.id !== tab.sessionId) return;
+      lastEventAtRef.current = Date.now();
       setSession(previous => stripAnswered(mergeSession(previous, frame)));
     });
     // 其他客户端删除会话时同步关闭标签。
@@ -544,12 +547,16 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   useEffect(() => {
     setThinkingSince(previous => busy ? (previous ?? Date.now()) : null);
   }, [busy]);
-  // 事件通道丢帧时兜底拉一次快照：避免界面长期停在“思考中”而实际已结束。
+  // 事件通道丢帧时兜底拉一次快照：若近期刚收到事件或窗口隐藏则跳过，版本号未严格前进时不触发重渲染。
   useEffect(() => {
     if (!busy) return;
     const timer = window.setInterval(() => {
+      if (document.hidden || Date.now() - lastEventAtRef.current < 5000) return;
       aiSessionGet(tab.sessionId)
-        .then(fresh => setSession(previous => (!previous || fresh.revision >= previous.revision ? stripAnswered(fresh) : previous)))
+        .then(fresh => setSession(previous => {
+          if (previous && fresh.revision <= previous.revision) return previous;
+          return stripAnswered(fresh);
+        }))
         .catch(() => {});
     }, 6000);
     return () => window.clearInterval(timer);

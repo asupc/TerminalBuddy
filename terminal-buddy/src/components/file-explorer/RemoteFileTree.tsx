@@ -81,10 +81,10 @@ function downloadWithProgress(
       if (progress.transferId !== transferId) return;
       if (progress.percent >= 100) { finish(); return; }
       armTimeout();
-    }).then(fn => { unlistenProgress = fn; });
+    }).then(fn => { if (settled) fn(); else unlistenProgress = fn; });
     onTransferError((evt) => {
       if (evt.transferId === transferId) finish(new Error(evt.error));
-    }).then(fn => { unlistenError = fn; });
+    }).then(fn => { if (settled) fn(); else unlistenError = fn; });
     remoteDownload(terminalId, remotePath, localPath, transferId, profileId).catch(e => finish(new Error(String(e))));
   });
 }
@@ -262,17 +262,24 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   // 仅保留本会话的轻量进度条展示（丢失无碍，store 状态由单例保证）。
   useEffect(() => {
     installTransferListeners();
+    let cancelled = false;
     let unlistenProgress: (() => void) | undefined;
 
     onTransferProgress((progress) => {
-      if (progress.terminalId !== terminalId) return;
+      if (cancelled || progress.terminalId !== terminalId) return;
       setTransferProgress(progress);
       if (progress.percent >= 100) {
         setTimeout(() => setTransferProgress(null), 1500);
       }
-    }).then(fn => { unlistenProgress = fn; });
+    }).then(fn => {
+      if (cancelled) fn();
+      else unlistenProgress = fn;
+    });
 
-    return () => { unlistenProgress?.(); };
+    return () => {
+      cancelled = true;
+      unlistenProgress?.();
+    };
   }, [terminalId]);
 
   // Close context menu on outside click
