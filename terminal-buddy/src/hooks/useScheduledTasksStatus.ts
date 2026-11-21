@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { UnlistenFn } from './../services/remoteWorkspace/events';
 import { listenTauri, scheduledTaskList } from '../services/tauri';
+import { onPageVisible } from '../utils/visibility';
 import {
   SCHEDULED_TASK_RUN_EVENT,
   SCHEDULED_TASKS_CHANGED_EVENT,
@@ -51,8 +52,11 @@ export function useScheduledTasksStatus(enabled = true): ScheduledTasksStatusSta
     let cancelled = false;
     const unlisteners: UnlistenFn[] = [];
     void refresh();
-    // 与后端调度 tick（30 秒）对齐。
-    const timer = window.setInterval(() => { void refresh(); }, 30_000);
+    // 与后端调度 tick（30 秒）对齐；页面隐藏时暂停轮询，切回前台时立即补刷。
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, 30_000);
+    const unlistenVisible = onPageVisible(() => { void refresh(); });
     const subscribe = (event: string) => {
       void listenTauri(event, () => { void refresh(); }).then(unlisten => {
         if (cancelled) unlisten();
@@ -63,6 +67,7 @@ export function useScheduledTasksStatus(enabled = true): ScheduledTasksStatusSta
     subscribe(SCHEDULED_TASKS_CHANGED_EVENT);
     return () => {
       cancelled = true;
+      unlistenVisible();
       window.clearInterval(timer);
       unlisteners.forEach(unlisten => unlisten());
     };

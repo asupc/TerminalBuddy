@@ -115,10 +115,25 @@ export const createAgentChatSlice = (
 	},
 
 	updateAgentTab: (key, patch) => {
-		set((state) => ({
-			agentTabs: state.agentTabs.map((item) => (item.key === key ? ({ ...item, ...patch } as AgentTab) : item)),
-		}));
-		schedulePersist(get);
+		let changed = false;
+		set((state) => {
+			const index = state.agentTabs.findIndex((item) => item.key === key);
+			if (index < 0) return state;
+			const target = state.agentTabs[index];
+			const targetRecord = target as unknown as Record<string, unknown>;
+			const patchRecord = patch as Record<string, unknown>;
+			const keys = Object.keys(patchRecord);
+			if (keys.every((k) => targetRecord[k] === patchRecord[k])) {
+				return state;
+			}
+			changed = true;
+			const next = state.agentTabs.slice();
+			next[index] = { ...target, ...patch } as AgentTab;
+			return { agentTabs: next };
+		});
+		if (changed) {
+			schedulePersist(get);
+		}
 	},
 
 	setActiveAgentTab: (key) => {

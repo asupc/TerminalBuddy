@@ -1,11 +1,16 @@
 import { emitLocal, getToken, logout, request, serverPlatform, windowsBuildNumber, socketUrl, uploadFiles } from './connection';
 
+const INITIAL_RECONNECT_DELAY_MS = 1500;
+const MAX_RECONNECT_DELAY_MS = 15000;
+const JOB_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+
 interface TerminalConnection {
   socket: WebSocket;
   callbacks: Set<(output: string) => void>;
   rows: number;
   cols: number;
   retry?: ReturnType<typeof setTimeout>;
+  backoffMs: number;
   closed: boolean;
 }
 const terminals = new Map<string, TerminalConnection>();
@@ -13,7 +18,14 @@ const terminals = new Map<string, TerminalConnection>();
 export async function subscribeTerminal(id: string, callback: (output: string) => void): Promise<() => void> {
   let connection = terminals.get(id);
   if (!connection) {
-    connection = { socket: new WebSocket(socketUrl(`/ws/terminal/${encodeURIComponent(id)}?viewport=1&takeover=0`)), callbacks: new Set(), rows: 30, cols: 100, closed: false };
+    connection = {
+      socket: new WebSocket(socketUrl(`/ws/terminal/${encodeURIComponent(id)}?viewport=1&takeover=0`)),
+      callbacks: new Set(),
+      rows: 30,
+      cols: 100,
+      backoffMs: INITIAL_RECONNECT_DELAY_MS,
+      closed: false,
+    };
     terminals.set(id, connection);
     attach(id, connection);
   }
@@ -28,31 +40,42 @@ export async function subscribeTerminal(id: string, callback: (output: string) =
 
 function attach(id: string, connection: TerminalConnection): void {
   const socket = connection.socket;
-  socket.onopen = () => socket.send(JSON.stringify({ type: 'resize', rows: connection.rows, cols: connection.cols }));
+  socket.onopen = () => {
+    connection.backoffMs = INITIAL_RECONNECT_DELAY_MS;
+    socket.send(JSON.stringify({ type: 'resize', rows: connection.rows, cols: connection.cols }));
+  };
   socket.onmessage = event => {
-    const message = JSON.parse(String(event.data)) as { type: string; data?: string; message?: string; rows?: number; cols?: number; takeover?: boolean };
-    if (message.type === 'viewport') {
-      if (message.takeover) {
-        emitLocal('terminal-web-resize', { terminalId: id, rows: message.rows, cols: message.cols });
-      } else {
-        emitLocal('terminal-web-takeover-ended', id);
+    try {
+      const message = JSON.parse(String(event.data)) as { type: string; data?: string; message?: string; rows?: number; cols?: number; takeover?: boolean };
+      if (message.type === 'viewport') {
+        if (message.takeover) {
+          emitLocal('terminal-web-resize', { terminalId: id, rows: message.rows, cols: message.cols });
+        } else {
+          emitLocal('terminal-web-takeover-ended', id);
+        }
       }
-    }
-    if (message.type === 'output') connection.callbacks.forEach(callback => callback(message.data ?? ''));
-    if (message.type === 'error') console.error(message.message);
-    if (message.type === 'exited') {
-      connection.closed = true;
-      emitLocal('terminal-closed', id);
+      if (message.type === 'output') connection.callbacks.forEach(callback => callback(message.data ?? ''));
+      if (message.type === 'error') console.error(message.message);
+      if (message.type === 'exited') {
+        connection.closed = true;
+        emitLocal('terminal-closed', id);
+      }
+    } catch {
+      console.warn('收到无法解析的终端消息');
     }
   };
   socket.onclose = () => {
-    if (connection.closed || !getToken()) return;
+    if (connection.closed || connection.socket !== socket || !getToken()) return;
+    const delay = connection.backoffMs;
+    connection.backoffMs = Math.min(connection.backoffMs * 2, MAX_RECONNECT_DELAY_MS);
+    clearTimeout(connection.retry);
     connection.retry = setTimeout(() => {
+      if (connection.closed || connection.socket !== socket || !getToken()) return;
       // 重连时重置画面，再接收服务器滚动历史，避免显示两份输出。
       connection.callbacks.forEach(callback => callback('\x1bc'));
       connection.socket = new WebSocket(socketUrl(`/ws/terminal/${encodeURIComponent(id)}?viewport=1&takeover=0`));
       attach(id, connection);
-    }, 1500);
+    }, delay);
   };
 }
 
@@ -119,7 +142,11 @@ export async function invoke<T>(command: string, args: Record<string, unknown> =
   const response = await request<T | { $jobId: string }>(`/api/desktop/invoke/${encodeURIComponent(command)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(args) });
   if (response && typeof response === 'object' && '$jobId' in response) {
     const jobId = String(response.$jobId);
+    const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
     for (;;) {
+      if (Date.now() > deadline) {
+        throw new Error('后台操作等待超时，请稍后重试');
+      }
       await new Promise(resolve => setTimeout(resolve, 500));
       const job = await request<{ status: string; value?: T; message?: string }>(`/api/desktop/jobs/${encodeURIComponent(jobId)}`);
       if (job.status === 'done') return job.value as T;

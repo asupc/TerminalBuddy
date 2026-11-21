@@ -182,9 +182,11 @@ export function useTerminalAgentUsage(terminalId: string | null): TerminalAgentU
     let misses = 0;
     const schedule = (delay: number) => {
       window.clearTimeout(timer);
+      if (cancelled || document.hidden) return;
       timer = window.setTimeout(load, delay);
     };
     const load = () => {
+      if (cancelled || document.hidden) return;
       getTerminalAgentUsage(terminalId)
         .then(next => {
           if (cancelled) return;
@@ -210,9 +212,14 @@ export function useTerminalAgentUsage(terminalId: string | null): TerminalAgentU
           schedule(TERMINAL_USAGE_POLL_MS);
         });
     };
+    const onVisibility = () => {
+      if (!document.hidden) load();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
     load();
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibility);
       window.clearTimeout(timer);
     };
   }, [terminalId]);

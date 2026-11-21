@@ -9,12 +9,17 @@ import {
 
 export { remoteRequest, remoteRequestUrl, remoteSocketUrl };
 
+const INITIAL_RECONNECT_DELAY_MS = 1500;
+const MAX_RECONNECT_DELAY_MS = 15000;
+const JOB_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+
 interface TerminalConnection {
   socket: WebSocket;
   callbacks: Set<(output: string) => void>;
   rows: number;
   cols: number;
   retry?: ReturnType<typeof setTimeout>;
+  backoffMs: number;
   closed: boolean;
 }
 const terminals = new Map<string, TerminalConnection>();
@@ -24,7 +29,7 @@ export async function subscribeRemoteTerminal(id: string, callback: (output: str
   if (!connection) {
     connection = {
       socket: new WebSocket(remoteSocketUrl(`/ws/terminal/${encodeURIComponent(id)}?viewport=1&takeover=0`)),
-      callbacks: new Set(), rows: 30, cols: 100, closed: false,
+      callbacks: new Set(), rows: 30, cols: 100, backoffMs: INITIAL_RECONNECT_DELAY_MS, closed: false,
     };
     terminals.set(id, connection);
     attach(id, connection);
@@ -44,6 +49,7 @@ export async function subscribeRemoteTerminal(id: string, callback: (output: str
 function attach(id: string, connection: TerminalConnection): void {
   const socket = connection.socket;
   socket.onopen = () => {
+    connection.backoffMs = INITIAL_RECONNECT_DELAY_MS;
     // 服务端 viewport 模式收到首条 resize 后才回放历史输出；
     // 终端初始化时尺寸可能已被去重，连接建立时必须再声明一次当前尺寸。
     socket.send(JSON.stringify({ type: 'resize', rows: connection.rows, cols: connection.cols }));
@@ -74,12 +80,16 @@ function attach(id: string, connection: TerminalConnection): void {
     }
   };
   socket.onclose = () => {
-    if (connection.closed || !isConnected()) return;
+    if (connection.closed || connection.socket !== socket || !isConnected()) return;
+    const delay = connection.backoffMs;
+    connection.backoffMs = Math.min(connection.backoffMs * 2, MAX_RECONNECT_DELAY_MS);
+    clearTimeout(connection.retry);
     connection.retry = setTimeout(() => {
+      if (connection.closed || connection.socket !== socket || !isConnected()) return;
       connection.callbacks.forEach(callback => callback('\x1bc'));
       connection.socket = new WebSocket(remoteSocketUrl(`/ws/terminal/${encodeURIComponent(id)}?viewport=1&takeover=0`));
       attach(id, connection);
-    }, 1500);
+    }, delay);
   };
 }
 
@@ -146,7 +156,11 @@ export async function remoteInvoke<T>(command: string, args: Record<string, unkn
   );
   if (response && typeof response === 'object' && '$jobId' in response) {
     const jobId = String(response.$jobId);
+    const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
     for (;;) {
+      if (Date.now() > deadline) {
+        throw new Error('远程后台操作等待超时，请稍后重试');
+      }
       await new Promise(resolve => setTimeout(resolve, 500));
       const job = await remoteRequest<{ status: string; value?: T; message?: string }>(`/api/desktop/jobs/${encodeURIComponent(jobId)}`);
       if (job.status === 'done') return job.value as T;

@@ -3,6 +3,7 @@ import { getCurrentWindow } from '../services/remoteWorkspace/window';
 import { useAppStore } from '../stores/appStore';
 import { isBrowserClient } from '../services/platform';
 import { refreshTaskSummaries, terminalDisplayTitle, useTaskSummaryStore } from '../stores/taskSummaryStore';
+import { onPageVisible } from '../utils/visibility';
 
 export function useTerminalTaskSummaries() {
   const ids = useAppStore(state => state.sessions.filter(session => session.sessionType !== 'editor' && !session.starting).map(session => session.id).sort().join(','));
@@ -18,7 +19,7 @@ export function useTerminalTaskSummaries() {
     let busy = false;
     let timer: ReturnType<typeof setTimeout>;
     const refresh = async () => {
-      if (disposed || busy) return;
+      if (disposed || busy || document.hidden) return;
       busy = true;
       clearTimeout(timer);
       try {
@@ -27,15 +28,17 @@ export function useTerminalTaskSummaries() {
         // 暂时离线时保留已显示的摘要，下一次自动重试。
       } finally {
         busy = false;
-        if (!disposed) timer = setTimeout(refresh, 4000);
+        if (!disposed && !document.hidden) timer = setTimeout(refresh, 4000);
       }
     };
     void refresh();
+    const unlistenVisible = onPageVisible(() => { void refresh(); });
     window.addEventListener('terminal-task-summary-changed', refresh);
     window.addEventListener('focus', refresh);
     return () => {
       disposed = true;
       clearTimeout(timer);
+      unlistenVisible();
       window.removeEventListener('terminal-task-summary-changed', refresh);
       window.removeEventListener('focus', refresh);
     };

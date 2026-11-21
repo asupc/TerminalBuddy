@@ -267,6 +267,7 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
   const runtimeToken = ++activeNotificationRuntimeToken;
   let disposed = false;
   const isActiveRuntime = () => !disposed && activeNotificationRuntimeToken === runtimeToken;
+  let initialHydrationDone = false;
   const settledDecisionIds = new Set<string>();
   const listenerResults = await Promise.allSettled([
     onClaudeNotificationActivated(terminalId => {
@@ -286,12 +287,12 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
     }),
     onClaudeHookDecisionExpired(payload => {
       if (!isActiveRuntime()) return;
-      settledDecisionIds.add(payload.decisionId);
+      if (!initialHydrationDone) settledDecisionIds.add(payload.decisionId);
       cancelAttention(payload.decisionId);
     }),
     onClaudeHookDecisionResolved(payload => {
       if (!isActiveRuntime()) return;
-      settledDecisionIds.add(payload.decisionId);
+      if (!initialHydrationDone) settledDecisionIds.add(payload.decisionId);
       cancelAttention(payload.decisionId);
       const phase = payload.resolution === 'continueInTerminal' ? 'attention' : 'running';
       if (!useAppStore.getState().applyClaudeHookActivity(
@@ -343,7 +344,11 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
       scheduleStructuredDecision(decision);
       cancelClaudeActivityExpiry(decision.terminalId);
     }))
-    .catch(error => console.error('恢复 Claude Code 待处理决策失败:', error));
+    .catch(error => console.error('恢复 Claude Code 待处理决策失败:', error))
+    .finally(() => {
+      initialHydrationDone = true;
+      settledDecisionIds.clear();
+    });
 
   return () => {
     if (disposed) return;

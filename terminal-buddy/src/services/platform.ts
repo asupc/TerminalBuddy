@@ -1,9 +1,15 @@
 import { dockerRuntime, serverPlatform } from './browser/connection';
 import { isRemoteWorkspace } from './remoteWorkspace/config';
 
+/** 当前页面是否运行在 Tauri 原生容器（含 browser-demo 的 mock 运行时）。 */
+export function isTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
 /** 页面是否运行在浏览器；桌面远程工作区仍是原生窗口外壳。 */
 export function isBrowserClient(): boolean {
-  return import.meta.env.MODE === 'browser';
+  return import.meta.env.MODE === 'browser'
+    || (import.meta.env.MODE !== 'browser-demo' && !isTauriRuntime());
 }
 /** 业务数据是否来自 Web API（普通浏览器或桌面远程工作区）。 */
 export function isWebBackend(): boolean {
