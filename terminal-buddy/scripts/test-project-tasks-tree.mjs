@@ -107,6 +107,33 @@ assert.equal(def.profiles.length, 0);
 assert.deepEqual(def.sessions.map(leaf => (leaf.kind === 'terminal' ? leaf.session.id : '')), ['s3']);
 console.log('PASS: 项目分组、配置子分组、置顶与各类型会话归类');
 
+// 4b. 旧版 Web/App 会话把 canonicalize scope key 当项目路径：`//?/d:/...` 仍要归到项目
+const legacyModel = buildProjectTasksTree({
+  projects,
+  profiles: [],
+  sessions: [],
+  agentTabs: [
+    { key: 'agent:legacy-slashed', shape: 'native', sessionId: 'l1', title: '旧会话 1', provider: 'claude', projectPath: '//?/d:/work/beta/sub', openedAt: 1 },
+    { key: 'agent:legacy-verbatim', shape: 'native', sessionId: 'l2', title: '旧会话 2', provider: 'claude', projectPath: '\\\\?\\D:\\work\\alpha', openedAt: 2 },
+  ],
+  tabGroups: [],
+  gitChangesTab: null,
+  gitHistoryTab: null,
+  taskSummaries: {},
+});
+const legacyAlpha = legacyModel.groups.find(g => g.id === 'Alpha');
+const legacyBeta = legacyModel.groups.find(g => g.id === 'Beta');
+assert.ok(legacyAlpha && legacyBeta);
+assert.deepEqual(
+  legacyAlpha.sessions.map(leaf => (leaf.kind === 'agent' ? leaf.tab.key : leaf.kind)),
+  ['agent:legacy-verbatim'],
+);
+assert.deepEqual(
+  legacyBeta.sessions.map(leaf => (leaf.kind === 'agent' ? leaf.tab.key : leaf.kind)),
+  ['agent:legacy-slashed'],
+);
+console.log('PASS: 旧版 //?/ 与 \\\\?\\ 项目路径仍按项目归类');
+
 // 5. 搜索过滤：按任务摘要命中 Alpha 的会话
 const searchBySummary = buildProjectTasksTree({
   projects,
