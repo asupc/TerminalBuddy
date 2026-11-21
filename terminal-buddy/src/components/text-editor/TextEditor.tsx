@@ -1,7 +1,9 @@
-import { CSSProperties, FC, KeyboardEvent, PointerEvent, useEffect, useRef, useState, useCallback } from 'react';
+import { CSSProperties, FC, KeyboardEvent, PointerEvent, memo, useEffect, useRef, useState, useCallback } from 'react';
 import { Columns2, Eye, FileCode2, FileWarning, TriangleAlert, X } from 'lucide-react';
-import Editor, { DiffEditor, OnMount } from '@monaco-editor/react';
-import { editor as MonacoEditor, KeyMod, KeyCode } from 'monaco-editor';
+import Editor, { DiffEditor, type DiffOnMount, type OnMount } from '@monaco-editor/react';
+import { editor as MonacoEditor, KeyMod, KeyCode, type IDisposable } from 'monaco-editor';
+import { attachSafeDiffModelDisposal } from '../../utils/monacoLoader';
+import { onPageVisible } from '../../utils/visibility';
 import { readFileContent, writeFileContent, remoteUpload, getFileMeta, onTransferProgress, onTransferError } from '../../services/tauri';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '../../stores/appStore';
@@ -32,6 +34,33 @@ const MARKDOWN_PREVIEW_DEFAULT_WIDTH = 50;
 const MARKDOWN_PREVIEW_MIN_PANE_WIDTH = 240;
 const MARKDOWN_PREVIEW_RESIZER_WIDTH = 5;
 
+const TEXT_EDITOR_OPTIONS: MonacoEditor.IStandaloneEditorConstructionOptions = {
+  fontSize: 14,
+  minimap: { enabled: true },
+  automaticLayout: true,
+  scrollBeyondLastLine: false,
+  wordWrap: 'on',
+  tabSize: 4,
+  insertSpaces: true,
+  lineNumbers: 'on',
+  folding: true,
+  renderWhitespace: 'selection',
+};
+
+const TEXT_EDITOR_DIFF_OPTIONS: MonacoEditor.IDiffEditorConstructionOptions = {
+  fontSize: 14,
+  readOnly: true,
+  renderSideBySide: true,
+  automaticLayout: true,
+  scrollBeyondLastLine: false,
+  wordWrap: 'on',
+  renderOverviewRuler: false,
+};
+
+const handleConflictDiffMount: DiffOnMount = (diffEditor) => {
+  attachSafeDiffModelDisposal(diffEditor);
+};
+
 type MarkdownViewMode = 'source' | 'split' | 'preview';
 
 const MARKDOWN_VIEW_MODES: { mode: MarkdownViewMode; label: string; title: string; icon: typeof Columns2 }[] = [
@@ -56,14 +85,24 @@ function getEditorSourceLineAtTop(editor: MonacoEditor.IStandaloneCodeEditor): n
 }
 
 interface TextEditorProps {
+  sessionId?: string;
   filePath: string;
   isDirty: boolean;
-  onDirtyChange: (dirty: boolean) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  onSessionDirtyChange?: (sessionId: string, dirty: boolean) => void;
   isActive: boolean;
 }
 
-export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChange, isActive }) => {
+export const TextEditor: FC<TextEditorProps> = memo(({
+  sessionId,
+  filePath,
+  isDirty,
+  onDirtyChange,
+  onSessionDirtyChange,
+  isActive,
+}) => {
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const editorDisposablesRef = useRef<IDisposable[]>([]);
   const markdownPreviewRef = useRef<MarkdownPreviewHandle>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [content, setContent] = useState<string | null>(null);
@@ -94,6 +133,11 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
 
   isDirtyRef.current = isDirty;
   diffDiskContentRef.current = diffDiskContent;
+
+  const reportDirty = useCallback((dirty: boolean) => {
+    onDirtyChange?.(dirty);
+    if (sessionId !== undefined) onSessionDirtyChange?.(sessionId, dirty);
+  }, [onDirtyChange, onSessionDirtyChange, sessionId]);
 
   const loadFileContent = useCallback(async (forceReload = false) => {
     try {
@@ -156,21 +200,44 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   };
 
   useEffect(() => {
-    if (!isDraft) return;
-    autoSaveTimerRef.current = setInterval(() => flushDraftRef.current(), 3000);
+    if (!isDraft || !isActive) {
+      if (autoSaveTimerRef.current) {
+        clearInterval(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      return;
+    }
+    autoSaveTimerRef.current = setInterval(() => {
+      if (!document.hidden) flushDraftRef.current();
+    }, 3000);
     return () => {
       if (autoSaveTimerRef.current) {
         clearInterval(autoSaveTimerRef.current);
         autoSaveTimerRef.current = null;
       }
-      // 注意：这里不能落盘。依赖 [isDraft, filePath] 变化（另存为）时也会执行
-      // cleanup，闭包里的旧草稿路径已被删除，会把当前内容写回孤儿文件。落盘放在
-      // 下面的「仅卸载」effect 中，用 ref 取最新的路径/内容。
+      // 注意：这里不能在 filePath 变化时落盘。依赖变化（另存为）时闭包里的旧草稿路径
+      // 已被删除；停用标签或卸载由下面的 effect 统一落盘。
     };
-  }, [isDraft, filePath]);
+  }, [isDraft, isActive, filePath]);
 
-  // 组件卸载（关闭/切换标签）时立即落盘一次，避免 3 秒窗口内的草稿内容丢失。
-  useEffect(() => () => { flushDraftRef.current(); }, []);
+  const wasActiveRef = useRef(isActive);
+  useEffect(() => {
+    if (wasActiveRef.current && !isActive) {
+      flushDraftRef.current();
+    }
+    wasActiveRef.current = isActive;
+  }, [isActive]);
+
+  // 组件卸载（关闭/切换标签）时立即落盘并回收定时器和 Monaco 监听。
+  useEffect(() => () => {
+    flushDraftRef.current();
+    if (saveNotifyTimerRef.current) {
+      clearTimeout(saveNotifyTimerRef.current);
+      saveNotifyTimerRef.current = null;
+    }
+    editorDisposablesRef.current.forEach(d => d.dispose());
+    editorDisposablesRef.current = [];
+  }, []);
 
   // Initial load（走 loadFileContent，保证“先取 meta 后读内容”的防漏检顺序）
   useEffect(() => {
@@ -210,7 +277,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
     void checkDiskChange();
   }, [isActive, checkDiskChange]);
 
-  // Poll for external changes when active
+  // Poll for external changes when active and visible
   useEffect(() => {
     if (!isActive) {
       if (pollTimerRef.current) {
@@ -219,8 +286,12 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       }
       return;
     }
-    pollTimerRef.current = setInterval(checkDiskChange, 3000);
+    pollTimerRef.current = setInterval(() => {
+      if (!document.hidden) void checkDiskChange();
+    }, 3000);
+    const unlistenVisible = onPageVisible(() => { void checkDiskChange(); });
     return () => {
+      unlistenVisible();
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
@@ -351,6 +422,8 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   }, [markdownViewMode, markdownPreviewWidth, handleMarkdownPreviewScroll]);
 
   const handleEditorMount: OnMount = useCallback((editor) => {
+    editorDisposablesRef.current.forEach(d => d.dispose());
+    editorDisposablesRef.current = [];
     editorRef.current = editor;
     editor.updateOptions({ contextmenu: false });
 
@@ -362,9 +435,9 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       setMarkdownPreviewToggleRight(current => current === nextRight ? current : nextRight);
     };
     updateMarkdownPreviewTogglePosition(editor.getLayoutInfo());
-    editor.onDidLayoutChange(updateMarkdownPreviewTogglePosition);
+    editorDisposablesRef.current.push(editor.onDidLayoutChange(updateMarkdownPreviewTogglePosition));
 
-    editor.onDidScrollChange((event) => {
+    editorDisposablesRef.current.push(editor.onDidScrollChange((event) => {
       if (!event.scrollTopChanged) return;
       if (performance.now() < previewDrivingEditorUntilRef.current) return;
       pendingEditorSourceLineRef.current = getEditorSourceLineAtTop(editor);
@@ -373,7 +446,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
         editorScrollTimerRef.current = null;
         markdownPreviewRef.current?.scrollToSourceLine(pendingEditorSourceLineRef.current);
       }, 50);
-    });
+    }));
 
     const showSaveNotify = (type: 'saving' | 'success' | 'error', msg: string) => {
       if (saveNotifyTimerRef.current) clearTimeout(saveNotifyTimerRef.current);
@@ -383,7 +456,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       }
     };
 
-    editor.addAction({
+    editorDisposablesRef.current.push(editor.addAction({
       id: 'save-file',
       label: '保存文件',
       keybindings: [KeyMod.CtrlCmd | KeyCode.KeyS],
@@ -410,7 +483,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
           // 必须在进入 SSH 上传等长等待之前执行，否则等待期内的输入会被
           // 收尾处的 onDirtyChange(false) 误标为已保存（关标签即丢内容）。
           lastLoadedContentRef.current = value;
-          onDirtyChange(ed.getValue() === value);
+          reportDirty(ed.getValue() === value);
           const savedMeta = await getFileMeta(savePath).catch(() => null);
           if (savedMeta) diskMetaRef.current = savedMeta;
           setConflictNotice(false);
@@ -489,34 +562,34 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
           showSaveNotify('error', '保存失败');
         }
       },
-    });
+    }));
 
     if (isMarkdown) {
-      editor.addAction({
+      editorDisposablesRef.current.push(editor.addAction({
         id: 'cycle-markdown-view',
         label: '切换 Markdown 视图（源码/分屏/预览）',
         keybindings: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyV],
         run: () => setMarkdownViewMode(cycleMarkdownViewMode),
-      });
+      }));
     }
 
-    editor.addAction({
+    editorDisposablesRef.current.push(editor.addAction({
       id: 'format-document',
       label: '格式化文档',
       keybindings: [KeyMod.Shift | KeyMod.Alt | KeyCode.KeyF],
       run: async (ed) => {
         await ed.getAction('editor.action.formatDocument')?.run();
       },
-    });
+    }));
 
-    editor.onDidChangeModelContent(() => {
+    editorDisposablesRef.current.push(editor.onDidChangeModelContent(() => {
       if (!isInternalUpdateRef.current) {
         // 与最后加载/保存的内容比较，undo 回到原样时 dirty 也随之恢复为 false
-        onDirtyChange(editor.getValue() !== lastLoadedContentRef.current);
+        reportDirty(editor.getValue() !== lastLoadedContentRef.current);
       }
       isInternalUpdateRef.current = false;
-    });
-  }, [filePath, isMarkdown, onDirtyChange]);
+    }));
+  }, [filePath, isDraft, isMarkdown, reportDirty]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -563,7 +636,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
           }
         }
         // 与保存动作一致：以上传发起前的实时内容复核，避免等待窗口内的输入被误标已保存
-        onDirtyChange((editorRef.current?.getValue() ?? value) !== value);
+        reportDirty((editorRef.current?.getValue() ?? value) !== value);
       } catch (err) {
         console.error('Failed to save file:', err);
       }
@@ -571,12 +644,12 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
     setConflictNotice(false);
     setDiffDiskContent(null);
     notifiedModTimeRef.current = 0;
-  }, [filePath, content, onDirtyChange]);
+  }, [filePath, content, reportDirty]);
 
   const handleDiscard = useCallback(async () => {
     await loadFileContent(true);
-    onDirtyChange(false);
-  }, [loadFileContent, onDirtyChange]);
+    reportDirty(false);
+  }, [loadFileContent, reportDirty]);
 
   const openDiffView = useCallback(async () => {
     try {
@@ -634,16 +707,11 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
               language={getMonacoLanguage(filePath)}
               original={diffDiskContent}
               modified={content}
+              keepCurrentOriginalModel
+              keepCurrentModifiedModel
+              onMount={handleConflictDiffMount}
               theme="vs-dark"
-              options={{
-                fontSize: 14,
-                readOnly: true,
-                renderSideBySide: true,
-                automaticLayout: true,
-                scrollBeyondLastLine: false,
-                wordWrap: 'on',
-                renderOverviewRuler: false,
-              }}
+              options={TEXT_EDITOR_DIFF_OPTIONS}
             />
           </div>
         </div>
@@ -656,18 +724,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
               value={content}
               onMount={handleEditorMount}
               theme="vs-dark"
-              options={{
-                fontSize: 14,
-                minimap: { enabled: true },
-                automaticLayout: true,
-                scrollBeyondLastLine: false,
-                wordWrap: 'on',
-                tabSize: 4,
-                insertSpaces: true,
-                lineNumbers: 'on',
-                folding: true,
-                renderWhitespace: 'selection',
-              }}
+              options={TEXT_EDITOR_OPTIONS}
               onChange={(value) => {
                 if (value !== undefined) setContent(value);
               }}
@@ -698,7 +755,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
               })}
             </div>
           )}
-          {isMarkdown && (
+          {isMarkdown && markdownViewMode !== 'source' && (
             <>
               {markdownViewMode === 'split' && (
                 <div
@@ -791,4 +848,4 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       )}
     </div>
   );
-};
+});

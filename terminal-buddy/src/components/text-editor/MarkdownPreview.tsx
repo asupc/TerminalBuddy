@@ -12,7 +12,7 @@ import {
 } from 'react';
 import { convertFileSrc } from './../../services/remoteWorkspace/core';
 import DOMPurify from 'dompurify';
-import hljs from 'highlight.js';
+import hljs from '../../utils/hljs';
 import MarkdownIt from 'markdown-it';
 import { getFileName } from '../../utils/fileExtensions';
 import { MarkdownScrollSync } from './markdownScrollSync';
@@ -296,7 +296,7 @@ export const MarkdownPreview = forwardRef<MarkdownPreviewHandle, MarkdownPreview
     if (!scrollContainer) return;
     scrollSyncRef.current = new MarkdownScrollSync(scrollContainer);
     scrollToSourceLine(pendingSourceLineRef.current);
-  });
+  }, [html, scrollToSourceLine]);
 
   useEffect(() => () => {
     scrollRequestRef.current += 1;
