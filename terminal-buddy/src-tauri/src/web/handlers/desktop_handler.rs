@@ -236,12 +236,22 @@ fn jobs() -> &'static Mutex<HashMap<String, Arc<Job>>> {
 pub async fn job(State(_state): State<AppState>, _claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<Value>, ApiError> {
     let job = jobs().lock().map_err(|_| ApiError::Internal("后台任务锁不可用".to_string()))?.get(&id).cloned()
         .ok_or_else(|| ApiError::NotFound("后台任务不存在或已过期".to_string()))?;
-    let outcome = job.outcome.lock().map_err(|_| ApiError::Internal("后台任务状态锁不可用".to_string()))?;
-    Ok(Json(match &*outcome {
-        None => json!({"status":"running"}),
-        Some(Ok(value)) => json!({"status":"done", "value":value}),
-        Some(Err(error)) => json!({"status":"failed", "message":error}),
-    }))
+    let finished = {
+        let outcome = job.outcome.lock().map_err(|_| ApiError::Internal("后台任务状态锁不可用".to_string()))?;
+        match &*outcome {
+            None => None,
+            Some(Ok(value)) => Some(json!({"status":"done", "value":value})),
+            Some(Err(error)) => Some(json!({"status":"failed", "message":error})),
+        }
+    };
+    if let Some(payload) = finished {
+        // 终态被客户端取走后立即移除，避免大型响应体继续滞留 JOBS 队列 600s。
+        if let Ok(mut map) = jobs().lock() {
+            map.remove(&id);
+        }
+        return Ok(Json(payload));
+    }
+    Ok(Json(json!({"status":"running"})))
 }
 
 pub async fn invoke(State(state): State<AppState>, claims: ClaimsFromRequest, headers: axum::http::HeaderMap, Path(command): Path<String>, Json(args): Json<Value>) -> Result<Json<Value>, ApiError> {

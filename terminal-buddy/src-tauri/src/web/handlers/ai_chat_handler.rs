@@ -153,7 +153,11 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
         let (mut sender, mut receiver) = socket.split();
         let send_updates = async {
             let mut revision = initial.revision;
-            let mut previous: HashMap<String, String> = initial.messages.iter().map(|m| (m.id.clone(), m.text.clone())).collect();
+            let mut previous: HashMap<String, service::MessageFingerprint> = initial
+                .messages
+                .iter()
+                .map(|m| (m.id.clone(), service::message_fingerprint(m)))
+                .collect();
             let first = json!({"type":"session","session":initial}).to_string();
             if sender.send(Message::Text(first.into())).await.is_err() { return; }
             // 服务端每次真实更新会唤醒这里，避免每 300ms 克隆完整会话做无变化轮询。
@@ -186,8 +190,18 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
                 };
                 revision = session.revision;
                 // 首帧完整恢复，后续仅推送发生变化的消息，避免每段回复都重传全部历史。
-                let changed: Vec<_> = session.messages.iter().filter(|m| previous.get(&m.id) != Some(&m.text)).cloned().collect();
-                previous = session.messages.iter().map(|m| (m.id.clone(), m.text.clone())).collect();
+                let mut changed = Vec::new();
+                for m in &session.messages {
+                    let fp = service::message_fingerprint(m);
+                    if previous.get(&m.id) != Some(&fp) {
+                        previous.insert(m.id.clone(), fp);
+                        changed.push(m.clone());
+                    }
+                }
+                if previous.len() != session.messages.len() {
+                    let alive: std::collections::HashSet<&str> = session.messages.iter().map(|m| m.id.as_str()).collect();
+                    previous.retain(|id, _| alive.contains(id.as_str()));
+                }
                 let mut metadata = session; metadata.messages.clear();
                 // 实时帧只带子代理摘要预览，完整快照仍由首帧 / GET 提供。
                 metadata.trim_realtime_payload();

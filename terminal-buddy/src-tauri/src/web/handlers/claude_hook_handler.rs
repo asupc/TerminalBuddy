@@ -188,7 +188,9 @@ fn emit_terminal_event(
         crate::services::terminal_agent_relay::monitor_claude_activity(app, terminal_id);
     }
     let _ = app.emit("claude-hook-terminal-event", event.clone());
-    AppNotificationService::publish_terminal_result(&event, terminal_name(app, terminal_id));
+    if matches!(phase, "completed" | "failed") {
+        AppNotificationService::publish_terminal_result(&event, terminal_name(app, terminal_id));
+    }
     true
 }
 

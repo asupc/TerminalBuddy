@@ -76,8 +76,8 @@ pub async fn socket(
         .map_err(|_| ApiError::Unauthorized("登录已过期，请重新登录".into()))?;
     let jwt_secret = state.jwt_secret.clone();
     Ok(ws
-        .max_message_size(usize::MAX)
-        .max_frame_size(usize::MAX)
+        .max_message_size(64 * 1024)
+        .max_frame_size(64 * 1024)
         .on_upgrade(move |socket| async move {
             let (mut sender, mut receiver) = socket.split();
             let mut events = AppNotificationService::subscribe();

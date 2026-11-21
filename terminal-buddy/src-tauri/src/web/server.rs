@@ -56,20 +56,6 @@ impl HasJwtSecret for AppState {
     }
 }
 
-// Embed web frontend files for release mode
-/// 桌面版内嵌的完整网页界面：src/ 前端以 `--mode browser` 构建（独立服务端在 `/`
-/// 服务的就是这份产物）。手机浏览器同样使用这份完整界面（独立手机 SPA 已于
-/// 2026-10 退役，不再随构建打包）。
-///
-/// 用 rust-embed 的 compression 特性而非 include_dir：前端产物约 17 MB，deflate
-/// 后只剩 5 MB，二进制体积因此少约 12 MB。代价是每次响应要现场解压（几 MB 的
-/// js 约数十毫秒，静态资源仍走浏览器缓存），换取的是分发包体积。
-#[cfg(all(not(debug_assertions), feature = "desktop"))]
-#[derive(rust_embed::RustEmbed)]
-#[folder = "$CARGO_MANIFEST_DIR/../dist-web"]
-#[compression = "deflate"]
-struct WebDesktopDist;
-
 pub fn build_router(state: AppState) -> Router {
     // AI 会话的长文本和历史记录不设正文大小、请求处理时长或实时连接配额。
     let ai_router = Router::new()
@@ -256,12 +242,19 @@ pub fn build_router(state: AppState) -> Router {
     #[cfg(not(feature = "desktop"))]
     let router = router.route("/api/auth/setup", post(handlers::auth_handler::setup_admin));
 
-    // 桌面版 debug：完整界面一般走 vite dev server，直连场景退回服务 dist-web
-    // （需先执行过 npm run build:web:desktop；未构建时此处 404 属预期）。
+    // 桌面版 debug：完整界面一般走 vite dev server，直连场景回退到构建产物目录
+    // （优先使用 dist-web，若未单独构建则回退 dist）。
     #[cfg(all(debug_assertions, feature = "desktop"))]
     let router = {
         use tower_http::services::{ServeDir, ServeFile};
-        let dist = std::env::var("TERMINAL_BUDDY_WEB_DIST").unwrap_or_else(|_| format!("{}/../dist-web", env!("CARGO_MANIFEST_DIR")));
+        let dist = std::env::var("TERMINAL_BUDDY_WEB_DIST").unwrap_or_else(|_| {
+            let web_dist = format!("{}/../dist-web", env!("CARGO_MANIFEST_DIR"));
+            if std::path::Path::new(&web_dist).join("index.html").is_file() {
+                web_dist
+            } else {
+                format!("{}/../dist", env!("CARGO_MANIFEST_DIR"))
+            }
+        });
         router.fallback_service(
             ServeDir::new(&dist).not_found_service(ServeFile::new(std::path::Path::new(&dist).join("index.html"))),
         )
@@ -337,46 +330,50 @@ async fn fresh_frontend_document(
     response
 }
 
+/// 从 Tauri 内嵌的前端资源（dist/，Brotli 压缩）服务网页界面，避免与 rust-embed
+/// 双份打包同一套前端代码。Tauri AssetResolver 会自动回退 index.html（SPA 路由）。
 #[cfg(all(not(debug_assertions), feature = "desktop"))]
-async fn serve_embedded_file(req: axum::extract::Request) -> axum::response::Response {
-    // 所有路径（含手机浏览器）统一服务完整桌面界面（dist-web）。
-    serve_from_embedded(req.uri().path().trim_start_matches('/'))
-}
-
-/// 从内嵌的 dist-web 服务静态文件：空路径与未知路径回退 index.html（SPA 路由），
-/// 连 index.html 都缺（前端产物未随二进制嵌入）时 404。
-///
-/// rust-embed 在编译期把文件按 deflate 压缩存进二进制，`data` 因此必须现场解压，
-/// 无法零拷贝；解压结果直接作为响应体，不额外缓存 —— 静态资源由浏览器按
-/// 内容哈希文件名长期缓存，每个文件实际上只在首次访问时解压一次。
-#[cfg(all(not(debug_assertions), feature = "desktop"))]
-fn serve_from_embedded(path: &str) -> axum::response::Response {
-    let embedded = |name: &str| -> Option<rust_embed::EmbeddedFile> {
-        <WebDesktopDist as rust_embed::Embed>::get(name)
+async fn serve_embedded_file(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: axum::extract::Request,
+) -> axum::response::Response {
+    let path = req.uri().path().trim_start_matches('/');
+    let lookup = if path.is_empty() { "index.html" } else { path };
+    let Some(asset) = state.app_handle.asset_resolver().get(lookup.to_string()) else {
+        return StatusCode::NOT_FOUND.into_response();
     };
-    // SPA 路由（如 /settings）没有对应文件，回退 index.html；MIME 按实际命中的
-    // 文件名判定，不能拿请求路径猜。
-    let resolved = if path.is_empty() {
-        None
+    let is_html = asset.mime_type.starts_with("text/html");
+    let content_type = if is_html {
+        "text/html; charset=utf-8".to_string()
     } else {
-        embedded(path).map(|file| (path, file))
+        let guessed = guess_content_type(lookup);
+        if guessed != "application/octet-stream" {
+            guessed.to_string()
+        } else if !asset.mime_type.is_empty() {
+            asset.mime_type
+        } else {
+            guessed.to_string()
+        }
     };
-    let resolved = resolved.or_else(|| embedded("index.html").map(|file| ("index.html", file)));
-    match resolved {
-        Some((name, file)) => (
-            [(axum::http::header::CONTENT_TYPE, guess_content_type(name))],
-            file.data.into_owned(),
-        )
-            .into_response(),
-        None => axum::http::StatusCode::NOT_FOUND.into_response(),
+    let mut response = (
+        [(axum::http::header::CONTENT_TYPE, content_type)],
+        asset.bytes,
+    )
+        .into_response();
+    if path.starts_with("assets/") && !is_html {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
     }
+    response
 }
 
 #[cfg(all(not(debug_assertions), feature = "desktop"))]
 fn guess_content_type(path: &str) -> &'static str {
     match path.rsplit('.').next() {
         Some("html") => "text/html; charset=utf-8",
-        Some("js") => "application/javascript",
+        Some("js" | "mjs") => "application/javascript",
         Some("css") => "text/css",
         Some("json") => "application/json",
         Some("png") => "image/png",
@@ -384,8 +381,10 @@ fn guess_content_type(path: &str) -> &'static str {
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("svg") => "image/svg+xml",
         Some("ico") => "image/x-icon",
+        Some("ttf") => "font/ttf",
         Some("woff") => "font/woff",
         Some("woff2") => "font/woff2",
+        Some("wasm") => "application/wasm",
         _ => "application/octet-stream",
     }
 }

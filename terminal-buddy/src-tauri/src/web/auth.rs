@@ -79,8 +79,9 @@ where
 
 /// 生成一个随机的 256 位密钥（仅用于首次创建 jwt.key）。
 fn random_jwt_secret() -> String {
-    use rand::Rng;
-    let bytes: [u8; 32] = rand::thread_rng().gen();
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut bytes);
     hex::encode(bytes)
 }
 

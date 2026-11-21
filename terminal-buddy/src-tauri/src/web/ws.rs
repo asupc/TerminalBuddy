@@ -17,6 +17,13 @@ use std::time::Duration;
 use crate::runtime::Manager;
 use tokio::time::{self, Instant, MissedTickBehavior};
 
+#[derive(serde::Serialize)]
+struct WsOutputFrame<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    data: &'a str,
+}
+
 static WS_CONNECTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 const MAX_GLOBAL_WS_CONNECTIONS: usize = 50;
 const MAX_PER_TERMINAL_WS_CONNECTIONS: usize = 5;
@@ -209,12 +216,12 @@ async fn handle_terminal_socket(
                 data = output_rx.recv(), if history_sent => {
                     match data {
                         Some(WebTerminalEvent::Output(data)) => {
-                            // Manual JSON to avoid serde overhead on the hot path.
-                            let msg = format!("{{\"type\":\"output\",\"data\":{}}}", serde_json::Value::String(data.to_string()));
-                            if ws_sender.send(Message::Text(msg.into())).await.is_err() {
-                                break;
+                            if let Ok(msg) = serde_json::to_string(&WsOutputFrame { kind: "output", data: &data }) {
+                                if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+                                    break;
+                                }
+                                mark_sent();
                             }
-                            mark_sent();
                         }
                         Some(WebTerminalEvent::Viewport(viewport)) => {
                             if viewport_aware {
