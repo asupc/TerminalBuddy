@@ -26,7 +26,7 @@ use std::collections::VecDeque;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use crate::runtime::{AppHandle, Emitter, Manager, State};
@@ -36,10 +36,20 @@ use uuid::Uuid;
 const TERMINAL_DATA_IDLE_BUFFER_INTERVAL: Duration = Duration::from_millis(25);
 const TERMINAL_DATA_MAX_BUFFER_INTERVAL: Duration = Duration::from_millis(50);
 #[cfg(feature = "desktop")]
-const VSCODE_TERMINAL_DATA_BUFFER_INTERVAL: Duration = Duration::from_millis(5);
+const VSCODE_TERMINAL_DATA_BUFFER_INTERVAL: Duration = Duration::from_millis(16);
 const TERMINAL_DATA_CHANNEL_CAPACITY: usize = 32;
 const TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS: usize = 1000;
 const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 2 * 1024 * 1024;
+/// 桌面端已下发但尚未收到渲染回执的字符上限。Tauri 2 在 Windows 上把每个
+/// `emit` 拼成一段 JS 源码交给 WebView2 `ExecuteScript`：渲染进程一旦变慢或
+/// 崩溃，未执行的脚本会无界堆积在浏览器进程里（实测涨到 10GB 后才随进程退出
+/// 释放）。超过该上限时暂停读取 PTY，让子进程在管道上自然阻塞，从源头限流。
+const TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS: usize = 512 * 1024;
+/// 回执把在途字符降到该水位以下后恢复读取，避免在阈值附近反复启停。
+const TERMINAL_DESKTOP_INFLIGHT_RESUME_CHARS: usize = 128 * 1024;
+/// 等待回执的最长时间：渲染端异常（旧版本不回执、页面卸载）时不能把终端
+/// 永久卡死，超时后继续读取，由环形缓冲自身的上限兜底。
+const TERMINAL_DESKTOP_FLOW_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub fn default_terminal_type() -> &'static str {
     if cfg!(windows) { "powershell" } else { "bash" }
@@ -148,6 +158,81 @@ impl TerminalOutputBuffer {
     }
 }
 
+/// 桌面端输出流控：记录已 emit 但尚未被渲染端回执的字符数。
+///
+/// 终端输出是持续、无上限的：只靠环形缓冲限制「保留多少」，限制不了
+/// 「已经塞给 WebView 多少」。流控把 PTY 读取速度绑定到前端实际渲染速度，
+/// 是防止 WebView2 浏览器进程堆积 GB 级待执行脚本的关键一环。
+struct OutputFlowControl {
+    state: Mutex<OutputFlowState>,
+    resume: Condvar,
+}
+
+#[derive(Default)]
+struct OutputFlowState {
+    /// 已下发、尚未回执的字符数（近似 UTF-16 码元数）。
+    outstanding: usize,
+    /// 终端已关闭时唤醒所有等待者并停止限流。
+    closed: bool,
+}
+
+impl OutputFlowControl {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(OutputFlowState::default()),
+            resume: Condvar::new(),
+        }
+    }
+
+    fn add(&self, chars: usize) {
+        if chars == 0 { return; }
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.closed { return; }
+        state.outstanding = state.outstanding.saturating_add(chars);
+    }
+
+    fn acknowledge(&self, chars: usize) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.outstanding = state.outstanding.saturating_sub(chars);
+        if state.outstanding <= TERMINAL_DESKTOP_INFLIGHT_RESUME_CHARS {
+            self.resume.notify_all();
+        }
+    }
+
+    /// 在途字符超过上限时阻塞，直到前端回执把它降回低水位或等待超时。
+    fn wait_for_capacity(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.outstanding <= TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS {
+            return;
+        }
+        let deadline = Instant::now() + TERMINAL_DESKTOP_FLOW_WAIT_TIMEOUT;
+        while !state.closed && state.outstanding > TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS {
+            let now = Instant::now();
+            if now >= deadline { break; }
+            let (next, _) = self
+                .resume
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(|e| e.into_inner());
+            state = next;
+        }
+    }
+
+    /// 在途字符是否已超过上限。超过时桌面端不再接收新事件，避免渲染进程
+    /// 崩溃或卡死后脚本继续在 WebView2 浏览器进程里累积。
+    fn is_saturated(&self) -> bool {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.closed || state.outstanding > TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS
+    }
+
+    /// teardown 时调用：不再等待回执，避免关闭流程被卡住。
+    fn close(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.closed = true;
+        state.outstanding = 0;
+        self.resume.notify_all();
+    }
+}
+
 /// 定位 PowerShell 7.x 的 pwsh.exe：先查标准安装路径，再在 PATH 中查找
 fn resolve_pwsh_exe() -> Result<String, String> {
     #[cfg(not(windows))]
@@ -199,6 +284,8 @@ pub struct TerminalInstance {
     current_directory: Option<String>,
     backend: TerminalBackend,
     output_buffer: Arc<Mutex<TerminalOutputBuffer>>,
+    /// 桌面端渲染回执流控；与 output_buffer 一起在 teardown 时关闭。
+    output_flow: Arc<OutputFlowControl>,
     current_rows: u16,
     current_cols: u16,
 }
@@ -445,6 +532,23 @@ fn format_exit_code(code: Option<u32>) -> String {
     }
 }
 
+/// 未指定启动目录时的默认工作目录（Windows 桌面端）。
+///
+/// PTY 子进程默认继承 TerminalBuddy 进程的 cwd；应用由开机自启或没有“起始位置”
+/// 的快捷方式拉起时，该目录会是 `C:\Windows\System32`，新会话便会落在系统目录。
+/// 因此 Windows 下显式回落到用户主目录；非 Windows 服务端继续沿用进程工作目录
+/// （Docker 镜像通过 `WORKDIR` 指定 `/workspace`，不应被改写）。
+fn default_terminal_cwd() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        dirs::home_dir().filter(|path| path.is_dir())
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 fn spawn_terminal_backend(
     _app: &AppHandle,
     _mode: &TerminalLoadingMode,
@@ -527,6 +631,7 @@ fn spawn_output_forwarder(
     terminal_id: String,
     app: AppHandle,
     output_buffer: Arc<Mutex<TerminalOutputBuffer>>,
+    output_flow: Arc<OutputFlowControl>,
     buffer_mode: TerminalOutputBufferMode,
 ) {
     thread::spawn(move || {
@@ -600,6 +705,7 @@ fn spawn_output_forwarder(
                 Err(_) => Arc::from(String::from_utf8_lossy(&batch).to_string()),
             };
             if !output.is_empty() {
+                let emitted_chars = output.chars().count();
                 let desktop_attached = {
                     let mut buffer = output_buffer.lock().unwrap_or_else(|e| e.into_inner());
                     let attached = buffer.push(output.clone());
@@ -609,7 +715,17 @@ fn spawn_output_forwarder(
                     attached
                 };
                 if desktop_attached {
-                    let _ = app.emit(&format!("terminal_output_{}", terminal_id), output.clone());
+                    // 渲染端长期不回执（页面已卸载 / 渲染进程崩溃）时不再向桌面
+                    // emit：那些脚本只会堆在浏览器进程里，等终端重新挂载时用
+                    // drain 快照恢复即可。Web 广播与环形缓冲不受影响。
+                    if !output_flow.is_saturated() {
+                        // 先记账再 emit：渲染端可能在 emit 返回前就已回执。
+                        output_flow.add(emitted_chars);
+                        let _ = app.emit(&format!("terminal_output_{}", terminal_id), output.clone());
+                    }
+                    // 在途过多时暂停读取：data_rx 与 PTY 管道被填满后，子进程会
+                    // 在 write 上自然阻塞，内存不再随输出量增长。
+                    output_flow.wait_for_capacity();
                 }
             }
 
@@ -721,6 +837,8 @@ pub fn teardown_terminal(app: &AppHandle, terminal_id: &str, reason: TerminalClo
         terminal_id,
         reason.as_str()
     ));
+    // 唤醒可能正阻塞在流控上的转发线程，否则它要等满超时才退出。
+    instance.output_flow.close();
     release_terminal_resources(app, terminal_id, Some(instance.backend), reason);
     // 采样缓存按 terminal_id 持有上一帧计数，关闭时一并清理，防止长期运行累积。
     if let Some(cache) = app.try_state::<crate::commands::MonitorCache>() {
@@ -956,6 +1074,7 @@ fn finalize_terminal_creation(
     terminal_id: &str,
     app: AppHandle,
     output_buffer: Arc<Mutex<TerminalOutputBuffer>>,
+    output_flow: Arc<OutputFlowControl>,
     output_buffer_mode: TerminalOutputBufferMode,
     debug_prefix: &str,
     boot_prefix: &str,
@@ -965,6 +1084,7 @@ fn finalize_terminal_creation(
         terminal_id.to_string(),
         app,
         output_buffer,
+        output_flow,
         output_buffer_mode,
     );
     log_debug(&format!("[{}] DONE, id={}", debug_prefix, terminal_id));
@@ -1339,6 +1459,16 @@ impl TerminalService {
             log_prefix,
             boot_prefix,
         } = spec;
+        // 没有显式启动目录时（空白终端、未绑定项目的配置等），Windows 回落用户主目录：
+        // PTY 会继承桌面进程 cwd，而开机自启/无起始位置的快捷方式会把它设成
+        // C:\Windows\System32。解析放在这里，让启动、目录上报与任务跟踪保持一致。
+        // 同时还原 `\\?\` / `//?/` 前缀，避免 cmd 把它当成 UNC 后回落到系统目录。
+        let startup_path = startup_path
+            .map(|path| PathService::normalize_child_process_path_str(path.trim()))
+            .filter(|path| !path.is_empty())
+            .or_else(|| {
+                default_terminal_cwd().map(|path| path.to_string_lossy().into_owned())
+            });
         let mut creation = TerminalCreation::new(
             &terminal_id,
             &terminal_type,
@@ -1381,6 +1511,7 @@ impl TerminalService {
 
         creation.stage = "insert-instance";
         let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new(init_rows, init_cols)));
+        let output_flow = Arc::new(OutputFlowControl::new());
         let backend = creation.backend.take().expect("backend 刚刚存入守卫");
         self.insert_instance(TerminalInstance {
             id: terminal_id.clone(),
@@ -1395,6 +1526,7 @@ impl TerminalService {
             current_directory: startup_path.clone(),
             backend,
             output_buffer: output_buffer.clone(),
+            output_flow: output_flow.clone(),
             current_rows: init_rows,
             current_cols: init_cols,
             takeover: Default::default(),
@@ -1416,6 +1548,7 @@ impl TerminalService {
             &terminal_id,
             app,
             output_buffer,
+            output_flow,
             output_buffer_mode,
             log_prefix,
             boot_prefix,
@@ -1686,16 +1819,25 @@ impl TerminalService {
         self.authorize(id, actor, TerminalAction::View)
             .map_err(|error| error.to_string())?;
         // 回执对 VsCode 后端要写插件 stdin（可能阻塞），同样移出全局锁（审查 H-2）。
-        let handle = {
+        let (handle, output_flow) = {
             let instances = self.lock_instances();
-            instances
+            let instance = instances
                 .get(id)
-                .ok_or_else(|| TerminalAccessError::NotFound.to_string())?
-                .backend
-                .input_handle()
-                .ok_or_else(|| "Terminal writer not available".to_string())?
+                .ok_or_else(|| TerminalAccessError::NotFound.to_string())?;
+            // 输入句柄可能不存在（只读/已收尾的 handoff 终端）；流控回执仍必须生效，
+            // 否则桌面端在途字符永远降不下来，终端会被限流到停住。
+            (
+                instance.backend.input_handle(),
+                instance.output_flow.clone(),
+            )
         };
-        handle.acknowledge_output(char_count)
+        // 流控回执对所有后端生效：Default / Handoff 没有插件侧水位，但同样需要
+        // 把桌面端在途字符数降下来，否则高吞吐输出会把 WebView2 的脚本队列撑爆。
+        output_flow.acknowledge(char_count as usize);
+        match handle {
+            Some(handle) => handle.acknowledge_output(char_count),
+            None => Ok(()),
+        }
     }
 
     pub fn terminal_loading_mode(
@@ -1782,6 +1924,7 @@ impl TerminalService {
             crate::services::llm_provider_service::cleanup_temp_settings_for_terminal(&instance.id);
             ssh_service.close_session(&instance.id);
             web_state.close_all(&instance.id);
+            instance.output_flow.close();
             instance.backend.kill_without_wait();
         }
     }
@@ -1953,6 +2096,7 @@ impl TerminalService {
             terminal_id, display_name, init_cols, init_rows
         ));
         let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new(init_rows, init_cols)));
+        let output_flow = Arc::new(OutputFlowControl::new());
         crate::services::terminal_task_service::prepare_launch(
             &terminal_id, default_terminal_type(), None, &[], Vec::new(),
         );
@@ -1977,6 +2121,7 @@ impl TerminalService {
             current_directory: None,
             backend: TerminalBackend::Handoff(handoff),
             output_buffer: output_buffer.clone(),
+            output_flow: output_flow.clone(),
             current_rows: init_rows,
             current_cols: init_cols,
             takeover: Default::default(),
@@ -1987,6 +2132,7 @@ impl TerminalService {
             &terminal_id,
             app.clone(),
             output_buffer,
+            output_flow,
             TerminalOutputBufferMode::Default,
             "create-handoff",
             "create_handoff_terminal",
@@ -2236,5 +2382,88 @@ mod size_clamp_tests {
         assert_eq!(resolve_terminal_size(0, 0), (24, 80));
         assert_eq!(resolve_terminal_size(65535, 65535), (500, 500));
         assert_eq!(resolve_terminal_size(30, 100), (30, 100));
+    }
+}
+
+#[cfg(test)]
+mod default_cwd_tests {
+    use super::default_terminal_cwd;
+
+    /// Windows 桌面端必须给 PTY 一个显式主目录，避免继承启动方的 `C:\Windows`；
+    /// 非 Windows 服务端保留进程工作目录（Docker 的 `/workspace`）。
+    #[test]
+    fn default_cwd_matches_platform_policy() {
+        let cwd = default_terminal_cwd();
+        #[cfg(not(windows))]
+        assert!(cwd.is_none());
+        #[cfg(windows)]
+        if let Some(path) = cwd {
+            assert!(path.is_dir(), "默认工作目录必须是可访问的目录");
+        }
+    }
+}
+
+#[cfg(test)]
+mod output_flow_tests {
+    use super::{
+        OutputFlowControl, TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS,
+    };
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    fn outstanding(flow: &OutputFlowControl) -> usize {
+        flow.state.lock().unwrap().outstanding
+    }
+
+    /// 回执把在途字符降到低水位后，阻塞中的转发线程必须立刻被唤醒。
+    #[test]
+    fn acknowledge_releases_blocked_forwarder() {
+        let flow = Arc::new(OutputFlowControl::new());
+        flow.add(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1);
+        let waiter = {
+            let flow = flow.clone();
+            thread::spawn(move || flow.wait_for_capacity())
+        };
+        thread::sleep(Duration::from_millis(30));
+        let started = Instant::now();
+        flow.acknowledge(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1);
+        waiter.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(outstanding(&flow), 0);
+    }
+
+    /// teardown 关闭流控后不能还让转发线程等满超时。
+    #[test]
+    fn close_releases_blocked_forwarder() {
+        let flow = Arc::new(OutputFlowControl::new());
+        flow.add(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1);
+        let waiter = {
+            let flow = flow.clone();
+            thread::spawn(move || flow.wait_for_capacity())
+        };
+        thread::sleep(Duration::from_millis(30));
+        let started = Instant::now();
+        flow.close();
+        waiter.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    /// 重复回执或回执大于在途数时不能下溢成巨大值，否则流控会永久失效。
+    #[test]
+    fn acknowledge_saturates_at_zero() {
+        let flow = OutputFlowControl::new();
+        flow.add(5);
+        flow.acknowledge(100);
+        assert_eq!(outstanding(&flow), 0);
+        flow.wait_for_capacity();
+        flow.add(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS);
+        flow.wait_for_capacity();
+        assert_eq!(outstanding(&flow), TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS);
+        assert!(!flow.is_saturated());
+        flow.add(1);
+        assert!(flow.is_saturated());
+        flow.acknowledge(1);
+        assert!(!flow.is_saturated());
     }
 }

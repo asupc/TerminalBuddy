@@ -107,6 +107,38 @@ fn set_status(status: DataDirStatus) {
 }
 
 impl PathService {
+    /// 子进程（CreateProcess / Node / CLI）可用的普通路径。
+    ///
+    /// `std::fs::canonicalize` 在 Windows 返回扩展长度路径（`\\?\C:\...`、
+    /// `\\?\UNC\server\share`）；`CreateProcess` 的 `lpCurrentDirectory`、Node 以及
+    /// 部分 CLI 不接受该前缀——cmd.exe 会把它当成 UNC 并回落到 `C:\Windows`。
+    /// 来自 Web / App API 的 scope key 还可能是等价的小写正斜杠形式
+    /// （`//?/d:/project`）。这里统一还原为普通盘符 / UNC 路径。
+    pub fn normalize_child_process_path(path: &Path) -> PathBuf {
+        #[cfg(windows)]
+        {
+            let slashed = path.to_string_lossy().replace('/', "\\");
+            if let Some(rest) = slashed.strip_prefix(r"\\?\UNC\") {
+                return PathBuf::from(format!(r"\\{rest}"));
+            }
+            if let Some(rest) = slashed.strip_prefix(r"\\?\") {
+                return PathBuf::from(rest);
+            }
+            PathBuf::from(slashed)
+        }
+        #[cfg(not(windows))]
+        {
+            path.to_path_buf()
+        }
+    }
+
+    /// 字符串版本：用于来自 JSON / 前端 / HTTP 的路径。
+    pub fn normalize_child_process_path_str(path: &str) -> String {
+        Self::normalize_child_process_path(Path::new(path))
+            .to_string_lossy()
+            .into_owned()
+    }
+
     pub fn get_default_base_dir() -> PathBuf {
         if let Some(directory) = std::env::var_os("TERMINAL_BUDDY_DATA_DIR") {
             return PathBuf::from(directory);
@@ -476,5 +508,37 @@ mod tests {
             handle.join().unwrap().unwrap();
         }
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn child_process_path_is_unchanged_on_non_windows() {
+        #[cfg(not(windows))]
+        assert_eq!(
+            PathService::normalize_child_process_path_str("/workspace/app"),
+            "/workspace/app"
+        );
+    }
+
+    /// Windows：`canonicalize` 的 `\\?\` 前缀与 Web/App 传入的 `//?/` key
+    /// 都不能直接交给 cmd / Claude CLI，否则会回落到 C:\Windows。
+    #[cfg(windows)]
+    #[test]
+    fn child_process_path_strips_verbatim_and_slashed_prefixes() {
+        assert_eq!(
+            PathService::normalize_child_process_path_str(r"\\?\D:\quantum"),
+            r"D:\quantum"
+        );
+        assert_eq!(
+            PathService::normalize_child_process_path_str("//?/d:/quantum"),
+            r"d:\quantum"
+        );
+        assert_eq!(
+            PathService::normalize_child_process_path_str(r"\\?\UNC\server\share\dir"),
+            r"\\server\share\dir"
+        );
+        assert_eq!(
+            PathService::normalize_child_process_path_str(r"D:\quantum"),
+            r"D:\quantum"
+        );
     }
 }

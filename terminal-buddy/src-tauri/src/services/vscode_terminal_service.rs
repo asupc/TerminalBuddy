@@ -613,28 +613,7 @@ fn expected_node_arch() -> &'static str {
 }
 
 fn normalize_path_for_child_process(path: &Path) -> PathBuf {
-    #[cfg(windows)]
-    {
-        use std::ffi::OsString;
-        use std::os::windows::ffi::{OsStrExt, OsStringExt};
-
-        const VERBATIM_PREFIX: &[u16] = &[92, 92, 63, 92];
-        const VERBATIM_UNC_PREFIX: &[u16] = &[92, 92, 63, 92, 85, 78, 67, 92];
-
-        let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
-        if wide.starts_with(VERBATIM_UNC_PREFIX) {
-            let normalized: Vec<u16> = [92, 92]
-                .into_iter()
-                .chain(wide[VERBATIM_UNC_PREFIX.len()..].iter().copied())
-                .collect();
-            return PathBuf::from(OsString::from_wide(&normalized));
-        }
-        if wide.starts_with(VERBATIM_PREFIX) {
-            return PathBuf::from(OsString::from_wide(&wide[VERBATIM_PREFIX.len()..]));
-        }
-    }
-
-    path.to_path_buf()
+    crate::services::PathService::normalize_child_process_path(path)
 }
 
 #[cfg(all(test, windows))]

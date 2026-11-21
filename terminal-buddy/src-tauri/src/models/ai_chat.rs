@@ -242,7 +242,26 @@ pub struct AiSession {
 
 fn is_zero_u32(value: &u32) -> bool { *value == 0 }
 
+/// 实时帧里子代理摘要只保留的预览字符数。完整摘要是子代理的长篇任务结果
+/// （常见几十 KB），而实时帧按流式节奏反复下发；全量重发会让单帧膨胀到
+/// 几十 KB，在 Tauri `eval` 投递链路上堆积成 GB 级的内存。完整摘要仍可从
+/// `get` / 历史会话快照读取，界面只在 chip 的 title 里用它的开头。
+const AGENT_SUMMARY_PREVIEW_CHARS: usize = 240;
+
 impl AiSession {
+    /// 剥离实时帧不需要的大字段：当前只有子代理 `summary` 会随任务结果无限增长。
+    /// 流式更新（Tauri emit / WS update / 会话列表）统一走这里，完整快照保持原样。
+    pub fn trim_realtime_payload(&mut self) {
+        for agent in &mut self.agents {
+            let Some(summary) = agent.summary.as_ref() else { continue };
+            let mut chars = summary.chars();
+            let preview: String = chars.by_ref().take(AGENT_SUMMARY_PREVIEW_CHARS).collect();
+            if chars.next().is_some() {
+                agent.summary = Some(format!("{preview}…"));
+            }
+        }
+    }
+
     /// 通知连接只读取元数据，不复制或传输整段对话历史。
     pub fn metadata(&self) -> Self {
         Self {

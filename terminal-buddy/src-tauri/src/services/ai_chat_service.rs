@@ -10,7 +10,7 @@ use base64::Engine;
 use serde::Deserialize as _;
 use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
-    process::{Child, ChildStdin, Command, Stdio}, sync::{Arc, Mutex, OnceLock, mpsc, atomic::{AtomicBool, AtomicUsize, Ordering}},
+    process::{Child, ChildStdin, Command, Stdio}, sync::{Arc, Mutex, OnceLock, Weak, mpsc, atomic::{AtomicBool, AtomicUsize, Ordering}},
     thread, time::{Duration, Instant}};
 use uuid::Uuid;
 
@@ -55,13 +55,46 @@ struct Emitted {
     messages: HashMap<String, (String, Option<String>, Option<String>, bool)>,
 }
 
+/// 实时帧最小推送间隔：Claude/Codex 的 token 级增量可达每秒上百条，
+/// 逐条 `eval` 会让 WebView2 浏览器进程的 CDP 队列无限增长（实测堆积到 GB 级），
+/// 前端也来不及消化。节流后只保留首帧与一个尾帧，尾帧保证最终状态不丢。
+const AI_EMIT_MIN_INTERVAL: Duration = Duration::from_millis(150);
+
+#[derive(Default)]
+struct EmitGate {
+    last: Option<Instant>,
+    /// 已有一个尾帧在等待，避免同一会话堆积多个调度线程。
+    scheduled: bool,
+}
+
 struct Cell {
     data: Mutex<AiSession>,
     control: Mutex<Option<WorkerControl>>,
     summary: Mutex<SessionSummaryTracker>,
     emitted: Mutex<Emitted>,
+    emit_gate: Mutex<EmitGate>,
+    /// 节流尾帧需要拿回 Arc 才能在线程里安全地延迟推送；
+    /// 单元测试直接构造 Cell 时为空，退化为立即推送。
+    weak_self: OnceLock<Weak<Cell>>,
     deleted: AtomicBool,
     path: PathBuf,
+}
+
+impl Cell {
+    fn new(data: AiSession, path: PathBuf) -> Arc<Self> {
+        let cell = Arc::new(Self {
+            data: Mutex::new(data),
+            control: Mutex::new(None),
+            summary: Mutex::default(),
+            emitted: Mutex::default(),
+            emit_gate: Mutex::default(),
+            weak_self: OnceLock::new(),
+            deleted: AtomicBool::new(false),
+            path,
+        });
+        let _ = cell.weak_self.set(Arc::downgrade(&cell));
+        cell
+    }
 }
 fn registry() -> &'static Mutex<HashMap<PathBuf, Arc<Cell>>> {
     static REGISTRY: OnceLock<Mutex<HashMap<PathBuf, Arc<Cell>>>> = OnceLock::new();
@@ -76,9 +109,63 @@ fn touch(data: &mut AiSession) {
     data.updated_at = chrono::Utc::now().timestamp_millis();
     data.revision = data.revision.saturating_add(1).max(data.updated_at.max(0) as u64);
 }
+enum EmitPlan {
+    Now,
+    Later(Duration),
+}
+
 /// 实时推送会话变化：载荷与 HTTP WS 的 `update` 帧同构（session 元数据 + 变化的消息），
 /// 桌面 webview 与浏览器事件通道共用同一套解析逻辑。
+///
+/// 入口按会话节流：流式 token 级更新最多每 `AI_EMIT_MIN_INTERVAL` 触发一次 `eval`，
+/// 并在窗口结束时补一帧最新状态，保证最终内容不丢。
 fn emit_update(cell: &Cell) {
+    if APP.get().is_none() { return; }
+    let plan = {
+        let mut gate = match cell.emit_gate.lock() {
+            Ok(gate) => gate,
+            Err(error) => error.into_inner(),
+        };
+        match gate.last {
+            Some(last) if last.elapsed() < AI_EMIT_MIN_INTERVAL => {
+                // 窗口内只允许一个尾帧：期间的所有变化由尾帧统一读取最新 revision。
+                if gate.scheduled { return; }
+                gate.scheduled = true;
+                EmitPlan::Later(AI_EMIT_MIN_INTERVAL.saturating_sub(last.elapsed()))
+            }
+            _ => {
+                gate.last = Some(Instant::now());
+                EmitPlan::Now
+            }
+        }
+    };
+    match plan {
+        EmitPlan::Now => emit_update_now(cell),
+        EmitPlan::Later(delay) => {
+            // 单元测试里直接构造的 Cell 没有 weak_self，退化为立即推送。
+            let Some(weak) = cell.weak_self.get().cloned() else {
+                if let Ok(mut gate) = cell.emit_gate.lock() { gate.scheduled = false; }
+                emit_update_now(cell);
+                return;
+            };
+            thread::spawn(move || {
+                thread::sleep(delay);
+                let Some(cell) = weak.upgrade() else { return; };
+                {
+                    let mut gate = match cell.emit_gate.lock() {
+                        Ok(gate) => gate,
+                        Err(error) => error.into_inner(),
+                    };
+                    gate.scheduled = false;
+                    gate.last = Some(Instant::now());
+                }
+                emit_update_now(&cell);
+            });
+        }
+    }
+}
+
+fn emit_update_now(cell: &Cell) {
     let Some(app) = APP.get() else { return; };
     if cell.deleted.load(Ordering::Acquire) { return; }
     let data = match cell.data.lock() { Ok(data) => data, Err(_) => return };
@@ -106,7 +193,9 @@ fn emit_update(cell: &Cell) {
     }
     emitted.revision = data.revision;
     drop(emitted);
-    let metadata = data.metadata();
+    let mut metadata = data.metadata();
+    // 子代理摘要是长篇任务结果，实时帧只带预览，避免每帧几十 KB 的冗余载荷。
+    metadata.trim_realtime_payload();
     drop(data);
     let _ = app.emit("ai-session-update", json!({"type":"update","session":metadata,"messages":changed}));
 }
@@ -139,6 +228,11 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
         let bytes = fs::read(&path).map_err(|_| "AI 会话不存在")?;
         let mut data: AiSession = serde_json::from_slice(&bytes).map_err(|_| "AI 会话文件损坏")?;
         if data.owner != owner { return Err("AI 会话不存在".into()); }
+        // 旧版 Web / App 创建路径可能把 scope key 或 `\\?\` 前缀直接落盘；
+        // 载入时还原一次，避免 CLI 的 cwd 回落到 C:\Windows。
+        let normalized_project_path = PathService::normalize_child_process_path_str(&data.project_path);
+        let project_path_migrated = normalized_project_path != data.project_path;
+        data.project_path = normalized_project_path;
         // 兼容旧会话：尚未发送的排队消息只保留在队列，真正执行时再加入正文。
         let pending_ids: HashSet<_> = data.pending_inputs.iter().map(|item| item.request_id.as_str()).collect();
         let previous_count = data.messages.len();
@@ -148,8 +242,10 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
         // 没有该字段，改用 tool_use 对应的工具名兜底（子代理调用才会是 Task / Agent）。
         let before_agents = data.agents.len();
         prune_non_subagent_agents(&mut data);
-        let migrated = data.messages.len() != previous_count || data.agents.len() != before_agents;
-        if migrated { touch(&mut data); }
+        let content_migrated = data.messages.len() != previous_count || data.agents.len() != before_agents;
+        let migrated = content_migrated || project_path_migrated;
+        // 仅路径迁移不推进 updated_at / revision，避免会话列表因一次后台修复而重排。
+        if content_migrated { touch(&mut data); }
         let interrupted = matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping");
         if interrupted {
             data.status = "interrupted".into(); data.approvals.clear();
@@ -159,7 +255,7 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
             data.error = Some("服务已重启，上次执行已中断，可以继续发送消息".into()); touch(&mut data);
             data.result_revision = data.revision;
         }
-        let cell = Arc::new(Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path: path.clone() });
+        let cell = Cell::new(data, path.clone());
         // 重启中断标记与结束版本一起落盘，避免再次重启时重复生成同一结束事件。
         if interrupted || migrated { persist(&cell)?; }
         registry.insert(path.clone(), cell);
@@ -184,6 +280,8 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
                     if let Ok(data) = cell.data.lock() {
                         let mut meta = data.metadata();
                         meta.desktop_open = is_desktop_open(&meta.id);
+                        // 列表是摘要视图：子代理长篇结果不随列表下发。
+                        meta.trim_realtime_payload();
                         sessions.push(meta);
                     };
                 }
@@ -194,6 +292,11 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
     Ok(sessions)
 }
 fn new_session(owner: &str, input: CreateAiSession) -> Result<AiSession> {
+    let mut input = input;
+    // Web / App 的 HTTP 创建路径会把 scope key（`//?/d:/project`）当成项目路径传回来；
+    // canonicalize 也可能带 `\\?\` 前缀。CLI 经 cmd.exe 启动时这些形式会被当成 UNC，
+    // 回落到 C:\Windows，因此统一还原成普通盘符路径。
+    input.project_path = PathService::normalize_child_process_path_str(&input.project_path);
     if !matches!(input.provider.as_str(), "claude" | "codex") { return Err("请选择 Claude 或 Codex".into()); }
     if input.model.as_ref().is_some_and(|v| !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/[]@+".contains(c))) { return Err("模型名称无效".into()); }
     if let Some(resume_id) = input.resume_session_id.clone().filter(|id| !id.trim().is_empty()) {
@@ -231,7 +334,7 @@ fn emit_created(data: &AiSession) {
 
 fn save_new_session(mut data: AiSession) -> Result<AiSession> {
     seed_context_window(&mut data);
-    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{}.json", data.id)) });
+    let cell = Cell::new(data.clone(), directory()?.join(format!("{}.json", data.id)));
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
     // 新建会话即时广播：桌面端据此补开聊天标签（不抢焦点），
@@ -331,14 +434,14 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
     let todos = todos_from_messages(&messages);
     let mut data = AiSession { id: id.clone(), title, provider: provider.to_string(),
         provider_id, provider_name: selection.map(|(_, name)| name),
-        project_path: first.project_dir, model,
+        project_path: PathService::normalize_child_process_path_str(&first.project_dir), model,
         status: "idle".into(), messages, approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
         created_at: chrono::Utc::now().timestamp_millis(), updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0,
         owner: owner.into(), thread_id: Some(resume_id.to_string()), request_ids: Vec::new(), pending_inputs: Vec::new(),
         slash_catalog: None, todos, agents: Vec::new(), thinking: None, compactions: 0, desktop_open: false };
     seed_context_window(&mut data);
-    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path });
+    let cell = Cell::new(data.clone(), path);
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
     emit_created(&data);
@@ -1448,10 +1551,19 @@ fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control
     update(cell, |data| usage::configured_window(data, launch.context_window));
     let mut command = cli_command(&session.provider);
     command.args(&launch.args);
-    command.current_dir(&session.project_path);
+    // 兼容迁移前落盘的会话：spawn 前再归一化一次，避免 `//?/` / `\\?\` 让 CLI 回落 C:\Windows。
+    command.current_dir(PathService::normalize_child_process_path_str(&session.project_path));
     if let Some(hooks) = &hooks { hooks.configure(&mut command); }
     if session.provider == "claude" {
         command.args(&permissions.claude_args);
+        // 基础命令已要求跳过全部权限确认时，不允许模型自行进入计划模式：
+        // 计划模式会在 bypassPermissions 之上重新为 WebFetch / Bash 等工具发起
+        // 授权请求，而原生会话（手机 / 网页聊天）没有终端提示，表现就是聊天区
+        // 反复弹出「需要授权：WebFetch」。重复的 --disallowedTools 会累加，不影响
+        // 用户在基础命令里配置的其他禁用工具。
+        if permissions.claude_bypasses_permissions() {
+            command.args(["--disallowedTools", "EnterPlanMode"]);
+        }
         command.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
             "--permission-prompt-tool", "stdio",
             // 子代理的文本与思考默认不转发：不加这个开关时，子代理抽屉里只能看到
@@ -3035,7 +3147,7 @@ mod tests {
             "model": null, "status": "running", "messages": [], "approvals": [], "error": null,
             "updatedAt": 0, "revision": 0,
         })).unwrap();
-        Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path: PathBuf::new() }
+        Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), emit_gate: Mutex::default(), weak_self: OnceLock::new(), deleted: AtomicBool::new(false), path: PathBuf::new() }
     }
     struct SavedCell(Cell);
     impl SavedCell {
@@ -3258,6 +3370,29 @@ mod tests {
         assert!(tail.chars().count() <= THINKING_TAIL_CHARS);
         assert!(tail.contains("尾部内容"));
         assert!(!tail.contains("开头应该被丢掉"));
+    }
+
+    /// 子代理摘要是长篇任务结果，实时帧只带预览；完整快照保持原值。
+    #[test]
+    fn realtime_payload_truncates_long_agent_summary() {
+        let cell = cell();
+        let long = "子代理结果".repeat(2000);
+        {
+            let mut data = cell.data.lock().unwrap();
+            data.agents.push(AiAgent {
+                task_id: "task-1".into(), tool_use_id: None, name: "Explore".into(), model: None,
+                description: None, status: "completed".into(), task_type: None, background: false,
+                parent_task_id: None, depth: 1, started_at: 0, ended_at: None,
+                summary: Some(long.clone()), duration_ms: None, tool_uses: None,
+            });
+        }
+        let mut meta = cell.data.lock().unwrap().metadata();
+        meta.trim_realtime_payload();
+        let summary = meta.agents[0].summary.as_ref().expect("预览仍然存在");
+        assert!(summary.chars().count() <= 241, "实时帧摘要应被截断到预览长度");
+        assert!(summary.ends_with('…'));
+        // 完整快照（GET / 落盘）不受影响。
+        assert_eq!(cell.data.lock().unwrap().agents[0].summary.as_deref(), Some(long.as_str()));
     }
 
     /// 只在 assistant 快照里出现的思考（没有 delta 流）也要能显示。
@@ -3679,7 +3814,8 @@ mod todo_agent_tests {
             "updatedAt": 0, "revision": 0,
         })).unwrap();
         Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(),
-            emitted: Mutex::default(), deleted: AtomicBool::new(false), path: PathBuf::new() }
+            emitted: Mutex::default(), emit_gate: Mutex::default(), weak_self: OnceLock::new(),
+            deleted: AtomicBool::new(false), path: PathBuf::new() }
     }
 
     fn todo_use(id: &str, todos: Value) -> Value {

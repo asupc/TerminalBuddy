@@ -20,12 +20,14 @@ async fn blocking<T: Send + 'static>(job: impl FnOnce() -> Result<T, String> + S
 }
 /// 以最具体的已登记项目决定可用 Agent，避免子项目禁用后仍继承父目录的权限。
 fn ensure_agent_project(path: &str, agent: &str) -> Result<String, ApiError> {
-    let project_path = super::ensure_project_scope(path)?;
+    // scope key 只用于比较；交给 CLI 的必须是去掉 canonicalize 前缀的真实路径。
+    let scope_key = super::ensure_project_scope(path)?;
+    let project_path = super::ensure_project_child_path(path)?;
     if !std::path::Path::new(&project_path).is_dir() { return Err(ApiError::BadRequest("项目目录不可访问".into())); }
     let projects = crate::commands::profile::get_projects().map_err(ApiError::Internal)?;
     let project = projects.iter().filter_map(|project| {
         super::canonical_scope_key(&project.path).ok().map(|key| (key, project))
-    }).filter(|(key, _)| project_path == *key || project_path.starts_with(&format!("{key}/")))
+    }).filter(|(key, _)| scope_key == *key || scope_key.starts_with(&format!("{key}/")))
         .max_by_key(|(key, _)| key.len());
     let enabled = project.is_some_and(|(_, project)| match agent {
         "claude" => project.enabled_agents.claude,
@@ -166,6 +168,8 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
                 let changed: Vec<_> = session.messages.iter().filter(|m| previous.get(&m.id) != Some(&m.text)).cloned().collect();
                 previous = session.messages.iter().map(|m| (m.id.clone(), m.text.clone())).collect();
                 let mut metadata = session; metadata.messages.clear();
+                // 实时帧只带子代理摘要预览，完整快照仍由首帧 / GET 提供。
+                metadata.trim_realtime_payload();
                 let body = json!({"type":"update","session":metadata,"messages":changed}).to_string();
                 if sender.send(Message::Text(body.into())).await.is_err() { break; }
             }

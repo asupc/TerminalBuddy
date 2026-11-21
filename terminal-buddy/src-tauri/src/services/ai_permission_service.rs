@@ -26,6 +26,20 @@ impl NativePermissions {
         // 沙箱在 thread/start / thread/resume 设置；沿用线程有效配置，
         // 不手工重建 workspaceWrite，避免丢掉服务端已有的目录/网络访问设置。
     }
+    /// 基础命令是否要求 Claude 跳过全部工具权限确认。
+    ///
+    /// `--allow-dangerously-skip-permissions` 只是把 bypass 变成可选项，默认并不生效，
+    /// 因此不算在内；原生会话需要据此阻止模型自行进入计划模式，否则 CLI 会在
+    /// bypassPermissions 之上再次为 WebFetch / Bash 等工具发起授权请求。
+    pub fn claude_bypasses_permissions(&self) -> bool {
+        // 显式指定了权限模式时以模式为准（例如同时残留 `--permission-mode plan`）。
+        if let Some(mode) = self.claude_args.windows(2)
+            .find(|pair| pair[0] == "--permission-mode").map(|pair| pair[1].as_str())
+        {
+            return mode == "bypassPermissions";
+        }
+        self.claude_args.iter().any(|arg| arg == "--dangerously-skip-permissions")
+    }
     // app-server 的字段名使用 camelCase，但权限枚举与 CLI 配置均使用连字符格式。
     fn approval(&mut self, value: &str) -> Result<()> {
         let policy = match value {
@@ -189,5 +203,21 @@ mod tests {
             "-c", r#"approval_policy="on-request""#,
             "-c", r#"sandbox_mode="danger-full-access""#,
         ]);
+    }
+
+    #[test]
+    fn bypass_detection_only_matches_active_bypass() {
+        let with_args = |args: &[&str]| NativePermissions {
+            claude_args: args.iter().map(|value| value.to_string()).collect(),
+            ..Default::default()
+        };
+        assert!(with_args(&["--dangerously-skip-permissions"]).claude_bypasses_permissions());
+        assert!(with_args(&["--permission-mode", "bypassPermissions"]).claude_bypasses_permissions());
+        // 显式模式优先；同时残留计划模式时不应按全部允许处理。
+        assert!(!with_args(&["--dangerously-skip-permissions", "--permission-mode", "plan"]).claude_bypasses_permissions());
+        // 仅允许切换成 bypass 并不代表已经跳过确认；计划模式、默认模式更不能视为全部允许。
+        assert!(!with_args(&["--allow-dangerously-skip-permissions"]).claude_bypasses_permissions());
+        assert!(!with_args(&["--permission-mode", "plan"]).claude_bypasses_permissions());
+        assert!(!with_args(&[]).claude_bypasses_permissions());
     }
 }

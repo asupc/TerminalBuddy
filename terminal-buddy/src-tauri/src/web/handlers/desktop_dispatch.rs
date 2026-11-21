@@ -47,7 +47,8 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
                     input.resume_session_id.as_deref().unwrap_or(""), 0, 1).map_err(ApiError::BadRequest)?;
                 input.project_path = page.project_dir;
             }
-            input.project_path = crate::web::handlers::ensure_project_scope(&input.project_path)?;
+            // scope 校验后返回真实路径（不是比较用的 key），否则 CLI 会回落 C:\Windows。
+            input.project_path = crate::web::handlers::ensure_project_child_path(&input.project_path)?;
             run(move || crate::services::ai_chat_service::create(&owner, input)).await
         }
         "ai_session_send" => {
