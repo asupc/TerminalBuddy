@@ -13,12 +13,13 @@ use crate::runtime::{AppHandle, Emitter};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const BATCH_SIZE: usize = 60;
 const ANALYZER_VERSION: i64 = 2;
@@ -142,16 +143,39 @@ fn collect_files(root: &Path) -> Result<Vec<SessionFile>, String> {
     Ok(files)
 }
 
-pub(super) fn thread_names(root: &Path) -> HashMap<String, String> {
+pub(super) fn thread_names(root: &Path) -> Arc<HashMap<String, String>> {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (SystemTime, u64, Arc<HashMap<String, String>>)>>> = OnceLock::new();
+
     let path = root.join("session_index.jsonl");
     // registry 只用来补标题；缺失、损坏或过大都不影响 rollout 本身。
-    if !fs::metadata(&path).is_ok_and(|meta| meta.len() <= 8 * 1024 * 1024) {
-        return HashMap::new();
-    }
-    let Ok(content) = fs::read_to_string(path) else {
-        return HashMap::new();
+    let Ok(meta) = fs::metadata(&path) else {
+        return Arc::new(HashMap::new());
     };
-    parse_thread_names(&content)
+    if meta.len() > 8 * 1024 * 1024 {
+        return Arc::new(HashMap::new());
+    }
+    let mtime = meta.modified().unwrap_or(UNIX_EPOCH);
+    let size = meta.len();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(map) = cache.lock() {
+        if let Some((cached_mtime, cached_size, names)) = map.get(&path) {
+            if *cached_mtime == mtime && *cached_size == size {
+                return Arc::clone(names);
+            }
+        }
+    }
+    let Ok(content) = fs::read_to_string(&path) else {
+        return Arc::new(HashMap::new());
+    };
+    let names = Arc::new(parse_thread_names(&content));
+    if let Ok(mut map) = cache.lock() {
+        if map.len() >= 16 {
+            map.clear();
+        }
+        map.insert(path, (mtime, size, Arc::clone(&names)));
+    }
+    names
 }
 
 fn parse_thread_names(content: &str) -> HashMap<String, String> {

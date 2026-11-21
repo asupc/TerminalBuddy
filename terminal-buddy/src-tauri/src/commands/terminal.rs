@@ -653,6 +653,9 @@ fn spawn_output_forwarder(
         });
 
         let mut utf8_pending = Vec::new();
+        // 复用单批字节缓冲并限制单批上限：防止洪峰时单批积压数 MB 直接顶穿 2 MiB 输出环与流控。
+        const TERMINAL_DATA_MAX_BATCH_BYTES: usize = 256 * 1024;
+        let mut batch = Vec::with_capacity(8192);
         while let Ok(first_chunk) = data_rx.recv() {
             let batch_started = Instant::now();
             let (mut idle_deadline, max_deadline, reset_idle) = match buffer_mode {
@@ -668,11 +671,15 @@ fn spawn_output_forwarder(
                     false,
                 ),
             };
-            let mut batch = std::mem::take(&mut utf8_pending);
+            batch.clear();
+            if !utf8_pending.is_empty() {
+                batch.extend_from_slice(&utf8_pending);
+                utf8_pending.clear();
+            }
             batch.extend_from_slice(&first_chunk);
             let mut disconnected = false;
 
-            loop {
+            while batch.len() < TERMINAL_DATA_MAX_BATCH_BYTES {
                 let deadline = idle_deadline.min(max_deadline);
                 let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
                     break;
@@ -702,8 +709,12 @@ fn spawn_output_forwarder(
                             .expect("valid_up_to must end on a UTF-8 boundary"),
                     )
                 }
-                Err(_) => Arc::from(String::from_utf8_lossy(&batch).to_string()),
+                Err(_) => Arc::from(String::from_utf8_lossy(&batch).as_ref()),
             };
+            if batch.capacity() > TERMINAL_DATA_MAX_BATCH_BYTES {
+                batch.clear();
+                batch.shrink_to(64 * 1024);
+            }
             if !output.is_empty() {
                 let emitted_chars = output.chars().count();
                 let desktop_attached = {
@@ -1390,22 +1401,21 @@ impl TerminalService {
                      extra_startup_mode,
                      current_directory,
                  }| {
-                    let profile = ProfileService::get_profile(&profile_id).ok();
+                    let profile_meta = ProfileService::get_profile_terminal_meta(&profile_id);
                     TerminalInfo {
                         id,
                         group: group_override.unwrap_or_else(|| {
-                            profile
+                            profile_meta
                                 .as_ref()
-                                .map(|p| p.group.clone())
+                                .map(|(group, _)| group.clone())
                                 .unwrap_or_default()
                         }),
                         profile_name: display_name,
                         // 空白终端没有 profile，类型只能取实例；实例缺值时回退
                         // profile 类型，避免旧行为把空白终端广播成空串。
                         terminal_type: if terminal_type.is_empty() {
-                            profile
-                                .as_ref()
-                                .map(|p| p.terminal_type.clone())
+                            profile_meta
+                                .map(|(_, p_type)| p_type)
                                 .unwrap_or_default()
                         } else {
                             terminal_type

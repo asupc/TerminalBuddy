@@ -59,17 +59,22 @@ impl ProfileService {
         profiles
     }
 
-    pub fn get_all_profiles() -> Result<Vec<Profile>, String> {
+    fn with_cached_profiles<T>(f: impl FnOnce(&[Profile]) -> T) -> T {
         if let Ok(cache) = CACHED_PROFILES.read() {
             if let Some(ref profiles) = *cache {
-                return Ok(profiles.clone());
+                return f(profiles);
             }
         }
         let profiles = Self::read_all_from_disk();
+        let result = f(&profiles);
         if let Ok(mut cache) = CACHED_PROFILES.write() {
-            *cache = Some(profiles.clone());
+            *cache = Some(profiles);
         }
-        Ok(profiles)
+        result
+    }
+
+    pub fn get_all_profiles() -> Result<Vec<Profile>, String> {
+        Ok(Self::with_cached_profiles(|profiles| profiles.to_vec()))
     }
 
     /// Resolve an optional per-profile override against its project's required base path.
@@ -93,11 +98,18 @@ impl ProfileService {
     }
 
     pub fn get_profile(id: &str) -> Result<Profile, String> {
-        let profiles = Self::get_all_profiles()?;
-        profiles
-            .into_iter()
-            .find(|p| p.id == id)
+        Self::with_cached_profiles(|profiles| profiles.iter().find(|p| p.id == id).cloned())
             .ok_or_else(|| format!("Profile not found: {}", id))
+    }
+
+    /// 轻量查询终端展示所需的 `(group, terminal_type)`，避免克隆完整 Profile。
+    pub fn get_profile_terminal_meta(id: &str) -> Option<(String, String)> {
+        Self::with_cached_profiles(|profiles| {
+            profiles
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| (p.group.clone(), p.terminal_type.clone()))
+        })
     }
 
     fn find_profile_by_name_in_group(name: &str, group: &str) -> Option<Profile> {

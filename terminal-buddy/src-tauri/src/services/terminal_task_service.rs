@@ -1,5 +1,5 @@
 //! 将终端关联到确切的 AI 会话；不能用项目目录的「最新会话」代替当前会话。
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -521,9 +521,28 @@ fn transcript_excerpt(path: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&head).into_owned())
 }
 
+#[derive(Default)]
+enum CachedRegistry {
+    #[default]
+    Empty,
+    Shared(std::sync::Arc<HashMap<String, String>>),
+    Owned(HashMap<String, String>),
+}
+
+impl CachedRegistry {
+    fn get(&self, id: &str) -> Option<&String> {
+        match self {
+            Self::Empty => None,
+            Self::Shared(map) => map.get(id),
+            Self::Owned(map) => map.get(id),
+        }
+    }
+}
+
 fn resolve_title(
     tracked: &mut TrackedTerminal,
-    registries: &mut HashMap<(String, PathBuf), HashMap<String, String>>,
+    registries: &mut HashMap<(String, PathBuf), CachedRegistry>,
+    db_conn: Option<&rusqlite::Connection>,
 ) -> Option<TerminalTaskSummary> {
     let (provider, id) = tracked.binding.clone()?;
     let root = match provider.as_str() {
@@ -531,8 +550,7 @@ fn resolve_title(
         "antigravity" => &tracked.antigravity_root,
         _ => &tracked.codex_root,
     };
-    let conn = DatabaseService::open().ok();
-    let custom = conn.as_ref().and_then(|conn| {
+    let custom = db_conn.and_then(|conn| {
         let sql = match provider.as_str() {
             "claude" => "SELECT custom_title FROM claude_session_meta WHERE session_id=?1",
             "antigravity" => "SELECT custom_title FROM antigravity_session_meta WHERE session_id=?1",
@@ -571,12 +589,12 @@ fn resolve_title(
     let registry = match provider.as_str() {
         "codex" => registries
             .entry(("codex".to_string(), root.clone()))
-            .or_insert_with(|| codex_history_service::thread_names(root))
+            .or_insert_with(|| CachedRegistry::Shared(codex_history_service::thread_names(root)))
             .get(&id)
             .cloned(),
         "antigravity" => registries
             .entry(("antigravity".to_string(), root.clone()))
-            .or_insert_with(|| antigravity_history_service::summary_titles(root))
+            .or_insert_with(|| CachedRegistry::Owned(antigravity_history_service::summary_titles(root)))
             .get(&id)
             .cloned()
             .and_then(|value| compact_title(&value)),
@@ -627,23 +645,38 @@ impl SessionSummaryTracker {
         }
         // 多个客户端共用检查间隔；流式消息仍可每 300ms 推送一次。
         if !force && self.last_refresh.is_some_and(|last| last.elapsed() < Duration::from_secs(2)) { return None; }
-        let summary = resolve_title(&mut self.tracked, &mut HashMap::new()).map(|task| task.summary);
+        let db_conn = DatabaseService::open().ok();
+        let summary = resolve_title(&mut self.tracked, &mut HashMap::new(), db_conn.as_ref()).map(|task| task.summary);
         self.last_refresh = Some(Instant::now());
         summary
     }
 }
 
 pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalTaskSummary> {
+    summaries_with_codex_live(terminal_pids).0
+}
+
+pub(crate) fn summaries_with_codex_live(
+    terminal_pids: Vec<(String, u32)>,
+) -> (HashMap<String, TerminalTaskSummary>, HashSet<String>) {
     // 扫描可同时由手机和桌面发起；串行扫描，但不持有 Hook 使用的关联表锁。
     static SCAN_LOCK: Mutex<()> = Mutex::new(());
     let _scan = SCAN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if terminal_pids.is_empty() {
+        return (HashMap::new(), HashSet::new());
+    }
     let mut all: HashMap<_, _> = {
         let current = terminals().lock().unwrap_or_else(|e| e.into_inner());
         terminal_pids.iter().filter_map(|(id, _)| current.get(id).map(|tracked| (id.clone(), tracked.clone()))).collect()
     };
     let revisions: HashMap<_, _> = all.iter().map(|(id, tracked)| (id.clone(), tracked.revision)).collect();
+    let all_processes = crate::commands::claude_session::get_all_processes();
     let roots = terminal_pids.iter().filter_map(|(id, _)| all.get(id).map(|tracked| (id.clone(), tracked.claude_root.clone()))).collect();
-    let claude_sessions = crate::commands::claude_session::discover_claude_sessions(&terminal_pids, &roots);
+    let claude_sessions = crate::commands::claude_session::discover_claude_sessions_with_processes(
+        &terminal_pids,
+        &roots,
+        &all_processes,
+    );
     let scopes = terminal_pids.iter().filter_map(|(id, pid)| {
         let tracked = all.get(id)?;
         Some(super::terminal_task_process::CodexProcessScope {
@@ -652,7 +685,7 @@ pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalT
                 .checked_sub(std::time::Duration::from_secs(5)).unwrap_or(SystemTime::UNIX_EPOCH),
         })
     }).collect();
-    let codex_sessions = super::terminal_task_process::discover(scopes);
+    let (codex_sessions, codex_live) = super::terminal_task_process::discover_with_processes(scopes, &all_processes);
     let agy_scopes = terminal_pids.iter().filter_map(|(id, pid)| {
         let tracked = all.get(id)?;
         Some(super::terminal_task_process::AntigravityProcessScope {
@@ -661,9 +694,10 @@ pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalT
             root: tracked.antigravity_root.clone(),
         })
     }).collect();
-    let agy_discovery = super::terminal_task_process::discover_antigravity(agy_scopes);
+    let agy_discovery = super::terminal_task_process::discover_antigravity_with_processes(agy_scopes, &all_processes);
     let mut registries = HashMap::new();
     let mut result = HashMap::new();
+    let db_conn = DatabaseService::open().ok();
     for (terminal_id, _) in terminal_pids {
         let Some(tracked) = all.get_mut(&terminal_id) else { continue; };
         tracked.last_process_scan = Some(SystemTime::now());
@@ -688,7 +722,9 @@ pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalT
             tracked.transcript = Some(path.clone());
         }
         if let Some(id) = claude_sessions.get(&terminal_id) { bind(tracked, "claude", id); }
-        if let Some(summary) = resolve_title(tracked, &mut registries) { result.insert(terminal_id, summary); }
+        if let Some(summary) = resolve_title(tracked, &mut registries, db_conn.as_ref()) {
+            result.insert(terminal_id, summary);
+        }
     }
     let mut current = terminals().lock().unwrap_or_else(|e| e.into_inner());
     for (id, tracked) in all {
@@ -699,7 +735,7 @@ pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalT
             result.remove(&id);
         }
     }
-    result
+    (result, codex_live)
 }
 
 #[cfg(test)]

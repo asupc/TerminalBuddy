@@ -11,7 +11,8 @@ use crate::services::{
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -35,10 +36,282 @@ struct ParsedUsage {
     total: AiTokenUsage,
 }
 
+#[derive(Clone, Default)]
+struct ClaudeIncremental {
+    line_index: usize,
+    by_message: HashMap<String, AiTokenUsage>,
+    last_main_used: Option<u64>,
+    last_main_model: Option<String>,
+}
+
+#[derive(Clone, Default)]
+struct CodexIncremental {
+    model: Option<String>,
+    context_used: Option<u64>,
+    context_window: Option<u64>,
+    total: AiTokenUsage,
+    has_totals: bool,
+    last_sum: AiTokenUsage,
+}
+
+#[derive(Clone, Default)]
+struct AntigravityIncremental {
+    line_index: usize,
+    model: Option<String>,
+    context_used: Option<u64>,
+    by_step: HashMap<String, AiTokenUsage>,
+}
+
+#[derive(Clone)]
+enum IncrementalState {
+    Claude(ClaudeIncremental),
+    Codex(CodexIncremental),
+    Antigravity(AntigravityIncremental),
+}
+
+impl IncrementalState {
+    fn new(provider: &str) -> Self {
+        match provider {
+            "codex" => Self::Codex(CodexIncremental::default()),
+            "antigravity" => Self::Antigravity(AntigravityIncremental::default()),
+            _ => Self::Claude(ClaudeIncremental::default()),
+        }
+    }
+
+    fn feed_line(&mut self, trimmed_line: &str, has_newline: bool) -> bool {
+        if !has_newline && trimmed_line.is_empty() {
+            return true;
+        }
+        // `\n` 已落盘的行允许先做廉价子串过滤；末尾无 `\n` 的残行可能是半行写入，
+        // 需先尝试解析完整 JSON 才能确认是否推进偏移。
+        let parsed_value = if has_newline {
+            let matches_prefilter = match self {
+                Self::Claude(_) => trimmed_line.contains("\"assistant\""),
+                Self::Codex(_) => {
+                    trimmed_line.contains("token_count") || trimmed_line.contains("\"model\"")
+                }
+                Self::Antigravity(_) => trimmed_line.contains("PLANNER_RESPONSE"),
+            };
+            if !matches_prefilter {
+                match self {
+                    Self::Claude(state) => state.line_index += 1,
+                    Self::Antigravity(state) => state.line_index += 1,
+                    Self::Codex(_) => {}
+                }
+                return true;
+            }
+            let Ok(value) = serde_json::from_str::<Value>(trimmed_line) else {
+                match self {
+                    Self::Claude(state) => state.line_index += 1,
+                    Self::Antigravity(state) => state.line_index += 1,
+                    Self::Codex(_) => {}
+                }
+                return true;
+            };
+            value
+        } else {
+            let Ok(value) = serde_json::from_str::<Value>(trimmed_line) else {
+                // 半行仍未写完：不推进偏移或行号，等待下一轮补齐换行。
+                return false;
+            };
+            value
+        };
+
+        match self {
+            Self::Claude(state) => {
+                let index = state.line_index;
+                state.line_index += 1;
+                if parsed_value.get("type").and_then(Value::as_str) != Some("assistant") {
+                    return true;
+                }
+                let Some(message) = parsed_value.get("message") else {
+                    return true;
+                };
+                let usage = message.get("usage").unwrap_or(&Value::Null);
+                let fresh = number(usage, "input_tokens");
+                let cached = number(usage, "cache_read_input_tokens");
+                let created = number(usage, "cache_creation_input_tokens");
+                let output = number(usage, "output_tokens");
+                if fresh.is_none() && cached.is_none() && created.is_none() && output.is_none() {
+                    return true;
+                }
+                let input = add(add(fresh, cached), created);
+                let tokens = AiTokenUsage {
+                    input_tokens: input,
+                    output_tokens: output,
+                    cache_read_input_tokens: cached,
+                    cache_creation_input_tokens: created,
+                    reasoning_output_tokens: usage
+                        .pointer("/output_tokens_details/thinking_tokens")
+                        .and_then(Value::as_u64),
+                };
+                let id = message
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("line-{index}"));
+                merge_max(state.by_message.entry(id).or_default(), &tokens);
+                if parsed_value.get("isSidechain").and_then(Value::as_bool) != Some(true) {
+                    if let Some(model) = message
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .filter(|model| !model.is_empty())
+                    {
+                        state.last_main_model = Some(model.to_string());
+                    }
+                    if let Some(used) = input.filter(|used| *used > 0) {
+                        state.last_main_used = Some(used);
+                    }
+                }
+                true
+            }
+            Self::Codex(state) => {
+                let payload = parsed_value.get("payload").unwrap_or(&parsed_value);
+                let kind = parsed_value.get("type").and_then(Value::as_str).unwrap_or("");
+                let payload_kind = payload.get("type").and_then(Value::as_str).unwrap_or("");
+                if let Some(model) = payload
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .filter(|model| !model.is_empty())
+                {
+                    state.model = Some(model.to_string());
+                }
+                if kind != "event_msg" || payload_kind != "token_count" {
+                    return true;
+                }
+                let info = payload.get("info").unwrap_or(&Value::Null);
+                if let Some(total) = info.get("total_token_usage").filter(|value| value.is_object()) {
+                    state.has_totals = true;
+                    merge_max(
+                        &mut state.total,
+                        &AiTokenUsage {
+                            input_tokens: number(total, "input_tokens"),
+                            output_tokens: number(total, "output_tokens"),
+                            cache_read_input_tokens: number(total, "cached_input_tokens"),
+                            cache_creation_input_tokens: None,
+                            reasoning_output_tokens: number(total, "reasoning_output_tokens"),
+                        },
+                    );
+                } else if !state.has_totals {
+                    let last = info.get("last_token_usage").unwrap_or(&Value::Null);
+                    state.last_sum = plus(
+                        &state.last_sum,
+                        &AiTokenUsage {
+                            input_tokens: number(last, "input_tokens"),
+                            output_tokens: number(last, "output_tokens"),
+                            ..Default::default()
+                        },
+                    );
+                }
+                if let Some(last) = info.get("last_token_usage").filter(|value| value.is_object()) {
+                    let used = number(last, "total_tokens")
+                        .or_else(|| add(number(last, "input_tokens"), number(last, "output_tokens")));
+                    if let Some(used) = used.filter(|used| *used > 0) {
+                        state.context_used = Some(used);
+                    }
+                }
+                if let Some(window) = number(info, "model_context_window")
+                    .or_else(|| number(info, "modelContextWindow"))
+                {
+                    if window > 0 {
+                        state.context_window = Some(window);
+                    }
+                }
+                true
+            }
+            Self::Antigravity(state) => {
+                let index = state.line_index;
+                state.line_index += 1;
+                if parsed_value.get("type").and_then(Value::as_str) != Some("PLANNER_RESPONSE") {
+                    return true;
+                }
+                let source = parsed_value.get("source").and_then(Value::as_str).unwrap_or("");
+                if !matches!(source, "" | "MODEL") {
+                    return true;
+                }
+                if let Some(model) = parsed_value
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                {
+                    state.model = Some(model.to_string());
+                }
+                let fresh = number(&parsed_value, "input_tokens");
+                let cached = number(&parsed_value, "cache_read_tokens");
+                let output = number(&parsed_value, "output_tokens");
+                if fresh.is_none() && cached.is_none() && output.is_none() {
+                    return true;
+                }
+                let input = add(fresh, cached);
+                let tokens = AiTokenUsage {
+                    input_tokens: input,
+                    output_tokens: output,
+                    cache_read_input_tokens: cached,
+                    cache_creation_input_tokens: None,
+                    reasoning_output_tokens: None,
+                };
+                let key = parsed_value
+                    .get("step_index")
+                    .and_then(Value::as_u64)
+                    .map(|step| format!("step-{step}"))
+                    .unwrap_or_else(|| format!("line-{index}"));
+                merge_max(state.by_step.entry(key).or_default(), &tokens);
+                if let Some(used) = input.filter(|used| *used > 0) {
+                    state.context_used = Some(used);
+                }
+                true
+            }
+        }
+    }
+
+    fn finalize(&self) -> ParsedUsage {
+        match self {
+            Self::Claude(state) => {
+                let mut result = ParsedUsage {
+                    model: state.last_main_model.clone(),
+                    context_used: state.last_main_used,
+                    context_window: None,
+                    total: AiTokenUsage::default(),
+                };
+                for tokens in state.by_message.values() {
+                    result.total = plus(&result.total, tokens);
+                }
+                result
+            }
+            Self::Codex(state) => ParsedUsage {
+                model: state.model.clone(),
+                context_used: state.context_used,
+                context_window: state.context_window,
+                total: if state.has_totals {
+                    state.total.clone()
+                } else {
+                    state.last_sum.clone()
+                },
+            },
+            Self::Antigravity(state) => {
+                let mut result = ParsedUsage {
+                    model: state.model.clone(),
+                    context_used: state.context_used,
+                    context_window: None,
+                    total: AiTokenUsage::default(),
+                };
+                for tokens in state.by_step.values() {
+                    result.total = plus(&result.total, tokens);
+                }
+                result
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 struct CachedParse {
+    provider: String,
     mtime: u64,
     size: u64,
+    parsed_offset: u64,
+    state: IncrementalState,
     parsed: ParsedUsage,
 }
 
@@ -88,165 +361,37 @@ fn merge_max(target: &mut AiTokenUsage, source: &AiTokenUsage) {
     target.reasoning_output_tokens = max(target.reasoning_output_tokens, source.reasoning_output_tokens);
 }
 
+#[cfg(test)]
+fn parse_with_state(provider: &str, content: &str) -> ParsedUsage {
+    let mut state = IncrementalState::new(provider);
+    for raw in content.split_inclusive('\n') {
+        let has_newline = raw.ends_with('\n');
+        let trimmed = raw.trim_end_matches(['\r', '\n']);
+        state.feed_line(trimmed, has_newline);
+    }
+    state.finalize()
+}
+
 /// Claude transcript：assistant 行既有正文也有 usage。上下文按主线程最后一条
 /// 消息的输入量（含缓存读写）计算，累计量覆盖主线程与子代理的全部 API 调用。
+#[cfg(test)]
 fn parse_claude(content: &str) -> ParsedUsage {
-    let mut result = ParsedUsage::default();
-    let mut by_message: HashMap<String, AiTokenUsage> = HashMap::new();
-    let mut last_main_used = None;
-    let mut last_main_model = None;
-    for (index, line) in content.lines().enumerate() {
-        let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
-        if value.get("type").and_then(Value::as_str) != Some("assistant") {
-            continue;
-        }
-        let Some(message) = value.get("message") else { continue };
-        let usage = message.get("usage").unwrap_or(&Value::Null);
-        let fresh = number(usage, "input_tokens");
-        let cached = number(usage, "cache_read_input_tokens");
-        let created = number(usage, "cache_creation_input_tokens");
-        let output = number(usage, "output_tokens");
-        if fresh.is_none() && cached.is_none() && created.is_none() && output.is_none() {
-            continue;
-        }
-        let input = add(add(fresh, cached), created);
-        let tokens = AiTokenUsage {
-            input_tokens: input,
-            output_tokens: output,
-            cache_read_input_tokens: cached,
-            cache_creation_input_tokens: created,
-            reasoning_output_tokens: usage
-                .pointer("/output_tokens_details/thinking_tokens")
-                .and_then(Value::as_u64),
-        };
-        let id = message
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("line-{index}"));
-        merge_max(by_message.entry(id).or_default(), &tokens);
-        if value.get("isSidechain").and_then(Value::as_bool) != Some(true) {
-            if let Some(model) = message.get("model").and_then(Value::as_str).filter(|model| !model.is_empty()) {
-                last_main_model = Some(model.to_string());
-            }
-            if let Some(used) = input.filter(|used| *used > 0) {
-                last_main_used = Some(used);
-            }
-        }
-    }
-    for tokens in by_message.values() {
-        result.total = plus(&result.total, tokens);
-    }
-    result.model = last_main_model;
-    result.context_used = last_main_used;
-    result
+    parse_with_state("claude", content)
 }
 
 /// Codex rollout：`token_count` 的 `total_token_usage` 是累计快照（取高水位），
 /// `last_token_usage` 是本轮用量，可估算当前上下文占用；`model_context_window`
 /// 由 CLI 直接给出。
+#[cfg(test)]
 fn parse_codex(content: &str) -> ParsedUsage {
-    let mut result = ParsedUsage::default();
-    let mut has_totals = false;
-    let mut last_sum = AiTokenUsage::default();
-    for line in content.lines() {
-        let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
-        let payload = value.get("payload").unwrap_or(&value);
-        let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
-        let payload_kind = payload.get("type").and_then(Value::as_str).unwrap_or("");
-        if let Some(model) = payload.get("model").and_then(Value::as_str).filter(|model| !model.is_empty()) {
-            result.model = Some(model.to_string());
-        }
-        if kind != "event_msg" || payload_kind != "token_count" {
-            continue;
-        }
-        let info = payload.get("info").unwrap_or(&Value::Null);
-        if let Some(total) = info.get("total_token_usage").filter(|value| value.is_object()) {
-            has_totals = true;
-            merge_max(&mut result.total, &AiTokenUsage {
-                input_tokens: number(total, "input_tokens"),
-                output_tokens: number(total, "output_tokens"),
-                cache_read_input_tokens: number(total, "cached_input_tokens"),
-                cache_creation_input_tokens: None,
-                reasoning_output_tokens: number(total, "reasoning_output_tokens"),
-            });
-        } else if !has_totals {
-            let last = info.get("last_token_usage").unwrap_or(&Value::Null);
-            last_sum = plus(&last_sum, &AiTokenUsage {
-                input_tokens: number(last, "input_tokens"),
-                output_tokens: number(last, "output_tokens"),
-                ..Default::default()
-            });
-        }
-        if let Some(last) = info.get("last_token_usage").filter(|value| value.is_object()) {
-            let used = number(last, "total_tokens")
-                .or_else(|| add(number(last, "input_tokens"), number(last, "output_tokens")));
-            if let Some(used) = used.filter(|used| *used > 0) {
-                result.context_used = Some(used);
-            }
-        }
-        if let Some(window) = number(info, "model_context_window").or_else(|| number(info, "modelContextWindow")) {
-            if window > 0 {
-                result.context_window = Some(window);
-            }
-        }
-    }
-    if !has_totals {
-        result.total = last_sum;
-    }
-    result
+    parse_with_state("codex", content)
 }
 
 /// Antigravity CLI transcript：`PLANNER_RESPONSE` 行中的 `input_tokens` 为未缓存输入，
 /// `cache_read_tokens` 为缓存命中输入；两者之和才是该步总输入与上下文占用。
+#[cfg(test)]
 fn parse_antigravity(content: &str) -> ParsedUsage {
-    let mut result = ParsedUsage::default();
-    let mut by_step: HashMap<String, AiTokenUsage> = HashMap::new();
-    for (index, line) in content.lines().enumerate() {
-        let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
-        if value.get("type").and_then(Value::as_str) != Some("PLANNER_RESPONSE") {
-            continue;
-        }
-        let source = value.get("source").and_then(Value::as_str).unwrap_or("");
-        if !matches!(source, "" | "MODEL") {
-            continue;
-        }
-        if let Some(model) = value
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-        {
-            result.model = Some(model.to_string());
-        }
-        let fresh = number(&value, "input_tokens");
-        let cached = number(&value, "cache_read_tokens");
-        let output = number(&value, "output_tokens");
-        if fresh.is_none() && cached.is_none() && output.is_none() {
-            continue;
-        }
-        let input = add(fresh, cached);
-        let tokens = AiTokenUsage {
-            input_tokens: input,
-            output_tokens: output,
-            cache_read_input_tokens: cached,
-            cache_creation_input_tokens: None,
-            reasoning_output_tokens: None,
-        };
-        let key = value
-            .get("step_index")
-            .and_then(Value::as_u64)
-            .map(|step| format!("step-{step}"))
-            .unwrap_or_else(|| format!("line-{index}"));
-        merge_max(by_step.entry(key).or_default(), &tokens);
-        if let Some(used) = input.filter(|used| *used > 0) {
-            result.context_used = Some(used);
-        }
-    }
-    for tokens in by_step.values() {
-        result.total = plus(&result.total, tokens);
-    }
-    result
+    parse_with_state("antigravity", content)
 }
 
 fn file_stamp(path: &Path) -> Option<(u64, u64)> {
@@ -263,26 +408,58 @@ fn file_stamp(path: &Path) -> Option<(u64, u64)> {
 fn parse_file(path: &Path, provider: &str) -> Result<ParsedUsage, String> {
     let (mtime, size) = file_stamp(path)
         .ok_or_else(|| format!("读取会话文件信息失败：{}", path.display()))?;
+    let mut resume_from: Option<(u64, IncrementalState)> = None;
     if let Ok(map) = cache().lock() {
         if let Some(cached) = map.get(path) {
-            if cached.mtime == mtime && cached.size == size {
+            if cached.provider == provider && cached.mtime == mtime && cached.size == size {
                 return Ok(cached.parsed.clone());
+            }
+            if cached.provider == provider && size > cached.size && cached.parsed_offset <= size {
+                resume_from = Some((cached.parsed_offset, cached.state.clone()));
             }
         }
     }
-    let content = fs::read_to_string(path)
-        .map_err(|error| format!("读取会话文件失败：{}", error))?;
-    let parsed = match provider {
-        "codex" => parse_codex(&content),
-        "antigravity" => parse_antigravity(&content),
-        _ => parse_claude(&content),
-    };
+
+    let (mut offset, mut state) =
+        resume_from.unwrap_or_else(|| (0, IncrementalState::new(provider)));
+    let mut file = File::open(path).map_err(|error| format!("读取会话文件失败：{}", error))?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|error| format!("定位会话文件失败：{}", error))?;
+    let mut reader = BufReader::new(file);
+    let mut raw_line = String::new();
+    loop {
+        raw_line.clear();
+        let bytes = reader
+            .read_line(&mut raw_line)
+            .map_err(|error| format!("读取会话文件失败：{}", error))?;
+        if bytes == 0 {
+            break;
+        }
+        let has_newline = raw_line.ends_with('\n');
+        let trimmed = raw_line.trim_end_matches(['\r', '\n']);
+        if state.feed_line(trimmed, has_newline) {
+            offset += bytes as u64;
+        } else {
+            break;
+        }
+    }
+    let parsed = state.finalize();
     if let Ok(mut map) = cache().lock() {
         // 会话数量有限；超过上限时整体清空，避免长期运行后无界增长。
         if map.len() > 32 {
             map.clear();
         }
-        map.insert(path.to_path_buf(), CachedParse { mtime, size, parsed: parsed.clone() });
+        map.insert(
+            path.to_path_buf(),
+            CachedParse {
+                provider: provider.to_string(),
+                mtime,
+                size,
+                parsed_offset: offset,
+                state,
+                parsed: parsed.clone(),
+            },
+        );
     }
     Ok(parsed)
 }
@@ -652,5 +829,39 @@ mod tests {
         assert_eq!(snapshot.total.input_tokens, Some(435_000));
         assert_eq!(snapshot.total.output_tokens, Some(800));
         assert_eq!(snapshot.total.cache_read_input_tokens, Some(420_000));
+    }
+
+    #[test]
+    fn incremental_parse_file_handles_append_partial_line_and_truncate() {
+        let dir = std::env::temp_dir().join(format!("tb-usage-inc-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("创建临时目录");
+        let path = dir.join("claude.jsonl");
+
+        let line1 = json!({"type":"assistant","isSidechain":false,"message":{"id":"m1","model":"claude-sonnet-4-5","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":90,"cache_creation_input_tokens":0}}}).to_string();
+        let line2 = json!({"type":"assistant","isSidechain":false,"message":{"id":"m2","model":"claude-sonnet-4-5","usage":{"input_tokens":20,"output_tokens":8,"cache_read_input_tokens":180,"cache_creation_input_tokens":0}}}).to_string();
+        let split_at = line2.len() / 2;
+
+        // 写入首行与半行（无换行结尾）：应先统计 line1，保留半行到下一轮。
+        fs::write(&path, format!("{line1}\n{}", &line2[..split_at])).unwrap();
+        let first = parse_file(&path, "claude").unwrap();
+        assert_eq!(first.total.input_tokens, Some(100));
+        assert_eq!(first.total.output_tokens, Some(5));
+
+        // 补全第二行（无换行结尾同样完整 JSON），再追加噪声行（确保走过预过滤分支）。
+        let noise = json!({"type":"user","message":{"role":"user","content":"ping"}}).to_string();
+        fs::write(&path, format!("{line1}\n{line2}\n{noise}\n")).unwrap();
+        let appended = parse_file(&path, "claude").unwrap();
+        let full = parse_claude(&format!("{line1}\n{line2}\n{noise}\n"));
+        assert_eq!(appended.total.input_tokens, full.total.input_tokens);
+        assert_eq!(appended.total.output_tokens, full.total.output_tokens);
+        assert_eq!(appended.context_used, full.context_used);
+
+        // 文件被截断缩小后应重置解析状态。
+        fs::write(&path, format!("{line1}\n")).unwrap();
+        let truncated = parse_file(&path, "claude").unwrap();
+        assert_eq!(truncated.total.input_tokens, Some(100));
+        assert_eq!(truncated.total.output_tokens, Some(5));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

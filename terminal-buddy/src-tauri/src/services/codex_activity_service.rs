@@ -154,15 +154,21 @@ pub fn start(app: AppHandle) {
         let mut last_scan: Option<Instant> = None;
         let mut live = HashSet::new();
         loop {
+            let no_instances = app.state::<TerminalService>().lock_instances().is_empty();
+            let no_activities = activities().lock().map(|map| map.is_empty()).unwrap_or(false);
+            if tracked.is_empty() && no_instances && no_activities {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
             let poll_app = app.clone();
             let result = crate::runtime::async_runtime::spawn_blocking(move || {
                 let service = poll_app.state::<TerminalService>();
                 let ids: Vec<_> = service.lock_instances().keys().cloned().collect();
                 let pids = crate::commands::claude_session::terminal_processes(&ids, &service);
                 if last_scan.map_or(true, |at| at.elapsed() >= Duration::from_secs(4)) {
-                    // 发现与灯态不受 showTaskSummary 控制，手动启动与 resume 也走同一绑定链。
-                    terminal_task_service::summaries(pids.clone());
-                    live = super::terminal_task_process::codex_processes(&pids).into_keys().collect();
+                    // 发现与灯态不受 showTaskSummary 控制，手动启动与 resume 也走同一绑定链；
+                    // 直接复用同一份进程快照返回的 codex_live，避免重复扫描进程树。
+                    live = terminal_task_service::summaries_with_codex_live(pids.clone()).1;
                     last_scan = Some(Instant::now());
                 }
                 let bindings = terminal_task_service::session_bindings();

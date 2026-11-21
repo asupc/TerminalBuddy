@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::io::Read;
+use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use ssh2::Session;
 
@@ -13,10 +15,36 @@ pub(crate) fn connect_ssh(profile: &Profile) -> Result<(Session, ssh2::Sftp), St
     let port = profile.ssh_port.unwrap_or(22);
     let user = profile.ssh_user.as_ref().ok_or("SSH user not set")?;
 
-    let tcp = std::net::TcpStream::connect(format!("{}:{}", host, port))
-        .map_err(|e| format!("TCP connection failed: {}", e))?;
+    let addrs: Vec<_> = (host.as_str(), port)
+        .to_socket_addrs()
+        .map_err(|e| format!("DNS resolution failed: {}", e))?
+        .collect();
+    if addrs.is_empty() {
+        return Err("TCP connection failed: no resolved address".to_string());
+    }
+    let connect_timeout = Duration::from_secs(10);
+    let mut tcp = None;
+    let mut last_err = None;
+    for addr in addrs {
+        match std::net::TcpStream::connect_timeout(&addr, connect_timeout) {
+            Ok(stream) => {
+                tcp = Some(stream);
+                break;
+            }
+            Err(err) => last_err = Some(err),
+        }
+    }
+    let tcp = tcp.ok_or_else(|| {
+        format!(
+            "TCP connection failed: {}",
+            last_err
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "unknown error".to_string())
+        )
+    })?;
 
     let mut session = Session::new().map_err(|e| format!("Session creation failed: {}", e))?;
+    session.set_timeout(15_000);
     session.set_tcp_stream(tcp);
     session
         .handshake()

@@ -80,16 +80,33 @@ pub(crate) fn discover_claude_sessions(
 ) -> HashMap<String, String> {
     if terminal_pids.is_empty() { return HashMap::new(); }
     let all_processes = get_all_processes();
+    discover_claude_sessions_with_processes(terminal_pids, config_dirs, &all_processes)
+}
+
+/// 复用已采集的进程快照按进程树发现 Claude 会话，构建一次父子索引避免 O(终端数 × 进程数) 线性扫描。
+pub(crate) fn discover_claude_sessions_with_processes(
+    terminal_pids: &[(String, u32)],
+    config_dirs: &HashMap<String, PathBuf>,
+    all_processes: &[(u32, u32, String)],
+) -> HashMap<String, String> {
+    if terminal_pids.is_empty() { return HashMap::new(); }
+    let mut children_by_parent: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (pid, parent, _) in all_processes {
+        children_by_parent.entry(*parent).or_default().push(*pid);
+    }
     let mut result = HashMap::new();
     for (terminal_id, root_pid) in terminal_pids {
         let Some(config_dir) = config_dirs.get(terminal_id) else { continue; };
+        let sessions_dir = config_dir.join("sessions");
         let mut pending = vec![*root_pid];
         let mut visited = HashSet::new();
         let mut best: Option<ClaudeSessionFile> = None;
         while let Some(pid) = pending.pop() {
             if !visited.insert(pid) { continue; }
-            pending.extend(all_processes.iter().filter(|(_, parent, _)| *parent == pid).map(|(child, _, _)| *child));
-            let file = config_dir.join("sessions").join(format!("{}.json", pid));
+            if let Some(children) = children_by_parent.get(&pid) {
+                pending.extend(children.iter().copied());
+            }
+            let file = sessions_dir.join(format!("{}.json", pid));
             if let Some(session) = fs::read_to_string(file).ok().and_then(|content| serde_json::from_str::<ClaudeSessionFile>(&content).ok()) {
                 if best.as_ref().map_or(true, |old| session.updated_at > old.updated_at) {
                     best = Some(session);

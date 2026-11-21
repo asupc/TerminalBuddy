@@ -40,13 +40,26 @@ pub trait Emitter {
     fn emit<S: Serialize + Clone>(&self, event: &str, payload: S) -> Result<(), String>;
 }
 
-impl Emitter for AppHandle {
-    fn emit<S: Serialize + Clone>(&self, event: &str, payload: S) -> Result<(), String> {
+fn publish_to_event_bus<S: Serialize>(
+    bus: &broadcast::Sender<RuntimeEvent>,
+    event: &str,
+    payload: &S,
+) -> Result<(), String> {
+    // 浏览器 /ws/events 从不消费 terminal_output_*，且无订阅者时无需序列化进广播队列，
+    // 避免高频终端输出把所有负载双份转成 serde_json::Value 并触发 Lagged 风暴。
+    if !event.starts_with("terminal_output_") && bus.receiver_count() > 0 {
         let message = RuntimeEvent {
             event: event.to_string(),
-            payload: serde_json::to_value(&payload).map_err(|e| e.to_string())?,
+            payload: serde_json::to_value(payload).map_err(|e| e.to_string())?,
         };
-        let _ = self.state::<EventBus>().0.send(message);
+        let _ = bus.send(message);
+    }
+    Ok(())
+}
+
+impl Emitter for AppHandle {
+    fn emit<S: Serialize + Clone>(&self, event: &str, payload: S) -> Result<(), String> {
+        publish_to_event_bus(&self.state::<EventBus>().0, event, &payload)?;
         #[cfg(feature = "desktop")]
         tauri::Emitter::emit(self, event, payload).map_err(|e| e.to_string())?;
         Ok(())
@@ -101,5 +114,26 @@ mod headless {
     impl<T: Send + Sync + 'static> Deref for State<'_, T> {
         type Target = T;
         fn deref(&self) -> &T { self.0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_bus_skips_terminal_output_and_idle_channels() {
+        let (tx, mut rx) = broadcast::channel(8);
+        publish_to_event_bus(&tx, "terminal_output_abc", &"hello").unwrap();
+        assert!(rx.try_recv().is_err(), "terminal_output_* 不应写入 EventBus");
+
+        publish_to_event_bus(&tx, "other-event", &"world").unwrap();
+        let received = rx.try_recv().expect("普通事件在有订阅者时应送达");
+        assert_eq!(received.event, "other-event");
+        assert_eq!(received.payload, serde_json::json!("world"));
+
+        drop(rx);
+        assert_eq!(tx.receiver_count(), 0);
+        publish_to_event_bus(&tx, "other-event", &"ignored").unwrap();
     }
 }

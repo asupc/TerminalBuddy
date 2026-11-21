@@ -2,8 +2,16 @@ use crate::services::SettingsService;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, OnceLock, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+const WRITABLE_DIR_CACHE_TTL: Duration = Duration::from_secs(5);
+
+fn writable_dir_cache() -> &'static Mutex<Option<(PathBuf, Instant)>> {
+    static CACHE: OnceLock<Mutex<Option<(PathBuf, Instant)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
 
 #[cfg(test)]
 use std::cell::RefCell;
@@ -100,6 +108,21 @@ fn ensure_writable_dir(path: &Path) -> Result<(), String> {
     }
 }
 
+fn ensure_writable_dir_cached(path: &Path) -> Result<(), String> {
+    if let Ok(guard) = writable_dir_cache().lock() {
+        if let Some((cached_path, verified_at)) = guard.as_ref() {
+            if cached_path == path && verified_at.elapsed() < WRITABLE_DIR_CACHE_TTL && path.is_dir() {
+                return Ok(());
+            }
+        }
+    }
+    ensure_writable_dir(path)?;
+    if let Ok(mut guard) = writable_dir_cache().lock() {
+        *guard = Some((path.to_path_buf(), Instant::now()));
+    }
+    Ok(())
+}
+
 fn set_status(status: DataDirStatus) {
     if let Ok(mut slot) = CUSTOM_DATA_DIR_STATUS.write() {
         *slot = Some(status);
@@ -162,7 +185,7 @@ impl PathService {
         if let Some(directory) = std::env::var_os("TERMINAL_BUDDY_DATA_DIR") {
             let path = PathBuf::from(directory);
             if !path.is_absolute() { return Err("TERMINAL_BUDDY_DATA_DIR 必须是绝对路径".to_string()); }
-            ensure_writable_dir(&path).map_err(|e| custom_dir_unavailable(&path, &e))?;
+            ensure_writable_dir_cached(&path).map_err(|e| custom_dir_unavailable(&path, &e))?;
             return Ok(path);
         }
         let Some(ref custom) = settings.data_path else {
@@ -178,7 +201,7 @@ impl PathService {
             });
             return Err(custom_dir_unavailable(&path, &reason));
         }
-        if let Err(reason) = ensure_writable_dir(&path) {
+        if let Err(reason) = ensure_writable_dir_cached(&path) {
             set_status(DataDirStatus::Unavailable {
                 path: custom.clone(),
                 reason: reason.clone(),
@@ -237,7 +260,14 @@ impl PathService {
         Self::get_data_dir().to_string_lossy().to_string()
     }
 
+    pub fn invalidate_writable_cache() {
+        if let Ok(mut guard) = writable_dir_cache().lock() {
+            *guard = None;
+        }
+    }
+
     pub fn validate_data_path(path: &str) -> Result<PathBuf, String> {
+        Self::invalidate_writable_cache();
         let p = PathBuf::from(path);
         if !p.is_absolute() {
             return Err("路径必须是绝对路径".to_string());

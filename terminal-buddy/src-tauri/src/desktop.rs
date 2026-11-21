@@ -328,7 +328,7 @@ fn bootstrap_claude_hook(app: &tauri::AppHandle) {
     }
 }
 
-pub fn run() {
+pub fn run(context: tauri::Context) {
     let _ = BOOT_START.set(Instant::now());
     boot_log("=== TerminalBuddy process start ===");
     let settings = SettingsService::get_settings();
@@ -611,6 +611,6 @@ pub fn run() {
             download_remote_workspace_file,
             log_boot,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

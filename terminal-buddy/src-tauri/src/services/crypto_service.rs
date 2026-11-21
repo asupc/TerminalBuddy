@@ -147,7 +147,7 @@ mod server_crypto {
         let mut bytes = [0u8; 32];
         match options.open(&path) {
             Ok(mut file) => {
-                rand::thread_rng().fill_bytes(&mut bytes);
+                rand::rng().fill_bytes(&mut bytes);
                 file.write_all(&bytes).and_then(|_| file.sync_all()).map_err(|e| e.to_string())?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -167,7 +167,7 @@ mod server_crypto {
         if text.is_empty() { return Ok(String::new()); }
         let cipher = Aes256Gcm::new_from_slice(&key()?).map_err(|e| e.to_string())?;
         let mut nonce = [0u8; 12];
-        rand::thread_rng().fill_bytes(&mut nonce);
+        rand::rng().fill_bytes(&mut nonce);
         let encrypted = cipher.encrypt(Nonce::from_slice(&nonce), text.as_bytes()).map_err(|e| e.to_string())?;
         let mut bytes = nonce.to_vec();
         bytes.extend(encrypted);

@@ -9,9 +9,12 @@ use super::{atomic_file::atomic_write_private, process_tree::ProcessTree, termin
 use base64::Engine;
 use serde::Deserialize as _;
 use serde_json::{json, Value};
-use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
-    process::{Child, ChildStdin, Command, Stdio}, sync::{Arc, Mutex, OnceLock, Weak, mpsc, atomic::{AtomicBool, AtomicUsize, Ordering}},
-    thread, time::{Duration, Instant}};
+use std::{collections::{BTreeMap, HashMap, HashSet, hash_map::DefaultHasher}, fs,
+    hash::{Hash, Hasher},
+    io::{BufRead, BufReader, Read, Write}, path::{Path, PathBuf},
+    process::{Child, ChildStdin, Command, Stdio},
+    sync::{Arc, Condvar, Mutex, OnceLock, Weak, mpsc, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}},
+    thread, time::{Duration, Instant, SystemTime}};
 use tokio::sync::watch;
 use uuid::Uuid;
 
@@ -36,9 +39,16 @@ pub fn subscribe_session_changes(id: &str) -> watch::Receiver<u64> {
 }
 
 fn notify_session_change(id: &str, revision: u64) {
-    let mut changes = session_change_registry().lock().expect("AI 会话变化锁不可用");
+    let changes = session_change_registry().lock().expect("AI 会话变化锁不可用");
     if let Some(sender) = changes.get(id) {
-        sender.send_replace(revision);
+        sender.send_if_modified(|current| {
+            if *current != revision {
+                *current = revision;
+                true
+            } else {
+                false
+            }
+        });
     }
 }
 
@@ -76,26 +86,103 @@ pub fn set_app_handle(app: crate::runtime::AppHandle) {
     let _ = APP.set(app);
 }
 
-/// 已推送给客户端的内容基线：用于计算增量消息，避免每次重传整段对话。
+pub(crate) type MessageFingerprint = (u64, usize, bool);
+
+pub(crate) fn message_fingerprint(message: &AiMessage) -> MessageFingerprint {
+    let mut hasher = DefaultHasher::new();
+    message.text.hash(&mut hasher);
+    message.subagent.hash(&mut hasher);
+    message.subagent_key.hash(&mut hasher);
+    message.todo.hash(&mut hasher);
+    (hasher.finish(), message.text.len(), message.todo)
+}
+
+/// 已推送给客户端的内容指纹基线：用于计算增量消息，避免每帧全量克隆整段对话。
 #[derive(Default)]
 struct Emitted {
     revision: u64,
-    /// id → (text, subagent, subagentKey, todo)：除正文外，子代理字段变化（流式早期的
-    /// 兜底名修正、分组键补写）与 `todo` 标记（tool_result 先于 tool_use 到达时的补写）
-    /// 也必须触发推送，否则前端停留在旧值（审查 V-4）。
-    messages: HashMap<String, (String, Option<String>, Option<String>, bool)>,
+    /// id → (hash(text, subagent, subagentKey, todo), text.len(), todo)：除正文外，
+    /// 子代理字段变化与 `todo` 标记变化也必须触发推送，但不额外驻留第 2 份正文拷贝。
+    messages: HashMap<String, MessageFingerprint>,
 }
 
 /// 实时帧最小推送间隔：Claude/Codex 的 token 级增量可达每秒上百条，
 /// 逐条 `eval` 会让 WebView2 浏览器进程的 CDP 队列无限增长（实测堆积到 GB 级），
 /// 前端也来不及消化。节流后只保留首帧与一个尾帧，尾帧保证最终状态不丢。
 const AI_EMIT_MIN_INTERVAL: Duration = Duration::from_millis(150);
+const MAX_CACHED_SESSIONS: usize = 24;
+const MAX_META_CACHE_ENTRIES: usize = 512;
+
+fn now_ms_u64() -> u64 {
+    chrono::Utc::now().timestamp_millis().max(0) as u64
+}
 
 #[derive(Default)]
 struct EmitGate {
     last: Option<Instant>,
-    /// 已有一个尾帧在等待，避免同一会话堆积多个调度线程。
+    /// 已有一个尾帧在等待，避免同一会话堆积多个调度任务。
     scheduled: bool,
+}
+
+struct EmitScheduler {
+    queue: Mutex<Vec<(Instant, Weak<Cell>)>>,
+    cv: Condvar,
+}
+
+fn emit_scheduler() -> &'static Arc<EmitScheduler> {
+    static SCHEDULER: OnceLock<Arc<EmitScheduler>> = OnceLock::new();
+    SCHEDULER.get_or_init(|| {
+        let scheduler = Arc::new(EmitScheduler {
+            queue: Mutex::new(Vec::new()),
+            cv: Condvar::new(),
+        });
+        let worker = Arc::clone(&scheduler);
+        let _ = thread::Builder::new()
+            .name("ai-emit-flush".into())
+            .spawn(move || {
+                let mut queue = worker.queue.lock().unwrap_or_else(|e| e.into_inner());
+                loop {
+                    if queue.is_empty() {
+                        queue = worker.cv.wait(queue).unwrap_or_else(|e| e.into_inner());
+                        continue;
+                    }
+                    let now = Instant::now();
+                    let next_due = queue.iter().map(|(due, _)| *due).min().unwrap_or(now);
+                    if next_due > now {
+                        let (guard, _) = worker
+                            .cv
+                            .wait_timeout(queue, next_due.saturating_duration_since(now))
+                            .unwrap_or_else(|e| e.into_inner());
+                        queue = guard;
+                        continue;
+                    }
+                    let mut due_cells = Vec::new();
+                    let mut idx = 0;
+                    while idx < queue.len() {
+                        if queue[idx].0 <= now {
+                            due_cells.push(queue.swap_remove(idx).1);
+                        } else {
+                            idx += 1;
+                        }
+                    }
+                    drop(queue);
+                    for weak in due_cells {
+                        let Some(cell) = weak.upgrade() else { continue; };
+                        {
+                            let mut gate = match cell.emit_gate.lock() {
+                                Ok(gate) => gate,
+                                Err(error) => error.into_inner(),
+                            };
+                            gate.scheduled = false;
+                            gate.last = Some(Instant::now());
+                        }
+                        emit_update_now(&cell);
+                    }
+                    queue = worker.queue.lock().unwrap_or_else(|e| e.into_inner());
+                }
+            });
+        scheduler
+    })
 }
 
 struct Cell {
@@ -104,10 +191,11 @@ struct Cell {
     summary: Mutex<SessionSummaryTracker>,
     emitted: Mutex<Emitted>,
     emit_gate: Mutex<EmitGate>,
-    /// 节流尾帧需要拿回 Arc 才能在线程里安全地延迟推送；
+    /// 节流尾帧需要拿回 Arc 才能在统一调度线程里安全延迟推送；
     /// 单元测试直接构造 Cell 时为空，退化为立即推送。
     weak_self: OnceLock<Weak<Cell>>,
     deleted: AtomicBool,
+    last_access: AtomicU64,
     path: PathBuf,
 }
 
@@ -121,15 +209,35 @@ impl Cell {
             emit_gate: Mutex::default(),
             weak_self: OnceLock::new(),
             deleted: AtomicBool::new(false),
+            last_access: AtomicU64::new(now_ms_u64()),
             path,
         });
         let _ = cell.weak_self.set(Arc::downgrade(&cell));
         cell
     }
+
+    fn touch_access(&self) {
+        self.last_access.store(now_ms_u64(), Ordering::Relaxed);
+    }
 }
 fn registry() -> &'static Mutex<HashMap<PathBuf, Arc<Cell>>> {
     static REGISTRY: OnceLock<Mutex<HashMap<PathBuf, Arc<Cell>>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+struct CachedMetaEntry {
+    mtime: SystemTime,
+    size: u64,
+    owner: String,
+    meta: AiSession,
+}
+fn meta_cache() -> &'static Mutex<HashMap<PathBuf, CachedMetaEntry>> {
+    static META_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedMetaEntry>>> = OnceLock::new();
+    META_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn invalidate_meta_cache(path: &Path) {
+    if let Ok(mut cache) = meta_cache().lock() {
+        cache.remove(path);
+    }
 }
 fn directory() -> Result<PathBuf> {
     let path = PathService::require_data_dir()?.join("AiSessions");
@@ -179,19 +287,11 @@ fn emit_update(cell: &Cell) {
                 emit_update_now(cell);
                 return;
             };
-            thread::spawn(move || {
-                thread::sleep(delay);
-                let Some(cell) = weak.upgrade() else { return; };
-                {
-                    let mut gate = match cell.emit_gate.lock() {
-                        Ok(gate) => gate,
-                        Err(error) => error.into_inner(),
-                    };
-                    gate.scheduled = false;
-                    gate.last = Some(Instant::now());
-                }
-                emit_update_now(&cell);
-            });
+            let scheduler = emit_scheduler();
+            if let Ok(mut queue) = scheduler.queue.lock() {
+                queue.push((Instant::now() + delay, weak));
+                scheduler.cv.notify_one();
+            }
         }
     }
 }
@@ -199,27 +299,21 @@ fn emit_update(cell: &Cell) {
 fn emit_update_now(cell: &Cell) {
     if cell.deleted.load(Ordering::Acquire) { return; }
     let Some(app) = APP.get() else { return; };
-    let mut data = match cell.data.lock() { Ok(data) => data, Err(_) => return };
+    cell.touch_access();
+    let data = match cell.data.lock() { Ok(data) => data, Err(_) => return };
     let mut emitted = match cell.emitted.lock() { Ok(emitted) => emitted, Err(_) => return };
     if emitted.revision == data.revision {
-        // 桌面事件基线已追上，但 WS 订阅者可能刚建立；仍广播一次唤醒，
-        // 由其用 revision 判断是否需要取快照，不会重复发送正文。
         notify_session_change(&data.id, data.revision);
         return;
     }
-    // 增量维护已发射内容：只克隆本次变化的消息，未触及的消息仅做哈希查找。
-    // 旧实现每帧全量重建 id→text 表，长会话流式期间每秒克隆整段对话文本数十次。
+    // 增量维护已发射内容指纹：只克隆本次变化的消息，未触及的消息不再驻留第 2 份正文。
     let mut changed: Vec<AiMessage> = Vec::new();
     for message in &data.messages {
-        match emitted.messages.get(&message.id) {
-            Some((text, subagent, subagent_key, todo)) if *text == message.text
-                && *subagent == message.subagent
-                && *subagent_key == message.subagent_key
-                && *todo == message.todo => continue,
-            _ => {}
+        let fp = message_fingerprint(message);
+        if emitted.messages.get(&message.id) == Some(&fp) {
+            continue;
         }
-        emitted.messages.insert(message.id.clone(),
-            (message.text.clone(), message.subagent.clone(), message.subagent_key.clone(), message.todo));
+        emitted.messages.insert(message.id.clone(), fp);
         changed.push(message.clone());
     }
     if emitted.messages.len() != data.messages.len() {
@@ -239,26 +333,137 @@ fn emit_update_now(cell: &Cell) {
     notify_session_change(&session_id, session_revision);
     let _ = app.emit("ai-session-update", json!({"type":"update","session":metadata,"messages":changed}));
 }
+fn is_zero_u32_ref(value: &u32) -> bool {
+    *value == 0
+}
+fn is_empty_slice<T>(slice: &&[T]) -> bool {
+    slice.is_empty()
+}
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedAiSession<'a> {
+    id: &'a str,
+    title: &'a str,
+    provider: &'a str,
+    provider_id: &'a Option<String>,
+    provider_name: &'a Option<String>,
+    project_path: &'a str,
+    model: &'a Option<String>,
+    status: &'a str,
+    messages: &'a [AiMessage],
+    approvals: &'a [AiApproval],
+    error: &'a Option<String>,
+    created_at: i64,
+    updated_at: i64,
+    revision: u64,
+    result_revision: u64,
+    usage: &'a Option<AiUsage>,
+    usage_checkpoint: &'a Option<AiTokenUsage>,
+    owner: &'a str,
+    thread_id: &'a Option<String>,
+    request_ids: &'a [String],
+    pending_inputs: &'a [PendingInput],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    slash_catalog: &'a Option<SlashCatalog>,
+    #[serde(skip_serializing_if = "is_empty_slice")]
+    todos: &'a [AiTodo],
+    #[serde(skip_serializing_if = "is_empty_slice")]
+    agents: &'a [AiAgent],
+    #[serde(skip_serializing_if = "is_zero_u32_ref")]
+    compactions: u32,
+}
+impl<'a> From<&'a AiSession> for PersistedAiSession<'a> {
+    fn from(data: &'a AiSession) -> Self {
+        Self {
+            id: &data.id,
+            title: &data.title,
+            provider: &data.provider,
+            provider_id: &data.provider_id,
+            provider_name: &data.provider_name,
+            project_path: &data.project_path,
+            model: &data.model,
+            status: &data.status,
+            messages: &data.messages,
+            approvals: &data.approvals,
+            error: &data.error,
+            created_at: data.created_at,
+            updated_at: data.updated_at,
+            revision: data.revision,
+            result_revision: data.result_revision,
+            usage: &data.usage,
+            usage_checkpoint: &data.usage_checkpoint,
+            owner: &data.owner,
+            thread_id: &data.thread_id,
+            request_ids: &data.request_ids,
+            pending_inputs: &data.pending_inputs,
+            slash_catalog: &data.slash_catalog,
+            todos: &data.todos,
+            agents: &data.agents,
+            compactions: data.compactions,
+        }
+    }
+}
+fn serialize_persisted_session(data: &AiSession) -> Result<Vec<u8>> {
+    serde_json::to_vec(&PersistedAiSession::from(data)).map_err(|e| e.to_string())
+}
 fn persist(cell: &Cell) -> Result<()> {
     let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
     persist_data(cell, &data)
 }
 fn persist_data(cell: &Cell, data: &AiSession) -> Result<()> {
     if cell.deleted.load(Ordering::Acquire) { return Err("AI 会话不存在".into()); }
-    // API 序列化隐藏的字段在磁盘中单独保留。
-    let mut value = serde_json::to_value(data).map_err(|e| e.to_string())?;
-    value["owner"] = json!(data.owner);
-    value["threadId"] = json!(data.thread_id);
-    value["requestIds"] = json!(data.request_ids);
-    value["usageCheckpoint"] = json!(data.usage_checkpoint);
-    value["pendingInputs"] = json!(data.pending_inputs);
-    // 思考快照只是「此刻在做什么」的实时状态：既不进聊天记录，也不落盘
-    // （否则每批 delta 都要重写整个会话文件，长回合下磁盘写放大非常可观）。
-    if let Some(object) = value.as_object_mut() { object.remove("thinking"); }
-    // 桌面端打开状态由客户端实时上报，落盘后会变成过期标记。
-    if let Some(object) = value.as_object_mut() { object.remove("desktopOpen"); }
-    atomic_write_private(&cell.path, &serde_json::to_vec(&value).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("保存 AI 会话失败：{e}"))
+    let bytes = serialize_persisted_session(data)?;
+    atomic_write_private(&cell.path, &bytes)
+        .map_err(|e| format!("保存 AI 会话失败：{e}"))?;
+    invalidate_meta_cache(&cell.path);
+    cell.touch_access();
+    Ok(())
+}
+fn normalize_loaded_session(data: &mut AiSession) -> (bool, bool) {
+    let normalized_project_path = PathService::normalize_child_process_path_str(&data.project_path);
+    let project_path_migrated = normalized_project_path != data.project_path;
+    data.project_path = normalized_project_path;
+    let pending_ids: HashSet<_> = data.pending_inputs.iter().map(|item| item.request_id.as_str()).collect();
+    let previous_count = data.messages.len();
+    data.messages.retain(|message| !pending_ids.contains(message.id.as_str()));
+    let before_agents = data.agents.len();
+    prune_non_subagent_agents(data);
+    let content_migrated = data.messages.len() != previous_count || data.agents.len() != before_agents;
+    let migrated = content_migrated || project_path_migrated;
+    if content_migrated { touch(data); }
+    let interrupted = matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping");
+    if interrupted {
+        data.status = "interrupted".into();
+        data.approvals.clear();
+        data.pending_inputs.clear();
+        usage::finish_turn(data);
+        settle_agents(data, "stopped");
+        data.error = Some("服务已重启，上次执行已中断，可以继续发送消息".into());
+        touch(data);
+        data.result_revision = data.revision;
+    }
+    (migrated, interrupted)
+}
+fn evict_idle_registry_entries(registry: &mut HashMap<PathBuf, Arc<Cell>>, keep_path: &Path) {
+    if registry.len() <= MAX_CACHED_SESSIONS {
+        return;
+    }
+    let mut candidates: Vec<(u64, PathBuf)> = registry
+        .iter()
+        .filter(|(path, cell)| {
+            path.as_path() != keep_path
+                && Arc::strong_count(cell) == 1
+                && cell.control.try_lock().is_ok_and(|control| control.is_none())
+        })
+        .map(|(path, cell)| (cell.last_access.load(Ordering::Relaxed), path.clone()))
+        .collect();
+    candidates.sort_by_key(|(last_access, _)| *last_access);
+    for (_, path) in candidates {
+        if registry.len() <= MAX_CACHED_SESSIONS {
+            break;
+        }
+        registry.remove(&path);
+    }
 }
 fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
     let id = Uuid::parse_str(id).map_err(|_| "AI 会话不存在")?.to_string();
@@ -268,41 +473,15 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
         let bytes = fs::read(&path).map_err(|_| "AI 会话不存在")?;
         let mut data: AiSession = serde_json::from_slice(&bytes).map_err(|_| "AI 会话文件损坏")?;
         if data.owner != owner { return Err("AI 会话不存在".into()); }
-        // 旧版 Web / App 创建路径可能把 scope key 或 `\\?\` 前缀直接落盘；
-        // 载入时还原一次，避免 CLI 的 cwd 回落到 C:\Windows。
-        let normalized_project_path = PathService::normalize_child_process_path_str(&data.project_path);
-        let project_path_migrated = normalized_project_path != data.project_path;
-        data.project_path = normalized_project_path;
-        // 兼容旧会话：尚未发送的排队消息只保留在队列，真正执行时再加入正文。
-        let pending_ids: HashSet<_> = data.pending_inputs.iter().map(|item| item.request_id.as_str()).collect();
-        let previous_count = data.messages.len();
-        data.messages.retain(|message| !pending_ids.contains(message.id.as_str()));
-        // 旧版本把后台 Bash 命令（`task_type=local_bash`）也记成了子代理：它们没有
-        // 任何子代理消息，点开只能是空抽屉。有 task_type 的按类型剔除；更早的记录
-        // 没有该字段，改用 tool_use 对应的工具名兜底（子代理调用才会是 Task / Agent）。
-        let before_agents = data.agents.len();
-        prune_non_subagent_agents(&mut data);
-        let content_migrated = data.messages.len() != previous_count || data.agents.len() != before_agents;
-        let migrated = content_migrated || project_path_migrated;
-        // 仅路径迁移不推进 updated_at / revision，避免会话列表因一次后台修复而重排。
-        if content_migrated { touch(&mut data); }
-        let interrupted = matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping");
-        if interrupted {
-            data.status = "interrupted".into(); data.approvals.clear();
-            // 排队消息没有进程可以接手，服务重启后不能隐瞒它们仍会执行。
-            data.pending_inputs.clear();
-            usage::finish_turn(&mut data);
-            // 进程已随服务重启消失：仍在「执行中」的子代理一律置终态。
-            settle_agents(&mut data, "stopped");
-            data.error = Some("服务已重启，上次执行已中断，可以继续发送消息".into()); touch(&mut data);
-            data.result_revision = data.revision;
-        }
+        let (migrated, interrupted) = normalize_loaded_session(&mut data);
         let cell = Cell::new(data, path.clone());
         // 重启中断标记与结束版本一起落盘，避免再次重启时重复生成同一结束事件。
         if interrupted || migrated { persist(&cell)?; }
         registry.insert(path.clone(), cell);
+        evict_idle_registry_entries(&mut registry, &path);
     }
     let cell = registry.get(&path).ok_or("AI 会话不存在")?.clone();
+    cell.touch_access();
     if cell.data.lock().map_err(|_| "AI 会话状态不可用")?.owner != owner { return Err("AI 会话不存在".into()); }
     Ok(cell)
 }
@@ -350,24 +529,96 @@ pub fn revision(id: &str, owner: &str) -> Result<u64> {
     cell.data.lock().map(|data| data.revision).map_err(|_| "AI 会话状态不可用".into())
 }
 pub fn list(owner: &str) -> Result<Vec<AiSession>> {
+    let dir = directory()?;
+    // 先快照当前内存注册表中的热会话，释放锁后再遍历磁盘，避免长会话读盘阻塞 load/emit。
+    let active_cells: HashMap<PathBuf, Arc<Cell>> = {
+        let reg = registry().lock().map_err(|_| "AI 会话状态不可用")?;
+        reg.iter().map(|(path, cell)| (path.clone(), Arc::clone(cell))).collect()
+    };
     let mut sessions = Vec::new();
-    for entry in fs::read_dir(directory()?).map_err(|e| e.to_string())?.flatten() {
-        if entry.path().extension().is_some_and(|ext| ext == "json") {
-            if let Some(id) = entry.path().file_stem().and_then(|id| id.to_str()) {
-                if let Ok(cell) = load(id, owner) {
-                    // 列表是手机端最常用的入口：先自愈残留的「执行中」，避免首页一直显示运行中。
-                    heal_orphaned_running(&cell);
-                    refresh_title(&cell, false);
-                    if let Ok(data) = cell.data.lock() {
-                        let mut meta = data.metadata();
+    let mut seen_paths = HashSet::new();
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())?.flatten() {
+        let path = entry.path();
+        if !path.extension().is_some_and(|ext| ext == "json") {
+            continue;
+        }
+        seen_paths.insert(path.clone());
+        if let Some(cell) = active_cells.get(&path) {
+            let owned = cell.data.lock().is_ok_and(|data| data.owner == owner);
+            if !owned {
+                continue;
+            }
+            // 列表是手机端最常用的入口：先自愈残留的「执行中」，避免首页一直显示运行中。
+            heal_orphaned_running(cell);
+            refresh_title(cell, false);
+            if let Ok(data) = cell.data.lock() {
+                if data.owner == owner {
+                    let mut meta = data.metadata();
+                    meta.desktop_open = is_desktop_open(&meta.id);
+                    // 列表是摘要视图：子代理长篇结果不随列表下发。
+                    meta.trim_realtime_payload();
+                    sessions.push(meta);
+                }
+            }
+            continue;
+        }
+        // 冷历史会话走文件邮戳元数据缓存：绝不把全部历史 messages 塞入常驻 REGISTRY。
+        let Ok(file_meta) = fs::metadata(&path) else { continue; };
+        let mtime = file_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let size = file_meta.len();
+        if let Ok(cache) = meta_cache().lock() {
+            if let Some(cached) = cache.get(&path) {
+                if cached.mtime == mtime && cached.size == size {
+                    if cached.owner == owner {
+                        let mut meta = cached.meta.clone();
                         meta.desktop_open = is_desktop_open(&meta.id);
-                        // 列表是摘要视图：子代理长篇结果不随列表下发。
-                        meta.trim_realtime_payload();
                         sessions.push(meta);
-                    };
+                    }
+                    continue;
                 }
             }
         }
+        let Ok(bytes) = fs::read(&path) else { continue; };
+        let Ok(mut data) = serde_json::from_slice::<AiSession>(&bytes) else { continue; };
+        let (migrated, interrupted) = normalize_loaded_session(&mut data);
+        let (final_mtime, final_size) = if interrupted || migrated {
+            if let Ok(serialized) = serialize_persisted_session(&data) {
+                if atomic_write_private(&path, &serialized).is_ok() {
+                    if let Ok(updated_meta) = fs::metadata(&path) {
+                        (updated_meta.modified().unwrap_or(mtime), updated_meta.len())
+                    } else {
+                        (mtime, size)
+                    }
+                } else {
+                    (mtime, size)
+                }
+            } else {
+                (mtime, size)
+            }
+        } else {
+            (mtime, size)
+        };
+        let mut meta = data.metadata();
+        meta.trim_realtime_payload();
+        let entry_owner = data.owner.clone();
+        if let Ok(mut cache) = meta_cache().lock() {
+            if cache.len() >= MAX_META_CACHE_ENTRIES {
+                cache.clear();
+            }
+            cache.insert(path, CachedMetaEntry {
+                mtime: final_mtime,
+                size: final_size,
+                owner: entry_owner.clone(),
+                meta: meta.clone(),
+            });
+        }
+        if entry_owner == owner {
+            meta.desktop_open = is_desktop_open(&meta.id);
+            sessions.push(meta);
+        }
+    }
+    if let Ok(mut cache) = meta_cache().lock() {
+        cache.retain(|path, _| seen_paths.contains(path));
     }
     sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
     Ok(sessions)
@@ -529,6 +780,17 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
     Ok(data)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadMatchHeader {
+    #[serde(default)]
+    owner: String,
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    thread_id: Option<String>,
+}
+
 /// 在已落盘的 AI 会话里找绑定同一历史线程的会话（磁盘 JSON 持久化过 owner 与 threadId）。
 fn find_by_thread(owner: &str, provider: &str, thread_id: &str) -> Option<AiSession> {
     let dir = directory().ok()?;
@@ -536,8 +798,8 @@ fn find_by_thread(owner: &str, provider: &str, thread_id: &str) -> Option<AiSess
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext != "json") { continue; }
         let Ok(bytes) = fs::read(&path) else { continue };
-        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else { continue };
-        if value["owner"] != owner || value["provider"] != provider || value["threadId"] != thread_id { continue; }
+        let Ok(header) = serde_json::from_slice::<ThreadMatchHeader>(&bytes) else { continue };
+        if header.owner != owner || header.provider != provider || header.thread_id.as_deref() != Some(thread_id) { continue; }
         if let Ok(data) = serde_json::from_slice::<AiSession>(&bytes) { return Some(data); }
     }
     None
@@ -618,8 +880,16 @@ pub fn resume_codex_history(owner: &str, session_id: &str, project_path: String,
     let _guard = RESUME_LOCK.lock().map_err(|_| "历史会话恢复锁不可用")?;
     let mut data = new_session(owner, CreateAiSession { provider: "codex".into(), provider_id: input.provider_id,
         project_path, model: input.model, resume_session_id: None })?;
-    // 网络重试或重复点击复用同账号、同线程和同启动配置的会话，不产生重复副本。
+    // 网络重试或重复点击复用同账号、同线程和同启动配置的会话，不产生重复副本；
+    // 先按列表元数据剪枝，避免把无关冷会话全部加载进 REGISTRY。
     for item in list(owner)? {
+        if item.provider != "codex"
+            || item.project_path != data.project_path
+            || item.provider_id != data.provider_id
+            || item.model != data.model
+        {
+            continue;
+        }
         let Ok(existing) = get(&item.id, owner) else { continue; };
         if existing.provider == "codex" && existing.thread_id.as_deref() == Some(session_id)
             && existing.project_path == data.project_path && existing.provider_id == data.provider_id && existing.model == data.model {
@@ -651,6 +921,10 @@ pub fn delete(id: &str, owner: &str) -> Result<()> {
     if let Some(worker) = control.take() { let _ = worker.tx.send(Control::Retire); }
     drop(data);
     registry().lock().map_err(|_| "AI 会话状态不可用")?.remove(&cell.path);
+    invalidate_meta_cache(&cell.path);
+    if let Ok(mut changes) = session_change_registry().lock() {
+        changes.remove(id);
+    }
     // 跨端同步：其他客户端据此关闭已删除会话的标签。
     if let Some(app) = APP.get() { let _ = app.emit("ai-session-removed", id.to_string()); }
     Ok(())
@@ -1496,20 +1770,24 @@ fn message_sub_quiet(cell: &Cell, key: &str, group: &str, text: &str, agent: &st
 /// 每帧全量下发会撑爆 IPC；二是前端折叠态只显示最后一两句。截断点回退到最近的
 /// 换行/句号，避免把半句话当成开头展示。
 const THINKING_TAIL_CHARS: usize = 4000;
+const THINKING_TRIM_HIGH_WATER: usize = THINKING_TAIL_CHARS + 512;
 
 fn thinking_tail(text: &str) -> String {
     let count = text.chars().count();
     if count <= THINKING_TAIL_CHARS { return text.to_string(); }
-    let tail: String = text.chars().skip(count - THINKING_TAIL_CHARS).collect();
+    let drop_chars = count - THINKING_TAIL_CHARS;
+    let start_byte = text.char_indices().nth(drop_chars).map_or(text.len(), |(idx, _)| idx);
+    let tail = &text[start_byte..];
     // 回退到最近的段落/句子边界，最多再丢 200 字。窗口按字符数切，
     // 不能按字节切：中文一个字三字节，字节下标会落在字符中间直接 panic。
-    let window: String = tail.chars().take(200).collect();
+    let win_end = tail.char_indices().nth(200).map_or(tail.len(), |(idx, _)| idx);
+    let window = &tail[..win_end];
     let cut = window.rfind('\n').or_else(|| window.rfind("。")).or_else(|| window.rfind('.'))
         .map(|at| at + window[at..].chars().next().map_or(0, char::len_utf8))
         .filter(|at| *at > 0);
     match cut {
         Some(at) => tail[at..].to_string(),
-        None => tail,
+        None => tail.to_string(),
     }
 }
 
@@ -1526,8 +1804,22 @@ fn thinking_append_quiet(cell: &Cell, text: &str) {
                 thinking.text.push_str(text);
                 thinking.total_chars += text.chars().count() as u64;
                 thinking.updated_at = now;
-                let tail = thinking_tail(&thinking.text);
-                thinking.text = tail;
+                if thinking.text.len() > THINKING_TRIM_HIGH_WATER {
+                    let count = thinking.text.chars().count();
+                    if count > THINKING_TRIM_HIGH_WATER {
+                        let drop_chars = count - THINKING_TAIL_CHARS;
+                        if let Some((start_byte, _)) = thinking.text.char_indices().nth(drop_chars) {
+                            let rest = &thinking.text[start_byte..];
+                            let win_end = rest.char_indices().nth(200).map_or(rest.len(), |(idx, _)| idx);
+                            let window = &rest[..win_end];
+                            let extra = window.rfind('\n').or_else(|| window.rfind("。")).or_else(|| window.rfind('.'))
+                                .map(|at| at + window[at..].chars().next().map_or(0, char::len_utf8))
+                                .filter(|at| *at > 0)
+                                .unwrap_or(0);
+                            thinking.text.drain(..start_byte + extra);
+                        }
+                    }
+                }
             }
             // 上一段已结束（正文/工具已开始）：开新的一段。
             _ => {
@@ -2696,11 +2988,27 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
         emit_update(cell);
     }
 }
+const MAX_CODEX_COMMAND_OUTPUT_BYTES: usize = 512 * 1024;
+
 #[derive(Default)]
 struct CodexCommandOutput {
     command: String,
     output: String,
     running: bool,
+    header_emitted: bool,
+}
+
+fn cap_command_output(output: &mut String) -> bool {
+    if output.len() <= MAX_CODEX_COMMAND_OUTPUT_BYTES {
+        return false;
+    }
+    let excess = output.len() - MAX_CODEX_COMMAND_OUTPUT_BYTES;
+    let mut cut = excess;
+    while cut < output.len() && !output.is_char_boundary(cut) {
+        cut += 1;
+    }
+    output.drain(..cut);
+    true
 }
 #[derive(Default)]
 struct CodexOutputState {
@@ -2739,7 +3047,9 @@ impl CodexOutputState {
                     if completed || command.output.is_empty() { command.output = output.into(); }
                 }
                 let name = if command.command.is_empty() { "执行命令" } else { &command.command };
+                cap_command_output(&mut command.output);
                 message(cell, &key, "tool", &format!("{name}\n{}", command.output), false);
+                command.header_emitted = true;
             }
             "fileChange" => message(cell, &key, "tool", &format!("文件变更\n{}", item["changes"]), false),
             "collabAgentToolCall" | "collabToolCall" => {
@@ -2778,8 +3088,14 @@ fn apply_codex_event(cell: &Cell, turn: &str, state: &mut CodexOutputState, valu
             } else {
                 let command = state.commands.entry(id.into()).or_default();
                 command.output.push_str(text);
-                let name = if command.command.is_empty() { "执行命令" } else { &command.command };
-                message(cell, &key, "tool", &format!("{name}\n{}", command.output), false);
+                let capped = cap_command_output(&mut command.output);
+                if command.header_emitted && !capped && !text.is_empty() {
+                    message(cell, &key, "tool", text, true);
+                } else {
+                    let name = if command.command.is_empty() { "执行命令" } else { &command.command };
+                    message(cell, &key, "tool", &format!("{name}\n{}", command.output), false);
+                    command.header_emitted = true;
+                }
             }
         }
         "item/started" | "item/completed" => state.item(cell, turn, &params["item"], method == "item/completed"),
@@ -2885,6 +3201,7 @@ fn codex_request(stdin: &mut impl Write, next_id: &mut u64, method: &str, params
     Ok(id)
 }
 fn codex_status(cell: &Cell, state: &CodexOutputState, background: &CodexBackgroundState, request_id: Option<&str>, submitting: bool) {
+    let mut changed = false;
     if let Ok(mut data) = cell.data.lock() {
         // 发送接口可能刚接纳了下一条消息，旧回合的迟到事件不能把它改回空闲。
         if active_request_id(&data) != request_id || data.status == "stopping" || data.status == "forceStopped" { return; }
@@ -2893,9 +3210,12 @@ fn codex_status(cell: &Cell, state: &CodexOutputState, background: &CodexBackgro
         if data.status != status {
             data.status = status.into(); touch(&mut data);
             if status == "idle" { data.result_revision = data.revision; }
+            changed = true;
         }
     }
-    emit_update(cell);
+    if changed {
+        emit_update(cell);
+    }
 }
 fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permissions: &super::ai_permission_service::NativePermissions, stdin: &mut impl Write,
     controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>, worker_id: u64) -> Result<WorkerExit> {
@@ -3324,7 +3644,7 @@ mod tests {
             "model": null, "status": "running", "messages": [], "approvals": [], "error": null,
             "updatedAt": 0, "revision": 0,
         })).unwrap();
-        Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), emit_gate: Mutex::default(), weak_self: OnceLock::new(), deleted: AtomicBool::new(false), path: PathBuf::new() }
+        Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), emit_gate: Mutex::default(), weak_self: OnceLock::new(), deleted: AtomicBool::new(false), last_access: AtomicU64::new(0), path: PathBuf::new() }
     }
     struct SavedCell(Cell);
     impl SavedCell {
@@ -3992,7 +4312,7 @@ mod todo_agent_tests {
         })).unwrap();
         Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(),
             emitted: Mutex::default(), emit_gate: Mutex::default(), weak_self: OnceLock::new(),
-            deleted: AtomicBool::new(false), path: PathBuf::new() }
+            deleted: AtomicBool::new(false), last_access: AtomicU64::new(0), path: PathBuf::new() }
     }
 
     fn todo_use(id: &str, todos: Value) -> Value {
@@ -4466,6 +4786,85 @@ mod todo_agent_tests {
         let value = serde_json::to_value(&legacy).unwrap();
         assert!(value.get("todos").is_none());
         assert!(value.get("agents").is_none());
+    }
+
+    #[test]
+    fn persisted_ai_session_round_trip_preserves_disk_fields_and_drops_ephemeral() {
+        let original = AiSession {
+            id: "sess-1".into(),
+            title: "往返测试".into(),
+            provider: "claude".into(),
+            provider_id: Some("llm:1".into()),
+            provider_name: Some("自定义".into()),
+            project_path: "/tmp/proj".into(),
+            model: Some("claude-sonnet".into()),
+            status: "idle".into(),
+            messages: vec![AiMessage {
+                id: "m1".into(),
+                role: "user".into(),
+                text: "hello".into(),
+                created_at: 42,
+                skill_name: None,
+                model_switch: None,
+                subagent_key: None,
+                subagent: None,
+                images: Vec::new(),
+                todo: true,
+            }],
+            approvals: Vec::new(),
+            error: None,
+            created_at: 100,
+            updated_at: 200,
+            revision: 3,
+            result_revision: 2,
+            usage: Some(usage::initial()),
+            usage_checkpoint: Some(AiTokenUsage {
+                input_tokens: Some(12),
+                output_tokens: Some(34),
+                ..Default::default()
+            }),
+            owner: "alice".into(),
+            thread_id: Some("thread-9".into()),
+            request_ids: vec!["req-1".into()],
+            pending_inputs: vec![PendingInput {
+                text: "queued".into(),
+                request_id: "req-2".into(),
+                images: Vec::new(),
+            }],
+            slash_catalog: None,
+            todos: Vec::new(),
+            agents: Vec::new(),
+            thinking: Some(crate::models::ai_chat::AiThinking {
+                text: "ephemeral".into(),
+                started_at: 1,
+                updated_at: 2,
+                active: true,
+                blocks: 1,
+                total_chars: 9,
+            }),
+            compactions: 2,
+            desktop_open: true,
+        };
+        let bytes = serialize_persisted_session(&original).unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(value.get("thinking").is_none());
+        assert!(value.get("desktopOpen").is_none());
+        assert_eq!(value["owner"], "alice");
+        assert_eq!(value["threadId"], "thread-9");
+
+        let round_trip: AiSession = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(round_trip.id, original.id);
+        assert_eq!(round_trip.owner, "alice");
+        assert_eq!(round_trip.thread_id.as_deref(), Some("thread-9"));
+        assert_eq!(round_trip.request_ids, vec!["req-1"]);
+        assert_eq!(round_trip.pending_inputs.len(), 1);
+        assert_eq!(round_trip.pending_inputs[0].text, "queued");
+        assert_eq!(round_trip.usage_checkpoint.as_ref().and_then(|u| u.input_tokens), Some(12));
+        assert_eq!(round_trip.compactions, 2);
+        assert_eq!(round_trip.messages.len(), 1);
+        assert!(round_trip.messages[0].todo);
+        assert!(round_trip.thinking.is_none());
+        assert!(!round_trip.desktop_open);
     }
 }
 

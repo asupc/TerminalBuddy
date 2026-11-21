@@ -7,5 +7,5 @@ fn main() {
         run_claude_hook_client();
         return;
     }
-    run();
+    run(tauri::generate_context!());
 }

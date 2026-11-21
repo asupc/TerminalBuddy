@@ -1,9 +1,6 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use include_dir::{include_dir, Dir, DirEntry};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, Command, Stdio};
@@ -18,8 +15,10 @@ const FRAME_KILL: u8 = 3;
 pub(crate) const FRAME_ACK: u8 = 4;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-static EMBEDDED_VSCODE_TERMINAL: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/resources/vscode-terminal");
+#[cfg(not(debug_assertions))]
+static EMBEDDED_VSCODE_TERMINAL_ZIP: &[u8] =
+    include_bytes!("../../resources/vscode-terminal/bundle.zip");
+#[cfg(not(debug_assertions))]
 static EXTRACTED_VSCODE_TERMINAL: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 static COMPATIBLE_NODE: OnceLock<Mutex<Option<Result<(PathBuf, NodeProbeResult), String>>>> = OnceLock::new();
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -305,7 +304,8 @@ fn terminate_and_collect_plugin_error(child: &mut Child, stderr: Option<ChildStd
 }
 
 fn resolve_plugin_host(_app: &AppHandle) -> Result<PathBuf, String> {
-    if cfg!(debug_assertions) {
+    #[cfg(debug_assertions)]
+    {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .ok_or("无法定位项目目录")?
@@ -320,22 +320,29 @@ fn resolve_plugin_host(_app: &AppHandle) -> Result<PathBuf, String> {
         return Ok(normalize_path_for_child_process(&host));
     }
 
-    let plugin_dir = extracted_vscode_terminal_dir()?;
-    let host = plugin_dir.join("host.cjs");
-    if !host.is_file() {
-        return Err("内嵌的 VS Code 终端插件缺少 host.cjs".to_string());
+    #[cfg(not(debug_assertions))]
+    {
+        let plugin_dir = extracted_vscode_terminal_dir()?;
+        let host = plugin_dir.join("host.cjs");
+        if !host.is_file() {
+            return Err("内嵌的 VS Code 终端插件缺少 host.cjs".to_string());
+        }
+        Ok(normalize_path_for_child_process(&host))
     }
-    Ok(normalize_path_for_child_process(&host))
 }
 
+#[cfg(not(debug_assertions))]
 fn extracted_vscode_terminal_dir() -> Result<PathBuf, String> {
     EXTRACTED_VSCODE_TERMINAL
         .get_or_init(extract_embedded_vscode_terminal)
         .clone()
 }
 
+#[cfg(not(debug_assertions))]
 fn extract_embedded_vscode_terminal() -> Result<PathBuf, String> {
-    if EMBEDDED_VSCODE_TERMINAL.get_file("host.cjs").is_none() {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(EMBEDDED_VSCODE_TERMINAL_ZIP))
+        .map_err(|error| format!("解析内嵌 VS Code 终端插件压缩包失败: {}", error))?;
+    if archive.index_for_name("host.cjs").is_none() {
         return Err(
             "应用未内嵌 VS Code 终端插件，请使用 build-fast.bat 或 build.bat 重新构建".to_string(),
         );
@@ -367,9 +374,28 @@ fn extract_embedded_vscode_terminal() -> Result<PathBuf, String> {
     }
     std::fs::create_dir_all(&temp_dir)
         .map_err(|error| format!("创建 VS Code 终端临时目录失败: {}", error))?;
-    EMBEDDED_VSCODE_TERMINAL
-        .extract(&temp_dir)
-        .map_err(|error| format!("解压内嵌 VS Code 终端插件失败: {}", error))?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| format!("读取内嵌 VS Code 终端插件条目失败: {}", error))?;
+        let Some(relative_path) = entry.enclosed_name().map(|path| path.to_path_buf()) else {
+            continue;
+        };
+        let output_path = temp_dir.join(&relative_path);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&output_path)
+                .map_err(|error| format!("创建 VS Code 终端插件目录失败: {}", error))?;
+            continue;
+        }
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("创建 VS Code 终端插件目录失败: {}", error))?;
+        }
+        let mut out_file = std::fs::File::create(&output_path)
+            .map_err(|error| format!("解压内嵌 VS Code 终端插件失败: {}", error))?;
+        std::io::copy(&mut entry, &mut out_file)
+            .map_err(|error| format!("写入内嵌 VS Code 终端插件失败: {}", error))?;
+    }
     std::fs::write(temp_dir.join(".complete"), &version)
         .map_err(|error| format!("写入 VS Code 终端完整标记失败: {}", error))?;
 
@@ -386,22 +412,17 @@ fn extract_embedded_vscode_terminal() -> Result<PathBuf, String> {
     }
 }
 
+#[cfg(not(debug_assertions))]
 fn embedded_plugin_hash() -> u64 {
-    fn hash_dir(directory: &Dir<'_>, hasher: &mut DefaultHasher) {
-        for entry in directory.entries() {
-            entry.path().to_string_lossy().hash(hasher);
-            match entry {
-                DirEntry::File(file) => file.contents().hash(hasher),
-                DirEntry::Dir(child) => hash_dir(child, hasher),
-            }
-        }
-    }
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
 
     let mut hasher = DefaultHasher::new();
-    hash_dir(&EMBEDDED_VSCODE_TERMINAL, &mut hasher);
+    EMBEDDED_VSCODE_TERMINAL_ZIP.hash(&mut hasher);
     hasher.finish()
 }
 
+#[cfg(not(debug_assertions))]
 fn extracted_plugin_is_complete(directory: &Path, version: &str) -> bool {
     directory.join("host.cjs").is_file()
         && directory

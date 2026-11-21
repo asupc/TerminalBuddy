@@ -1,8 +1,16 @@
 use crate::services::PathService;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+
+fn migrated_dbs() -> &'static Mutex<HashSet<PathBuf>> {
+    static MIGRATED_DBS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    MIGRATED_DBS.get_or_init(|| Mutex::new(HashSet::new()))
+}
 
 pub struct DatabaseService;
 
@@ -25,15 +33,36 @@ impl DatabaseService {
     /// 在指定数据目录打开数据库（导入到默认目录时不能沿用当前自定义目录）。
     pub(crate) fn open_at(data_dir: &std::path::Path) -> Result<Connection, String> {
         fs::create_dir_all(data_dir).map_err(|error| format!("创建数据库目录失败: {}", error))?;
-        let mut connection = Connection::open(data_dir.join("terminal_buddy.db"))
+        let db_path = data_dir.join("terminal_buddy.db");
+        let existed_before_open = db_path.exists();
+        let mut connection = Connection::open(&db_path)
             .map_err(|error| format!("打开 SQLite 数据库失败: {}", error))?;
         connection
             .busy_timeout(Duration::from_secs(5))
             .map_err(|error| format!("设置 SQLite 超时失败: {}", error))?;
+        let already_migrated = existed_before_open
+            && migrated_dbs()
+                .lock()
+                .map(|set| set.contains(&db_path))
+                .unwrap_or(false);
+        if already_migrated {
+            connection
+                .execute_batch(
+                    "PRAGMA foreign_keys = ON;
+                     PRAGMA synchronous = NORMAL;
+                     PRAGMA temp_store = MEMORY;
+                     PRAGMA cache_size = -4000;",
+                )
+                .map_err(|error| format!("配置 SQLite 连接失败: {}", error))?;
+            return Ok(connection);
+        }
         connection
             .execute_batch(
                 "PRAGMA journal_mode = WAL;
                  PRAGMA foreign_keys = ON;
+                 PRAGMA synchronous = NORMAL;
+                 PRAGMA temp_store = MEMORY;
+                 PRAGMA cache_size = -4000;
                  CREATE TABLE IF NOT EXISTS schema_migrations (
                     name TEXT PRIMARY KEY
                  );
@@ -46,6 +75,12 @@ impl DatabaseService {
             )
             .map_err(|error| format!("初始化 SQLite 数据库失败: {}", error))?;
         Self::run_migrations(&mut connection)?;
+        if let Ok(mut set) = migrated_dbs().lock() {
+            if set.len() >= 16 {
+                set.clear();
+            }
+            set.insert(db_path);
+        }
         Ok(connection)
     }
 

@@ -287,6 +287,7 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
 
     let data_path = Some(new_dir.to_string_lossy().to_string());
     SettingsService::mutate_settings(move |settings| settings.data_path = data_path)?;
+    PathService::invalidate_writable_cache();
 
     Ok(())
 }

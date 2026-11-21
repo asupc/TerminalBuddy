@@ -152,14 +152,28 @@ fn save_clipboard_dib_as_png(dest_dir: &Path, filename: &str) -> Result<String, 
             }
 
             // Save as PNG
-            let img = image::RgbaImage::from_raw(bi_width, abs_height, rgba)
-                .ok_or("Failed to create image buffer")?;
+            let expected_len = (bi_width as usize)
+                .checked_mul(abs_height as usize)
+                .and_then(|pixels| pixels.checked_mul(4))
+                .ok_or_else(|| "Image dimensions too large".to_string())?;
+            if rgba.len() != expected_len {
+                return Err("Failed to create image buffer".to_string());
+            }
 
             std::fs::create_dir_all(dest_dir)
                 .map_err(|e| format!("Failed to create dir: {}", e))?;
             let file_path = dest_dir.join(filename);
-
-            img.save(&file_path)
+            let file = std::fs::File::create(&file_path)
+                .map_err(|e| format!("Failed to create PNG file: {}", e))?;
+            let mut encoder =
+                png::Encoder::new(std::io::BufWriter::new(file), bi_width, abs_height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder
+                .write_header()
+                .map_err(|e| format!("Failed to write PNG header: {}", e))?;
+            writer
+                .write_image_data(&rgba)
                 .map_err(|e| format!("Failed to save PNG: {}", e))?;
 
             file_path

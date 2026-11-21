@@ -1074,7 +1074,11 @@ fn read_transcript_stable(path: &std::path::Path) -> TranscriptRead {
             continue;
         }
         let complete = match content.rfind('\n') {
-            Some(end) => content[..=end].to_string(),
+            Some(end) => {
+                let mut content = content;
+                content.truncate(end + 1);
+                content
+            }
             // 一个完整行都还没有：视为空快照，而不是把半行喂给解析器。
             None => String::new(),
         };
@@ -1139,8 +1143,13 @@ fn is_claude_interrupt_message(content: &serde_json::Value) -> bool {
 /// Claude 用户中断可能不触发 Stop，也不一定写 turn_duration；必须单独识别中断消息。
 /// 只接受主会话的完整标记，工具输出 / 引用文本 / 子任务均不能结束当前回合。
 fn claude_turn_end(content: &str) -> Option<ClaudeTurnEnd> {
-    let mut end = None;
-    for line in content.lines() {
+    // 只需定位最后一个主会话有效回合终态：从尾部逆序扫描并在命中首条主会话
+    // user/assistant/api-request 或中断消息时立即结束，避免全文件逐行 JSON 反序列化。
+    let mut pending_completed: Option<Option<i64>> = None;
+    for line in content.lines().rev() {
+        if !line.contains("\"type\"") {
+            continue;
+        }
         let Ok(row) = serde_json::from_str::<serde_json::Value>(line) else { continue; };
         if row["isSidechain"] == true || row["is_sidechain"] == true { continue; }
         let timestamp = || row["timestamp"].as_str()
@@ -1148,19 +1157,21 @@ fn claude_turn_end(content: &str) -> Option<ClaudeTurnEnd> {
             .map(|timestamp| timestamp.timestamp_millis());
         match row["type"].as_str() {
             Some("user") if is_claude_interrupt_message(&row["message"]["content"]) => {
-                end = timestamp().map(ClaudeTurnEnd::Interrupted);
+                // 中断后的 turn_duration 不能把主动取消改写成已完成。
+                return timestamp().map(ClaudeTurnEnd::Interrupted);
             }
-            Some("user" | "assistant" | "api-request") => end = None,
+            Some("user" | "assistant" | "api-request") => {
+                return pending_completed.flatten().map(ClaudeTurnEnd::Completed);
+            }
             Some("system") if row["subtype"] == "turn_duration" => {
-                // 中断后的耗时统计不应把主动取消改成任务成功。
-                if !matches!(end, Some(ClaudeTurnEnd::Interrupted(_))) {
-                    end = timestamp().map(ClaudeTurnEnd::Completed);
+                if pending_completed.is_none() {
+                    pending_completed = Some(timestamp());
                 }
             }
             _ => {}
         }
     }
-    end
+    pending_completed.flatten().map(ClaudeTurnEnd::Completed)
 }
 
 // ───────────────────────── poll：镜像刷新（阻塞上下文，串行由调用频次与提交校验保证） ─────────────────────────
@@ -1196,12 +1207,24 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
     if !matches!(record.provider.as_str(), "claude" | "codex") {
         return PollContent::None;
     }
-    let existing = lock_state().mirrors.get(terminal_id).cloned();
-    let identity_matches = existing
+    let light_existing = {
+        let current = lock_state();
+        current.mirrors.get(terminal_id).map(|entry| {
+            (
+                entry.identity(),
+                entry.available,
+                entry.path.clone(),
+                entry.file_stamp,
+                entry.messages.is_empty(),
+            )
+        })
+    };
+    let identity_matches = light_existing
         .as_ref()
-        .is_some_and(|entry| entry.provider == record.provider && entry.session_id == record.session_id);
+        .is_some_and(|(identity, ..)| identity.0 == record.provider && identity.1 == record.session_id);
 
     if !identity_matches {
+        let existing = lock_state().mirrors.get(terminal_id).cloned();
         // 首次建镜像或换绑。
         if locate_negative_fresh(terminal_id) {
             return PollContent::None;
@@ -1245,26 +1268,26 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
         };
     }
 
-    let entry = existing.expect("identity_matches 蕴含 existing.is_some()");
-    // 同身份：文件未变化则不重复解析。
-    let stamp_now = entry
-        .path
+    let (old_identity, old_available, old_path, old_file_stamp, old_messages_empty) =
+        light_existing.expect("identity_matches 蕴含 light_existing.is_some()");
+    // 同身份：文件未变化则直接返回，绝不在热路径克隆 MirrorEntry（最多 5000 条消息）。
+    let stamp_now = old_path
         .as_ref()
         .filter(|path| path.is_file())
         .and_then(|path| std::fs::metadata(path).ok())
         .and_then(|metadata| Some((metadata.modified().ok()?, metadata.len())));
-    if entry.available && stamp_now.is_some_and(|stamp| Some(stamp) == entry.file_stamp) {
+    if old_available && stamp_now.is_some_and(|stamp| Some(stamp) == old_file_stamp) {
         return PollContent::None;
     }
     // 路径失效（重定位）或文件变化。
-    let path = match entry.path.as_ref().filter(|path| path.is_file()) {
+    let path = match old_path.as_ref().filter(|path| path.is_file()) {
         Some(path) => path.clone(),
         None => {
             if locate_negative_fresh(terminal_id) {
                 return PollContent::None;
             }
             let relocated = terminal_task_service::locate_transcript(terminal_id).filter(|location| {
-                location.provider == entry.provider && location.session_id == entry.session_id
+                location.provider == old_identity.0 && location.session_id == old_identity.1
             });
             match relocated {
                 Some(location) => location.path,
@@ -1272,13 +1295,17 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     mark_locate_negative(terminal_id);
                     // 空镜像（会话建立后尚未写入任何消息）继续维持空态；
                     // 一旦镜像里有过内容，文件消失就是真实故障，照常上报不可用。
-                    if entry.messages.is_empty() && transcript_not_started(terminal_id, &record) {
+                    if old_messages_empty && transcript_not_started(terminal_id, &record) {
                         return PollContent::None;
                     }
-                    return commit_unavailable(terminal_id, &record, Some(&entry), "transcript_unreadable");
+                    let existing = lock_state().mirrors.get(terminal_id).cloned();
+                    return commit_unavailable(terminal_id, &record, existing.as_ref(), "transcript_unreadable");
                 }
             }
         }
+    };
+    let Some(entry) = lock_state().mirrors.get(terminal_id).cloned() else {
+        return PollContent::None;
     };
     match read_transcript_stable(&path) {
         TranscriptRead::TooLarge => commit_unavailable(terminal_id, &record, Some(&entry), "transcript_too_large"),
@@ -1607,11 +1634,12 @@ pub(crate) fn monitor_claude_activity(app: &AppHandle, terminal_id: &str) {
 
 /// 组装某个终端的会话元数据。`info` 由调用方按可见性过滤后传入。
 /// 返回 None 表示该终端当前没有可接力的 Agent 绑定；Some 附带镜像缓存条目。
-fn build_session_meta(
+fn build_session_meta_with_mirror(
     app: &AppHandle,
     info: &crate::models::web_api::TerminalInfo,
     scan: &ScanData,
     actor: TerminalActor,
+    include_mirror: bool,
 ) -> Option<(TerminalAgentSession, Option<MirrorEntry>)> {
     let record = scan.bindings.get(&info.id)?;
     if !matches!(record.provider.as_str(), "claude" | "codex") {
@@ -1619,15 +1647,21 @@ fn build_session_meta(
     }
     reconcile_transcript_end(app, info, record);
     let summary = scan.summaries.get(&info.id);
-    let (entry, phase, phase_at) = {
+    let (entry, phase, phase_at, revision, mirror, mirror_path) = {
         let current = lock_state();
-        let entry = current.mirrors.get(&info.id).cloned();
+        let entry_ref = current.mirrors.get(&info.id);
         let (phase, phase_at) = current
             .phases
             .current(&info.id, &record.provider, &record.session_id)
             .map(|(phase, at)| (phase, Some(at)))
-            .unwrap_or_else(|| inferred_phase(entry.as_ref()));
-        (entry, phase, phase_at)
+            .unwrap_or_else(|| inferred_phase(entry_ref));
+        let revision = entry_ref.map_or(1, |entry| entry.revision);
+        let mirror = entry_ref
+            .map(|entry| MirrorStatus { available: entry.available, reason: entry.reason.clone() })
+            .unwrap_or(MirrorStatus { available: true, reason: None });
+        let mirror_path = entry_ref.and_then(|entry| entry.path.clone());
+        let cloned_entry = if include_mirror { entry_ref.cloned() } else { None };
+        (cloned_entry, phase, phase_at, revision, mirror, mirror_path)
     };
     let pending = pending_decision_ids(&info.id);
     let authorize = app
@@ -1645,15 +1679,8 @@ fn build_session_meta(
         pending.len(),
         now_ms(),
     );
-    let revision = entry.as_ref().map_or(1, |entry| entry.revision);
-    let mirror = entry
-        .as_ref()
-        .map(|entry| MirrorStatus { available: entry.available, reason: entry.reason.clone() })
-        .unwrap_or(MirrorStatus { available: true, reason: None });
     // 尚未打开过镜像的会话也有发现链定位的转录路径，列表据此取得真实活动时间。
-    let transcript_path = entry
-        .as_ref()
-        .and_then(|entry| entry.path.clone())
+    let transcript_path = mirror_path
         .or_else(|| record.session_file.as_ref().map(std::path::PathBuf::from));
     let session = TerminalAgentSession {
         terminal_id: info.id.clone(),
@@ -1677,6 +1704,24 @@ fn build_session_meta(
     Some((session, entry))
 }
 
+fn build_session_meta(
+    app: &AppHandle,
+    info: &crate::models::web_api::TerminalInfo,
+    scan: &ScanData,
+    actor: TerminalActor,
+) -> Option<(TerminalAgentSession, Option<MirrorEntry>)> {
+    build_session_meta_with_mirror(app, info, scan, actor, true)
+}
+
+fn build_session_meta_only(
+    app: &AppHandle,
+    info: &crate::models::web_api::TerminalInfo,
+    scan: &ScanData,
+    actor: TerminalActor,
+) -> Option<TerminalAgentSession> {
+    build_session_meta_with_mirror(app, info, scan, actor, false).map(|(session, _)| session)
+}
+
 fn find_terminal_info(app: &AppHandle, terminal_id: &str) -> Option<crate::models::web_api::TerminalInfo> {
     app.state::<TerminalService>()
         .list_terminals_info()
@@ -1695,7 +1740,7 @@ pub async fn sessions_for(app: &AppHandle, actor: TerminalActor) -> Vec<Terminal
         let sessions = service
             .list_terminals_info_for(actor)
             .into_iter()
-            .filter_map(|info| build_session_meta(&app, &info, &scan, actor).map(|(session, _)| session))
+            .filter_map(|info| build_session_meta_only(&app, &info, &scan, actor))
             .collect::<Vec<_>>();
         // 列表请求也会路过镜像缓存：顺带做无人访问条目的回收
         //（watcher 停止后只剩这条路径能清理这些终端的镜像）。
@@ -2530,8 +2575,12 @@ fn deliver_poll_result(
             .filter(|(_, lease_actor, _)| *lease_actor == actor)
             .map(|(id, _, sender)| (id.clone(), sender.clone()))
             .collect();
-        let subscription_ids: Vec<String> = actor_leases.iter().map(|(id, _)| id.clone()).collect();
-        let Some((session, _)) = build_session_meta(app, &info, &scan, actor) else {
+        let event_subscription_ids: Vec<String> = actor_leases
+            .iter()
+            .filter(|(_, sender)| sender.is_none())
+            .map(|(id, _)| id.clone())
+            .collect();
+        let Some(session) = build_session_meta_only(app, &info, &scan, actor) else {
             continue;
         };
         // 内容帧（mirror / append / rotated / unavailable）。
@@ -2583,9 +2632,11 @@ fn deliver_poll_result(
                     slow_consumers.push(lease_id.clone());
                 }
             }
-            // 事件通道附带本帧发往的租约，桌面 / 浏览器按自己的句柄过滤。
-            frame.subscription_ids = subscription_ids.clone();
-            let _ = app.emit(AGENT_UPDATE_EVENT, frame);
+            // 仅当存在事件租约时广播给桌面/浏览器通道；纯 Android socket 租约无需序列化进 EventBus。
+            if !event_subscription_ids.is_empty() {
+                frame.subscription_ids = event_subscription_ids.clone();
+                let _ = app.emit(AGENT_UPDATE_EVENT, frame);
+            }
         }
     }
     if !slow_consumers.is_empty() {
@@ -3650,5 +3701,38 @@ mod tests {
         let (allowed, reason) = evaluate_can_reply(true, None, "running", Some(now_ms()), 2, now_ms());
         assert!(!allowed);
         assert!(reason.unwrap().contains("待确认"));
+    }
+
+    #[test]
+    fn claude_turn_end_reverse_scan_matches_edge_cases() {
+        let ts = "2026-11-21T04:00:00Z";
+        let turn_duration = format!(
+            "{{\"type\":\"system\",\"subtype\":\"turn_duration\",\"timestamp\":\"{ts}\"}}"
+        );
+        let user_msg = format!(
+            "{{\"type\":\"user\",\"timestamp\":\"{ts}\",\"message\":{{\"content\":\"hi\"}}}}"
+        );
+        let interrupted = format!(
+            "{{\"type\":\"user\",\"timestamp\":\"{ts}\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"[Request interrupted by user]\"}}]}}}}"
+        );
+        let sidechain_turn_duration = format!(
+            "{{\"type\":\"system\",\"subtype\":\"turn_duration\",\"isSidechain\":true,\"timestamp\":\"{ts}\"}}"
+        );
+
+        // 正常完成：assistant 后跟 turn_duration
+        let normal = format!("{user_msg}\n{{\"type\":\"assistant\",\"timestamp\":\"{ts}\",\"message\":{{\"content\":\"ok\"}}}}\n{turn_duration}\n");
+        assert!(matches!(claude_turn_end(&normal), Some(ClaudeTurnEnd::Completed(_))));
+
+        // 中断后即使 CLI 随后写入 turn_duration，也不得把中断改写成 Completed
+        let interrupt_then_duration = format!("{user_msg}\n{interrupted}\n{turn_duration}\n");
+        assert!(matches!(claude_turn_end(&interrupt_then_duration), Some(ClaudeTurnEnd::Interrupted(_))));
+
+        // 中断后开启新轮次且新轮次尚未结束 -> None
+        let new_turn_after_interrupt = format!("{user_msg}\n{interrupted}\n{user_msg}\n");
+        assert_eq!(claude_turn_end(&new_turn_after_interrupt), None);
+
+        // sidechain 的 turn_duration 忽略
+        let sidechain_only = format!("{user_msg}\n{sidechain_turn_duration}\n");
+        assert_eq!(claude_turn_end(&sidechain_only), None);
     }
 }

@@ -95,14 +95,32 @@ fn associate_antigravity_processes(
 }
 
 /// 会话发现和呼吸灯存活判断共用，避免一处能找到会话、另一处却判定 CLI 已退出。
+#[allow(dead_code)]
 pub(super) fn codex_processes(terminal_pids: &[(String, u32)]) -> HashMap<String, HashMap<u32, usize>> {
     if terminal_pids.is_empty() { return HashMap::new(); }
-    associate_codex_processes(terminal_pids, &crate::commands::claude_session::get_all_processes(), inherited_terminal_id)
+    codex_processes_with_processes(terminal_pids, &crate::commands::claude_session::get_all_processes())
 }
 
+pub(super) fn codex_processes_with_processes(
+    terminal_pids: &[(String, u32)],
+    processes: &[(u32, u32, String)],
+) -> HashMap<String, HashMap<u32, usize>> {
+    if terminal_pids.is_empty() { return HashMap::new(); }
+    associate_codex_processes(terminal_pids, processes, inherited_terminal_id)
+}
+
+#[allow(dead_code)]
 pub(super) fn antigravity_processes(terminal_pids: &[(String, u32)]) -> HashMap<String, HashMap<u32, usize>> {
     if terminal_pids.is_empty() { return HashMap::new(); }
-    associate_antigravity_processes(terminal_pids, &crate::commands::claude_session::get_all_processes(), inherited_terminal_id)
+    antigravity_processes_with_processes(terminal_pids, &crate::commands::claude_session::get_all_processes())
+}
+
+pub(super) fn antigravity_processes_with_processes(
+    terminal_pids: &[(String, u32)],
+    processes: &[(u32, u32, String)],
+) -> HashMap<String, HashMap<u32, usize>> {
+    if terminal_pids.is_empty() { return HashMap::new(); }
+    associate_antigravity_processes(terminal_pids, processes, inherited_terminal_id)
 }
 
 fn root_session(path: &Path) -> Option<String> {
@@ -210,10 +228,14 @@ fn open_rollouts(process_ids: &HashSet<u32>, root: &Path, since: SystemTime) -> 
     result
 }
 
-pub(super) fn discover(scopes: Vec<CodexProcessScope>) -> HashMap<String, (String, PathBuf)> {
-    if scopes.is_empty() { return HashMap::new(); }
+pub(super) fn discover_with_processes(
+    scopes: Vec<CodexProcessScope>,
+    processes: &[(u32, u32, String)],
+) -> (HashMap<String, (String, PathBuf)>, HashSet<String>) {
+    if scopes.is_empty() { return (HashMap::new(), HashSet::new()); }
     let terminal_pids: Vec<_> = scopes.iter().map(|scope| (scope.terminal_id.clone(), scope.process_id)).collect();
-    let mut associated = codex_processes(&terminal_pids);
+    let mut associated = codex_processes_with_processes(&terminal_pids, processes);
+    let live_terminals: HashSet<String> = associated.keys().cloned().collect();
     let mut trees = Vec::new();
     let mut roots = HashMap::<PathBuf, (SystemTime, HashSet<u32>)>::new();
     for scope in scopes {
@@ -245,7 +267,7 @@ pub(super) fn discover(scopes: Vec<CodexProcessScope>) -> HashMap<String, (Strin
             }
         }
     }
-    result
+    (result, live_terminals)
 }
 
 fn lock_conversation_id(path: &Path) -> Option<String> {
@@ -299,7 +321,10 @@ fn open_antigravity_locks(process_ids: &HashSet<u32>, root: &Path) -> Vec<(Strin
     result
 }
 
-pub(super) fn discover_antigravity(scopes: Vec<AntigravityProcessScope>) -> AntigravityDiscovery {
+pub(super) fn discover_antigravity_with_processes(
+    scopes: Vec<AntigravityProcessScope>,
+    processes: &[(u32, u32, String)],
+) -> AntigravityDiscovery {
     if scopes.is_empty() {
         return AntigravityDiscovery {
             live_terminals: HashSet::new(),
@@ -310,7 +335,7 @@ pub(super) fn discover_antigravity(scopes: Vec<AntigravityProcessScope>) -> Anti
         .iter()
         .map(|scope| (scope.terminal_id.clone(), scope.process_id))
         .collect();
-    let mut associated = antigravity_processes(&terminal_pids);
+    let mut associated = antigravity_processes_with_processes(&terminal_pids, processes);
     let live_terminals: HashSet<String> = associated.keys().cloned().collect();
     let mut trees = Vec::new();
     let mut roots = HashMap::<PathBuf, HashSet<u32>>::new();
