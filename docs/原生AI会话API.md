@@ -22,6 +22,7 @@ Claude print 模式继承服务器原有权限配置。用户决策与桌面模�
 
 - 配置留空时与桌面端默认值一致：Claude 使用 `--dangerously-skip-permissions`；Codex 使用 `--dangerously-bypass-approvals-and-sandbox` 对应的免审批、完整访问策略。
 - 显式填写命令时以该命令为准，不额外加默认免确认参数。Claude 支持继承 `--permission-mode`、`--dangerously-skip-permissions`、`--allow-dangerously-skip-permissions`、`--allowedTools` / `--allowed-tools`、`--disallowedTools` / `--disallowed-tools` 和 `--tools`。
+- 基础命令处于 `bypassPermissions`（`--dangerously-skip-permissions` 或 `--permission-mode bypassPermissions`）时，原生会话额外禁用 `EnterPlanMode`。计划模式会在 bypass 之上重新为 `WebFetch`、`WebSearch`、`Bash` 等工具发起授权请求，而聊天界面没有终端提示，模型自行进入计划模式会表现为反复弹出「需要授权：WebFetch」。
 - Codex 将 `--yolo` / `--dangerously-bypass-approvals-and-sandbox`、`--ask-for-approval` / `-a`、`--sandbox` / `-s`、旧版 `--full-auto` 及 `-c` / `--config` 中的审批/沙箱设置转换成 App Server 配置。
 - Codex 的 `thread/start` 与 `thread/resume` 显式传入所配置的 `approvalPolicy` / `sandbox`，`turn/start` 同样传入审批策略；workspace-write 的目录和网络设置沿用线程有效配置。
 - 配置中明确要求确认时，保留原生确认卡片；AI 主动询问用户的问题仍由用户回答。基础命令中的 shell 串联命令不会由原生服务执行。
