@@ -85,6 +85,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/ai/sessions/{id}/pending/{request_id}", axum::routing::patch(handlers::ai_chat_handler::update_pending_input)
             .delete(handlers::ai_chat_handler::delete_pending_input))
         .route("/api/ai/sessions/{id}/stop", post(handlers::ai_chat_handler::stop))
+        .route("/api/ai/sessions/{id}/force-stop", post(handlers::ai_chat_handler::force_stop))
         .route("/api/ai/sessions/{id}/model", post(handlers::ai_chat_handler::switch_model))
         .route("/api/ai/sessions/{id}/approvals", post(handlers::ai_chat_handler::answer))
         .route("/ws/ai", get(handlers::ai_chat_handler::notifications_socket))

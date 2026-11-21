@@ -38,6 +38,16 @@ class AiModelsTest {
     }
 
     @Test
+    fun `force stopped session is terminal and still can start a new turn`() {
+        val session = decode<AiSession>(
+            """{"id":"s1","title":"t","provider":"claude","projectPath":"p","status":"forceStopped","messages":[],"approvals":[],"error":"已强制结束","updatedAt":1,"revision":2}"""
+        )
+        assertFalse(session.running)
+        assertTrue(session.canSend)
+        assertEquals("已强制结束", session.statusLabel)
+    }
+
+    @Test
     fun `catalog providers decode with default and model effort`() {
         val catalog = decode<AiCatalog>(
             """

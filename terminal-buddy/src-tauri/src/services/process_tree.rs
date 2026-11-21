@@ -23,6 +23,12 @@ pub(crate) struct ProcessTree {
     job: Option<windows::Win32::Foundation::HANDLE>,
 }
 
+// Windows 内核句柄没有线程亲和性：`ProcessTree` 独占该 HANDLE，只会整体 move 到
+// 回收线程，并在 Drop 时关闭一次，因此跨线程转移所有权是安全的。实时会话的
+// `Process::drop` 正是在独立线程里终止进程树，需要这个 `Send`。
+#[cfg(windows)]
+unsafe impl Send for ProcessTree {}
+
 impl ProcessTree {
     /// spawn 之后立即调用。建 job 失败（老系统、权限受限）时退化为只杀直接子进程。
     pub(crate) fn attach(child: &std::process::Child) -> Self {

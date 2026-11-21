@@ -55,6 +55,12 @@ import com.terminalbuddy.android.data.*
 import com.terminalbuddy.android.notifications.AiBackgroundCompatibility
 import com.terminalbuddy.android.notifications.AiTaskNotifications
 
+/**
+ * 明确已经结束的原生 AI 会话状态：这些状态下没有进程可终止，
+ * 「强制结束」不提供入口，避免对已完成的结果反复执行无意义的重置。
+ */
+private val TERMINAL_AI_STATUSES = setOf("idle", "forceStopped", "interrupted", "error")
+
 /** 对话二级页：会话摘要、自然段回复与紧凑输入区。 */
 @Composable
 fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
@@ -65,6 +71,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     var usageInformation by rememberSaveable(session.id) { mutableStateOf(false) }
     var vivoBackgroundGuide by rememberSaveable(session.id) { mutableStateOf(false) }
     var deleting by rememberSaveable(session.id) { mutableStateOf(false) }
+    var forceStopping by rememberSaveable(session.id) { mutableStateOf(false) }
     Scaffold(
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
         containerColor = TbColors.Surface,
@@ -119,6 +126,12 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
                 AiConversationAction(Icons.Outlined.DataUsage, "上下文与 Token", { menu = false; usageInformation = true })
                 AiConversationAction(Icons.Outlined.FolderOpen, "返回首页选择模型", { menu = false; vm.closeSession() })
                 AiConversationAction(
+                    Icons.Outlined.PowerSettingsNew, "强制结束会话", { menu = false; forceStopping = true },
+                    // 服务端偶尔会残留「执行中」但进程已消失的状态，此时 running 为真而
+                    // 进程早已退出；只要不是明确的终态就允许点，避免用户被卡死没有出口。
+                    enabled = session.status !in TERMINAL_AI_STATUSES && !ui.working, color = TbColors.Danger,
+                )
+                AiConversationAction(
                     Icons.Outlined.DeleteOutline, "删除对话", { menu = false; deleting = true },
                     enabled = !session.running && !ui.working, color = TbColors.Danger,
                 )
@@ -142,6 +155,21 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     if (vivoBackgroundGuide) AiVivoBackgroundGuide { vivoBackgroundGuide = false }
     if (usageInformation) AiUsageSheet(session, ui.selectedModelLabel, ui.selectedEffortLabel) { usageInformation = false }
     if (deleting) AiDeleteDialog(session, { deleting = false }) { deleting = false; vm.delete(session) }
+    if (forceStopping) AiForceStopDialog(session, { forceStopping = false }) { forceStopping = false; vm.forceStop() }
+}
+
+/** 强制结束不可像普通中断一样只请求 CLI 收尾，必须明确告知排队消息与待确认决定会被丢弃。 */
+@Composable
+private fun AiForceStopDialog(session: AiSession, dismiss: () -> Unit, confirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text("强制结束会话") },
+        text = {
+            Text("将立即终止「${session.title}」的 Agent 进程，未完成的回复、待确认操作和 ${session.pendingCount} 条排队消息都会被丢弃。聊天记录与会话配置会保留，之后可以继续发送消息开启新回合。")
+        },
+        confirmButton = { TextButton(confirm) { Text("强制结束", color = TbColors.Danger) } },
+        dismissButton = { TextButton(dismiss) { Text("取消") } },
+    )
 }
 
 @Composable
@@ -216,7 +244,7 @@ private fun AiConversation(
                         }
                     }
                     if (showReplyIndicator) item(key = "ai-status") {
-                        val statusLabel = when (session.status) { "approval" -> "等待确认"; "background" -> "后台任务执行中"; "stopping" -> "正在中断"; else -> "思考中" }
+                        val statusLabel = when (session.status) { "approval" -> "等待确认"; "background" -> "后台任务执行中"; "stopping" -> "正在中断"; "forceStopped" -> "已强制结束"; else -> "思考中" }
                         AiReplyIndicator(
                             session.providerLabel,
                             if (session.pendingCount > 0) "$statusLabel · ${session.pendingCount} 条排队中" else statusLabel,

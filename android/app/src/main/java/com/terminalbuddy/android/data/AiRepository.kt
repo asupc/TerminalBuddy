@@ -180,9 +180,12 @@ class AiRepository(context: Context) {
         .callTimeout(40, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).build()
 
-    /** AI 请求和实时流不设固定超时，支持长文本上传及完整历史同步。 */
+    /**
+     * AI 正文流不设整体超时，支持长时间执行与完整历史同步；
+     * 但连接建立仍必须有上限，否则 WireGuard / 代理切换后的半开连接会无限转圈。
+     */
     private val ai = http.newBuilder()
-        .connectTimeout(0, TimeUnit.MILLISECONDS).writeTimeout(0, TimeUnit.MILLISECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS).writeTimeout(0, TimeUnit.MILLISECONDS)
         .callTimeout(0, TimeUnit.MILLISECONDS).readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
@@ -315,8 +318,8 @@ class AiRepository(context: Context) {
     suspend fun send(
         id: String, text: String, requestId: String, steer: Boolean = false,
         images: List<AiSendImage> = emptyList(),
-    ): AiSession =
-        ApiJson.decodeFromJsonElement(
+    ): AiSendResult =
+        decodeSendResult(
             request("POST", listOf("ai", "sessions", id, "messages"), jsonBody {
                 put("text", text)
                 put("requestId", requestId)
@@ -332,6 +335,16 @@ class AiRepository(context: Context) {
                 })
             })
         )
+
+    /** 兼容新服务端的轻量确认与旧服务端返回的完整会话。 */
+    private fun decodeSendResult(value: kotlinx.serialization.json.JsonElement): AiSendResult {
+        val objectValue = value.asObject()
+        return AiSendResult(
+            id = objectValue.text("id"),
+            requestId = objectValue.text("requestId"),
+            revision = objectValue.number("revision")?.toLong() ?: 0,
+        )
+    }
 
     /** 「原生插话」排队消息：把该消息直接交给运行中的 CLI 进程，返回最新会话。 */
     suspend fun flush(id: String, requestId: String?): AiSession =
@@ -349,6 +362,10 @@ class AiRepository(context: Context) {
     suspend fun stop(id: String) {
         request("POST", listOf("ai", "sessions", id, "stop"))
     }
+
+    /** 强制结束：服务端立即摘掉旧 worker 并返回已经落盘的终止快照。 */
+    suspend fun forceStop(id: String): AiSession =
+        ApiJson.decodeFromJsonElement(request("POST", listOf("ai", "sessions", id, "force-stop")))
 
     suspend fun delete(id: String) {
         request("DELETE", listOf("ai", "sessions", id))

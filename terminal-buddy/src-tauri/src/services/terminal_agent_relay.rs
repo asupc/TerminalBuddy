@@ -35,6 +35,13 @@ const LOCATE_NEGATIVE_TTL: Duration = Duration::from_secs(2);
 /// hook 上报 running 之后，jsonl 尚未落盘的起始宽限期：UserPromptSubmit 先于文件写入，
 /// 宽限期内找不到转录仍按空镜像处理，避免新会话首帧闪一下「读取失败」。
 const TRANSCRIPT_START_GRACE_MS: i64 = 10_000;
+/// 无 Hook 上报时按转录尾条推断出的 `running` 的最长可信时长。
+/// 超过它说明这条「运行中」不会再有进展（Agent 崩溃 / 被杀 / 服务端重启后
+/// 转录永久停在用户消息），必须改判为 failed，否则手机端会一直显示「思考中」。
+///
+/// 取值要显著大于单个工具调用的正常耗时（长构建、全量测试、大仓库检索都可能
+/// 连续几十分钟不写正文），同时又要短到用户不必等太久就能看到明确结论。
+const INFERRED_RUNNING_MAX_AGE_MS: i64 = 45 * 60 * 1000;
 /// 镜像缓存条目无人访问后的清理时间。
 const MIRROR_IDLE_EVICT: Duration = Duration::from_secs(30 * 60);
 /// 超过该大小的转录直接判定 `transcript_too_large`，不做大字符串分配。
@@ -489,17 +496,29 @@ pub(crate) fn phase_allows_reply(phase: &str, phase_at: Option<i64>, now_ms: i64
 /// 最后一条是用户消息 → running（Agent 正在处理），否则 → idle（等待输入）。
 /// phaseAt 取尾条时间戳，缺失时用转录文件 mtime；两者皆无为 None（视为存活）。
 /// 推断值不写入阶段表：每次构建元数据时基于最新镜像重算，Hook 恢复上报后自动被真实值取代。
+///
+/// `running` 必须有时间兜底：Agent 在写完用户消息后崩溃 / 被杀 / 服务端重启，
+/// 转录会永久停在「最后一条是 user」，没有兜底就会让手机端一直显示「思考中」，
+/// 并且 `phase_allows_reply` 对 running 永远放行，用户还会被误导以为任务仍在推进。
+/// 超过 [`INFERRED_RUNNING_MAX_AGE_MS`] 未再产生任何输出时改判为 failed，
+/// 让界面显示明确的结束状态而不是无限转圈。
 fn inferred_phase(entry: Option<&MirrorEntry>) -> (String, Option<i64>) {
     let Some(entry) = entry.filter(|entry| entry.available) else {
         return ("idle".to_string(), None);
     };
     if let Some(end) = entry.turn_end { return (end.phase().to_string(), Some(end.at())); }
     let last = entry.messages.last();
-    let phase = if last.is_some_and(|message| message.role == "user") { "running" } else { "idle" };
     let at = last
         .and_then(|message| message.timestamp)
         .or_else(|| entry.file_stamp.map(|(mtime, _)| mtime.duration_since(UNIX_EPOCH).ok().map(|value| value.as_millis() as i64)).flatten());
-    (phase.to_string(), at)
+    if last.is_some_and(|message| message.role == "user") {
+        // 有明确时间戳且早已超过阈值：这段「运行中」不可能还在推进，直接判为已失败。
+        if at.is_some_and(|at| now_ms().saturating_sub(at) > INFERRED_RUNNING_MAX_AGE_MS) {
+            return ("failed".to_string(), at);
+        }
+        return ("running".to_string(), at);
+    }
+    ("idle".to_string(), at)
 }
 
 /// 列表页的 canReply（§4.2 第 6 条）：复用第 1/2/3/7 条闸门，不检查文本、requestId 与频率。
@@ -3073,11 +3092,18 @@ mod tests {
         let mut last_user = message(1, "assistant", "答");
         last_user.timestamp = Some(111);
         let mut tail = message(2, "user", "问");
-        tail.timestamp = Some(222);
+        // 「运行中」只有在时间戳足够新时才成立：用当前时间模拟正在推进的回合。
+        tail.timestamp = Some(now_ms());
         let (phase, at) = inferred_phase(Some(&entry(vec![last_user.clone(), tail.clone()])));
-        assert_eq!((phase.as_str(), at), ("running", Some(222)));
+        assert_eq!((phase.as_str(), at), ("running", tail.timestamp));
         let (phase, at) = inferred_phase(Some(&entry(vec![tail.clone(), last_user])));
         assert_eq!((phase.as_str(), at), ("idle", Some(111)));
+        // 尾条是用户消息但早已超过可信时长：Agent 已崩溃 / 被杀，不能继续显示「思考中」。
+        let mut stale = message(3, "user", "旧问题");
+        stale.timestamp = Some(now_ms() - INFERRED_RUNNING_MAX_AGE_MS - 1000);
+        let stale_at = stale.timestamp;
+        let (phase, at) = inferred_phase(Some(&entry(vec![stale])));
+        assert_eq!((phase.as_str(), at), ("failed", stale_at));
         // 镜像不可用（transcript 读不到）时仍给出可回复的 idle，不阻断。
         let mut unavailable = entry(vec![tail]);
         unavailable.available = false;
