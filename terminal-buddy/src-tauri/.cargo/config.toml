@@ -2,6 +2,13 @@
 # rustc-wrapper = "sccache"
 
 [target.x86_64-pc-windows-msvc]
+# 用 rustup 自带的 rust-lld（lld-link 风格）替代 MSVC link.exe：
+# release 的 ThinLTO + 大 PDB 场景下链接耗时通常可降一半以上。
+# rustc 会在工具链 target bin 目录中解析 `rust-lld`，无需安装 LLVM。
+# 注意：Linux 交叉编译（xcj/build-windows-exe.sh / cargo-xwin）由 cargo-xwin
+# 通过环境变量注入 clang-cl 链接器，会覆盖此配置，不受影响。
+linker = "rust-lld"
+
 # tauri 窗口/菜单/对话框系统静态导入 comctl32 v6 的 TaskDialogIndirect。
 # cargo test 的 lib unit-test 二进制没有应用 manifest（cargo:rustc-link-arg-lib 对 test 变体不生效），
 # 加载时按 v5 绑定 → STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139)。
