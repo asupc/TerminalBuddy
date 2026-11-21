@@ -488,16 +488,16 @@ export function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor
     syncTextareaAnchor();
   };
 
-  const startFocusedSync = () => {
+  // 将高频光标/渲染事件合并到下一帧单次同步；聚焦期间不再使用自递归 rAF 空转。
+  const scheduleTextareaSync = () => {
     if (syncRaf !== null) return;
-    const tick = () => {
+    syncRaf = window.requestAnimationFrame(() => {
+      syncRaf = null;
       syncTextareaAnchor();
-      syncRaf = window.requestAnimationFrame(tick);
-    };
-    syncRaf = window.requestAnimationFrame(tick);
+    });
   };
 
-  const stopFocusedSync = () => {
+  const cancelScheduledTextareaSync = () => {
     if (syncRaf === null) return;
     window.cancelAnimationFrame(syncRaf);
     syncRaf = null;
@@ -598,28 +598,23 @@ export function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor
 
   textarea.addEventListener('keydown', syncBeforeImeReadsTextarea, true);
   textarea.addEventListener('beforeinput', syncBeforeImeReadsTextarea, true);
-  textarea.addEventListener('focus', startFocusedSync);
-  textarea.addEventListener('blur', stopFocusedSync);
+  textarea.addEventListener('focus', syncBeforeImeReadsTextarea);
   textarea.addEventListener('compositionstart', captureAnchor, true);
   textarea.addEventListener('compositionend', releaseAnchor);
-  const cursorMoveDisposable = terminal.onCursorMove(syncTextareaAnchor);
-  const writeParsedDisposable = terminal.onWriteParsed(syncTextareaAnchor);
-  const renderDisposable = terminal.onRender(syncTextareaAnchor);
+  const cursorMoveDisposable = terminal.onCursorMove(scheduleTextareaSync);
+  const writeParsedDisposable = terminal.onWriteParsed(scheduleTextareaSync);
+  const renderDisposable = terminal.onRender(scheduleTextareaSync);
   syncTextareaAnchor();
-  if (textarea.ownerDocument.activeElement === textarea) {
-    startFocusedSync();
-  }
 
   return () => {
     releaseAnchor();
-    stopFocusedSync();
+    cancelScheduledTextareaSync();
     cursorMoveDisposable.dispose();
     writeParsedDisposable.dispose();
     renderDisposable.dispose();
     textarea.removeEventListener('keydown', syncBeforeImeReadsTextarea, true);
     textarea.removeEventListener('beforeinput', syncBeforeImeReadsTextarea, true);
-    textarea.removeEventListener('focus', startFocusedSync);
-    textarea.removeEventListener('blur', stopFocusedSync);
+    textarea.removeEventListener('focus', syncBeforeImeReadsTextarea);
     textarea.removeEventListener('compositionstart', captureAnchor, true);
     textarea.removeEventListener('compositionend', releaseAnchor);
     if (core && originalSyncTextArea) {

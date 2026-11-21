@@ -16,10 +16,12 @@ export interface UsePtyResizeOptions {
   xtermRef: React.MutableRefObject<Terminal | null>;
   fitAddonRef: React.MutableRefObject<FitAddon | null>;
   visibleRef: React.MutableRefObject<boolean>;
+  onScreenRef: React.MutableRefObject<boolean>;
   pendingWebTakeoverRecoveryRef: React.MutableRefObject<boolean>;
   terminalId: string;
   isActive?: boolean;
   visible: boolean;
+  onScreen: boolean;
   splitMode: 'off' | '2x1' | '2x2';
   windowMode: string;
 }
@@ -37,24 +39,47 @@ export function usePtyResize(opts: UsePtyResizeOptions) {
       terminalFontSize2x2: s.terminalFontSize2x2,
     };
   });
+  const wasOnScreenRef = useState(() => ({ current: false }))[0];
+  const lastFittedLayoutRef = useState<{ current: { layoutVersion: number; splitMode: string; windowMode: string } | null }>(() => ({ current: null }))[0];
 
-  // When tab becomes visible (isActive changes to true), force a fit to ensure
-  // correct dimensions. This mirrors VS Code's setVisible() which flushes pending
-  // resizes and re-evaluates dimensions on visibility change.
+  // When tab becomes visible/onScreen (or isActive becomes true), force a fit to ensure
+  // correct dimensions. Skip when transitioning to off-screen so background tabs don't reflow.
   useEffect(() => {
-    if (!opts.visible) return;
+    if (!opts.visible || (!opts.onScreen && !opts.isActive)) {
+      wasOnScreenRef.current = opts.onScreen;
+      return;
+    }
+    const becameOnScreen = !wasOnScreenRef.current && opts.onScreen;
+    wasOnScreenRef.current = opts.onScreen;
+    const state = useAppStore.getState();
+    const last = lastFittedLayoutRef.current;
+    const layoutChangedOffscreen = becameOnScreen && last !== null && (
+      last.layoutVersion !== state.terminalLayoutVersion
+      || last.splitMode !== state.splitMode
+      || last.windowMode !== state.windowMode
+    );
     // Use double rAF to ensure the CSS visibility transition has completed
     // and layout is stable before measuring
     let raf1: number;
     let raf2: number;
     raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
+        if (!opts.onScreenRef.current && !opts.isActive) return;
         const term = opts.xtermRef.current;
         if (!term) return;
         const forceFit = forceFitOf(term);
+        const currentState = useAppStore.getState();
         if (forceFit) {
           const recoverFromWebTakeover = opts.pendingWebTakeoverRecoveryRef.current;
-          const fitted = forceFit(recoverFromWebTakeover, recoverFromWebTakeover);
+          const force = recoverFromWebTakeover || layoutChangedOffscreen;
+          const fitted = forceFit(force, force);
+          if (fitted) {
+            lastFittedLayoutRef.current = {
+              layoutVersion: currentState.terminalLayoutVersion,
+              splitMode: currentState.splitMode,
+              windowMode: currentState.windowMode,
+            };
+          }
           if (recoverFromWebTakeover) {
             opts.pendingWebTakeoverRecoveryRef.current = !fitted;
           }
@@ -69,7 +94,7 @@ export function usePtyResize(opts: UsePtyResizeOptions) {
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
     };
-  }, [opts.isActive, opts.visible]);
+  }, [opts.isActive, opts.visible, opts.onScreen]);
 
   // Navigation dividers are deliberate layout changes. Force-fit active TUIs
   // while dragging, but keep focus on the divider instead of stealing it back.
@@ -79,7 +104,7 @@ export function usePtyResize(opts: UsePtyResizeOptions) {
       if (resizeRaf) return;
       resizeRaf = requestAnimationFrame(() => {
         resizeRaf = 0;
-        if (!opts.visibleRef.current) return;
+        if (!opts.visibleRef.current || !opts.onScreenRef.current) return;
         const term = opts.xtermRef.current;
         if (!term) return;
         const forceFit = forceFitOf(term);
@@ -117,11 +142,20 @@ export function usePtyResize(opts: UsePtyResizeOptions) {
       return true;
     };
     const runLayoutRepair = (detail: TerminalResizeDetail, redeclarePty = false) => {
-      if (!opts.visibleRef.current || !isCurrentLayout(detail)) return;
+      if (!opts.visibleRef.current || !opts.onScreenRef.current || !isCurrentLayout(detail)) return;
       const term = opts.xtermRef.current;
       if (!term) return;
       const forceFit = forceFitOf(term);
-      if (forceFit) forceFit(true, redeclarePty);
+      if (forceFit) {
+        const fitted = forceFit(true, redeclarePty);
+        if (fitted) {
+          lastFittedLayoutRef.current = {
+            layoutVersion: detail.layoutVersion,
+            splitMode: detail.splitMode,
+            windowMode: detail.windowMode,
+          };
+        }
+      }
       try { term.refresh(0, term.rows - 1); } catch { /* renderer may be disposing */ }
       // Only the focused pane should steal keyboard focus on a layout change.
       if (useAppStore.getState().activeSessionId === opts.terminalId) term.focus();

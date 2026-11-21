@@ -1,5 +1,5 @@
 import { terminalDisplayTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
-import { FC, Fragment, useCallback, useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { FC, Fragment, memo, useCallback, useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import type { CSSProperties } from 'react';
 import { LoaderCircle, SquareTerminal, X } from 'lucide-react';
 import type { TerminalSession } from '../../types';
@@ -39,9 +39,54 @@ const ClaudeReplayPage = lazy(() => import('../claude-history/ReplayPage').then(
 const AgentChatPage = lazy(() => import('../agent-chat/AgentChatPage').then(m => ({ default: m.AgentChatPage })));
 const ScheduledTasksPage = lazy(() => import('../scheduled-tasks/ScheduledTasksPage').then(m => ({ default: m.ScheduledTasksPage })));
 
+interface SplitPaneHeaderProps {
+  sessionId: string;
+  profileName: string;
+  manualTitle?: boolean;
+  tabColor?: string | null;
+  slot: number;
+  onDragStart: (slot: number) => void;
+  onDragEnd: () => void;
+  onClose: (slot: number) => void;
+}
+
+const SplitPaneHeader = memo<SplitPaneHeaderProps>(({
+  sessionId,
+  profileName,
+  manualTitle,
+  tabColor,
+  slot,
+  onDragStart,
+  onDragEnd,
+  onClose,
+}) => {
+  const working = isTerminalWorking(useAppStore(s => s.terminalActivities[sessionId]));
+  const summary = useTaskSummaryStore(s => s.summaries[sessionId]);
+  const title = terminalDisplayTitle(profileName, summary, manualTitle);
+  return (
+    <div
+      className="pane-header"
+      draggable
+      onDragStart={() => onDragStart(slot)}
+      onDragEnd={onDragEnd}
+    >
+      <span
+        className={`pane-working-dot ${working ? 'on' : ''}`}
+        style={{ background: getWorkingDotColor(working, tabColor) }}
+      />
+      <span className="pane-name" title={title}>{title}</span>
+      <button
+        className="pane-close"
+        title="关闭分屏"
+        aria-label={`关闭分屏 ${profileName}`}
+        onClick={(e) => { e.stopPropagation(); onClose(slot); }}
+      ><X aria-hidden="true" /></button>
+    </div>
+  );
+});
+
 export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
-  const taskSummaries = useTaskSummaryStore(s => s.summaries);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const gitChangesTab = useAppStore(s => s.gitChangesTab);
@@ -56,7 +101,6 @@ export const TerminalPanel: FC = () => {
   const profiles = useAppStore(s => s.profiles);
   const splitMode = useAppStore(s => s.splitMode);
   const splitSlots = useAppStore(s => s.splitSlots);
-  const terminalActivities = useAppStore(s => s.terminalActivities);
   const setActiveSession = useAppStore(s => s.setActiveSession);
   const windowMode = useAppStore(s => s.windowMode);
   const terminalLayoutVersion = useAppStore(s => s.terminalLayoutVersion);
@@ -64,6 +108,21 @@ export const TerminalPanel: FC = () => {
   const swapSplitSlots = useAppStore(s => s.swapSplitSlots);
   const [settings, setSettings] = useState(() => getAppSettings());
   const [effectiveTheme, setEffectiveTheme] = useState<ThemeSkin>(() => getEffectiveThemeSkin());
+
+  const appOpacity = getAppOpacity(settings, effectiveTheme);
+  const defaultTerminalTheme = useMemo(
+    () => resolveTerminalColors(undefined, effectiveTheme, settings.terminalFollowAppTheme, appOpacity),
+    [effectiveTheme, settings.terminalFollowAppTheme, appOpacity],
+  );
+  const profileThemes = useMemo(
+    () => new Map(
+      profiles.map(p => [
+        p.id,
+        resolveTerminalColors(p, effectiveTheme, settings.terminalFollowAppTheme, appOpacity),
+      ]),
+    ),
+    [profiles, effectiveTheme, settings.terminalFollowAppTheme, appOpacity],
+  );
 
   // 恢复/对账后 activeSessionId 可能指向已清理的会话，或远程切换后变为 null。
   // 此时所有 .terminal-tab-content 都会保持 visibility:hidden，右侧整块空白；
@@ -89,12 +148,15 @@ export const TerminalPanel: FC = () => {
   }, []);
 
   // Notify visible terminal panes to force-resize on layout changes (enter/exit/grow/fill).
-  // Incidental window resizes are still handled by each pane's ResizeObserver.
+  // Switching active tab in single-pane mode is handled directly by usePtyResize on the visible pane.
   useEffect(() => {
+    const state = useAppStore.getState();
     const ids = splitMode === 'off'
-      ? sessions
-          .filter(s => s.sessionType !== 'editor' && s.owner === clientTerminalOwner())
-          .map(s => s.id)
+      ? (state.activeSpecialTab === null && state.activeSessionId
+          ? state.sessions
+              .filter(s => s.id === state.activeSessionId && s.sessionType !== 'editor' && s.owner === clientTerminalOwner())
+              .map(s => s.id)
+          : [])
       : splitSlots.map(s => s.sessionId).filter((s): s is string => s !== null);
     if (ids.length === 0) return;
 
@@ -126,7 +188,7 @@ export const TerminalPanel: FC = () => {
       cancelAnimationFrame(raf2);
       if (timer) clearTimeout(timer);
     };
-  }, [splitMode, splitSlots, sessions, activeSessionId, windowMode, terminalLayoutVersion]);
+  }, [splitMode, splitSlots, windowMode, terminalLayoutVersion]);
 
   useEffect(() => {
     const onSettings = () => setSettings(getAppSettings());
@@ -165,6 +227,19 @@ export const TerminalPanel: FC = () => {
     }
   }, []);
 
+  const handleEditorDirtyChange = useCallback((sessionId: string, dirty: boolean) => {
+    updateSession(sessionId, { isDirty: dirty });
+  }, [updateSession]);
+
+  const handlePaneDragStart = useCallback((slot: number) => {
+    dragSrcRef.current = slot;
+  }, []);
+
+  const handlePaneDragEnd = useCallback(() => {
+    dragSrcRef.current = null;
+    setDragOverIndex(null);
+  }, []);
+
   // Unified per-session renderer. CRITICAL for no-remount: the body wrapper always
   // carries key="body" and is present in EVERY mode, while the pane header (split only)
   // carries its own key="header". Entering/leaving split thus only adds/removes the
@@ -173,15 +248,10 @@ export const TerminalPanel: FC = () => {
   const renderPane = (session: TerminalSession, opts: { slot?: number; active: boolean; hidden: boolean }) => {
     const { slot, active, hidden } = opts;
     const isSlot = slot !== undefined;
-    const profile = profiles.find(p => p.id === session.profileId);
-    const appOpacity = getAppOpacity(settings, effectiveTheme);
-    const resolvedTheme = resolveTerminalColors(
-      profile,
-      effectiveTheme,
-      settings.terminalFollowAppTheme,
-      appOpacity,
-    );
+    const resolvedTheme = profileThemes.get(session.profileId) ?? defaultTerminalTheme;
     const isActivePane = active && !hidden;
+    const onScreen = splitMode === 'off' ? active : (!hidden && activeSpecialTab === null);
+    const isSsh = session.terminalType === 'ssh';
     const containerClass = [
       'terminal-tab-content',
       isSlot ? 'split-cell' : '',
@@ -206,25 +276,17 @@ export const TerminalPanel: FC = () => {
         } : undefined}
       >
         {isSlot && (
-          <div
+          <SplitPaneHeader
             key="header"
-            className="pane-header"
-            draggable
-            onDragStart={() => { dragSrcRef.current = slot!; }}
-            onDragEnd={() => { dragSrcRef.current = null; setDragOverIndex(null); }}
-          >
-            <span
-              className={`pane-working-dot ${isTerminalWorking(terminalActivities[session.id]) ? 'on' : ''}`}
-              style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[session.id]), session.tabColor) }}
-            />
-            <span className="pane-name" title={terminalDisplayTitle(session.profileName, taskSummaries[session.id], session.manualTitle)}>{terminalDisplayTitle(session.profileName, taskSummaries[session.id], session.manualTitle)}</span>
-            <button
-              className="pane-close"
-              title="关闭分屏"
-              aria-label={`关闭分屏 ${session.profileName}`}
-              onClick={(e) => { e.stopPropagation(); closeSplitPane(slot!); }}
-            ><X aria-hidden="true" /></button>
-          </div>
+            sessionId={session.id}
+            profileName={session.profileName}
+            manualTitle={session.manualTitle}
+            tabColor={session.tabColor}
+            slot={slot!}
+            onDragStart={handlePaneDragStart}
+            onDragEnd={handlePaneDragEnd}
+            onClose={closeSplitPane}
+          />
         )}
         <div key="body" className="pane-body">
           {session.starting ? (
@@ -236,9 +298,10 @@ export const TerminalPanel: FC = () => {
             <Suspense fallback={hidden ? null : <div className="lazy-panel-loading">加载编辑器…</div>}>
               <TextEditor
                 key="editor"
+                sessionId={session.id}
                 filePath={session.profileId}
                 isDirty={session.isDirty ?? false}
-                onDirtyChange={(dirty) => updateSession(session.id, { isDirty: dirty })}
+                onSessionDirtyChange={handleEditorDirtyChange}
                 isActive={isActivePane}
               />
             </Suspense>
@@ -251,6 +314,8 @@ export const TerminalPanel: FC = () => {
                 onOutput={handleTerminalInput}
                 isActive={isActivePane}
                 visible={!hidden}
+                onScreen={onScreen}
+                isSsh={isSsh}
                 readOnly={!settings.webApiShareSessions && session.owner !== clientTerminalOwner()}
                 splitMode={splitMode}
               />

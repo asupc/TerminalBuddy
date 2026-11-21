@@ -1,4 +1,4 @@
-import { FC, useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react';
+import { FC, memo, useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { X } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -46,8 +46,48 @@ interface TerminalInstanceProps {
   colorTheme?: TerminalColors;
   isActive?: boolean;
   visible?: boolean;
+  onScreen?: boolean;
+  isSsh?: boolean;
   readOnly?: boolean;
   splitMode?: 'off' | '2x1' | '2x2';
+}
+
+// 共享单对 Ctrl 按键监听，避免每个终端实例都在 document 上重复注册 keydown/keyup。
+let ctrlHoverConsumers = 0;
+let ctrlHoverCleanup: (() => void) | null = null;
+function registerCtrlHover(): () => void {
+  ctrlHoverConsumers += 1;
+  if (ctrlHoverConsumers === 1) {
+    const syncCtrl = (pressed: boolean) => {
+      document.documentElement.classList.toggle('tb-ctrl-pressed', pressed);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.ctrlKey) syncCtrl(true);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || !e.ctrlKey) syncCtrl(e.ctrlKey);
+    };
+    const onBlur = () => syncCtrl(false);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    ctrlHoverCleanup = () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      syncCtrl(false);
+    };
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    ctrlHoverConsumers = Math.max(0, ctrlHoverConsumers - 1);
+    if (ctrlHoverConsumers === 0 && ctrlHoverCleanup) {
+      ctrlHoverCleanup();
+      ctrlHoverCleanup = null;
+    }
+  };
 }
 
 /** xterm 回滚行数上限。237 列时每行约占 8B/格，5 万行单个终端约需 95MB。 */
@@ -78,15 +118,18 @@ const toXtermCanvasTheme = (colors: TerminalColors) => {
 };
 
 
-export const TerminalInstance: FC<TerminalInstanceProps> = ({
+export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
   terminalId,
   onOutput,
   colorTheme,
   isActive,
   visible = true,
+  onScreen,
+  isSsh = false,
   readOnly,
   splitMode = 'off',
 }) => {
+  const effectiveOnScreen = onScreen ?? Boolean(isActive);
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   // 会话归属可能在终端初始化后才同步；长生命周期监听必须读取当前权限。
@@ -100,6 +143,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   onOutputRef.current = onOutput;
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const onScreenRef = useRef(effectiveOnScreen);
+  onScreenRef.current = effectiveOnScreen;
+  const attachWebglRef = useRef<(() => void) | null>(null);
+  const webglAddonRef = useRef<WebglAddon | null>(null);
+  const webglRetriesRef = useRef(0);
+  const webglDisposeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const webglRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingWebTakeoverRecoveryRef = useRef(false);
   // 让 initTerminal 在首次创建 xterm 时读到最新分屏模式,避免初次即处于分屏时字号漏改。
   const splitModeRef = useRef(splitMode);
@@ -119,9 +169,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
   // 快捷键唤起面板内搜索框的关键字（自动弹出面板不使用）
   const [autocompleteSearch, setAutocompleteSearch] = useState('');
-  const isSsh = useAppStore(s => s.sessions.find(sess => sess.id === terminalId)?.terminalType === 'ssh');
   const windowMode = useAppStore(s => s.windowMode);
-  const [scrollInfo, setScrollInfo] = useState({ top: 0, height: 0, visible: false });
+  const scrollWrapperRef = useRef<HTMLDivElement>(null);
+  const scrollThumbRef = useRef<HTMLDivElement>(null);
+  const scrollThumbHeightRef = useRef(0);
   const scrollViewportRef = useRef<HTMLElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const autocompletePopupRef = useRef<HTMLDivElement>(null);
@@ -441,13 +492,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         : output;
       const renderedOutput = normalizeAnsiForLightBackground(tuiAdaptedOutput, lightBackground);
 
-      pendingWriteChars += output.length;
+      const outputLen = output.length;
+      pendingWriteChars += outputLen;
       term.write(renderedOutput, () => {
-        pendingWriteChars = Math.max(0, pendingWriteChars - output.length);
-        if (!allowsTerminalAutocomplete(term)) {
+        pendingWriteChars = Math.max(0, pendingWriteChars - outputLen);
+        if (autocompleteRef.current && !allowsTerminalAutocomplete(term)) {
           clearAutocomplete();
         }
-        acknowledgeRendered(output.length);
+        acknowledgeRendered(outputLen);
       });
     };
 
@@ -586,31 +638,57 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       cleanupFns.push(installTerminalMouseGuard(terminal));
       void bootLog(`initTerminal[${terminalId}]: terminal.open() took ${(performance.now() - tOpen).toFixed(0)}ms`);
 
-      // dispose 后 xterm 会永久回退到 CPU canvas 渲染器（字形抗锯齿变化、滚动卡顿，
-      // 看起来像「字体变了 / GPU 加速没了」）。这里在 context-loss 后重建 WebGL
-      // 渲染器恢复 GPU 加速；webglRetries 上限防 GPU 持续 lost 下的重建风暴，
-      // disposed 时不再重建以免组件卸载后还在创建 GL 上下文。
-      let webglRetries = 0;
+      // 仅对在屏终端挂接 WebGL，离屏超过 1.5s 后释放 GL 上下文与 VRAM，避免多标签突破浏览器 8~16 个上限触发静默丢失风暴。
+      const detachWebgl = () => {
+        if (webglRetryTimerRef.current) {
+          clearTimeout(webglRetryTimerRef.current);
+          webglRetryTimerRef.current = null;
+        }
+        if (webglDisposeTimerRef.current) {
+          clearTimeout(webglDisposeTimerRef.current);
+          webglDisposeTimerRef.current = null;
+        }
+        const current = webglAddonRef.current;
+        if (current) {
+          webglAddonRef.current = null;
+          try { current.dispose(); } catch { /* ignore during teardown */ }
+        }
+      };
       const attachWebgl = () => {
+        if (disposed || !onScreenRef.current || webglAddonRef.current) return;
         const webglAddon = new WebglAddon();
         webglAddon.onContextLoss(() => {
-          webglAddon.dispose();
+          if (webglAddonRef.current === webglAddon) {
+            webglAddonRef.current = null;
+          }
+          try { webglAddon.dispose(); } catch {}
           try {
             if (terminal.cols === 0 || terminal.rows === 0) {
               terminal.resize(80, 24);
             }
             terminal.refresh(0, terminal.rows - 1);
           } catch { /* refresh may throw during teardown */ }
-          if (disposed || webglRetries >= 5) return;
-          webglRetries += 1;
-          attachWebgl();
+          if (disposed || !onScreenRef.current || webglRetriesRef.current >= 5) return;
+          webglRetriesRef.current += 1;
+          if (webglRetryTimerRef.current) clearTimeout(webglRetryTimerRef.current);
+          webglRetryTimerRef.current = setTimeout(() => {
+            webglRetryTimerRef.current = null;
+            attachWebgl();
+          }, 200);
         });
         try {
           terminal.loadAddon(webglAddon);
+          webglAddonRef.current = webglAddon;
         } catch {
-          // WebGL not supported, fall back to canvas renderer
+          try { webglAddon.dispose(); } catch {}
+          webglAddonRef.current = null;
         }
       };
+      attachWebglRef.current = attachWebgl;
+      cleanupFns.push(() => {
+        detachWebgl();
+        attachWebglRef.current = null;
+      });
       if (visibleRef.current) {
         const tFit = performance.now();
         if (webTakeoverDimensions) {
@@ -624,9 +702,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       xtermRef.current = terminal;
 
       // 创建 WebGL context 通常会连续占用主线程 20-40ms。先让终端首帧完成，
-      // 再在浏览器空闲阶段切换到 GPU 渲染器，避免新建页签时出现明显掉帧。
+      // 再在浏览器空闲阶段按需切换到 GPU 渲染器（仅当前在屏终端）。
       const attachWebglWhenIdle = () => {
-        if (disposed) return;
+        if (disposed || !onScreenRef.current) return;
         const tWebgl = performance.now();
         attachWebgl();
         void bootLog(`initTerminal[${terminalId}]: deferred WebGL addon took ${(performance.now() - tWebgl).toFixed(0)}ms`);
@@ -843,26 +921,40 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const xtermViewport = terminal.element!.querySelector('.xterm-viewport') as HTMLElement;
       if (xtermViewport) {
         scrollViewportRef.current = xtermViewport;
-        const syncScrollbar = () => {
+        let scrollRaf = 0;
+        const updateScrollbarDom = () => {
+          scrollRaf = 0;
+          if (disposed) return;
+          const wrapper = scrollWrapperRef.current;
+          const thumb = scrollThumbRef.current;
+          if (!wrapper || !thumb) return;
           const el = xtermViewport;
           const scrollable = el.scrollHeight > el.clientHeight;
           if (!scrollable) {
-            setScrollInfo({ top: 0, height: 0, visible: false });
+            scrollThumbHeightRef.current = 0;
+            wrapper.style.display = 'none';
             return;
           }
           const ratio = el.clientHeight / el.scrollHeight;
           const thumbH = Math.max(20, el.clientHeight * ratio);
           const maxTop = el.clientHeight - thumbH;
-          const scrollTop = el.scrollTop;
           const maxScrollTop = el.scrollHeight - el.clientHeight;
-          const top = maxScrollTop > 0 ? (scrollTop / maxScrollTop) * maxTop : 0;
-          setScrollInfo({ top, height: thumbH, visible: true });
+          const top = maxScrollTop > 0 ? (el.scrollTop / maxScrollTop) * maxTop : 0;
+          scrollThumbHeightRef.current = thumbH;
+          wrapper.style.display = 'block';
+          thumb.style.height = `${thumbH}px`;
+          thumb.style.transform = `translateY(${top}px)`;
+        };
+        const syncScrollbar = () => {
+          if (scrollRaf) return;
+          scrollRaf = requestAnimationFrame(updateScrollbarDom);
         };
         xtermViewport.addEventListener('scroll', syncScrollbar, { passive: true });
         syncScrollbar();
         const ro = new ResizeObserver(syncScrollbar);
         ro.observe(xtermViewport);
         cleanupFns.push(() => {
+          if (scrollRaf) cancelAnimationFrame(scrollRaf);
           xtermViewport.removeEventListener('scroll', syncScrollbar);
           ro.disconnect();
         });
@@ -1335,19 +1427,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         xtermEl.removeEventListener('contextmenu', handleContextMenu, true);
       });
 
-      // Ctrl+hover: show pointer cursor on links
-      const handleKeyDownGlobal = (e: KeyboardEvent) => {
-        if (e.key === 'Control') xtermEl.classList.add('ctrl-hover');
-      };
-      const handleKeyUpGlobal = (e: KeyboardEvent) => {
-        if (e.key === 'Control') xtermEl.classList.remove('ctrl-hover');
-      };
-      document.addEventListener('keydown', handleKeyDownGlobal);
-      document.addEventListener('keyup', handleKeyUpGlobal);
-      cleanupFns.push(() => {
-        document.removeEventListener('keydown', handleKeyDownGlobal);
-        document.removeEventListener('keyup', handleKeyUpGlobal);
-      });
+      // Ctrl+hover: 全局共享一对键鼠状态监听，通过根节点 class 控制超链接手型。
+      cleanupFns.push(registerCtrlHover());
 
     };
 
@@ -1465,8 +1546,44 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
+      searchAddonRef.current = null;
+      scrollViewportRef.current = null;
     };
   }, [terminalId]);
+
+  // 按是否在屏管理 WebGL 上下文：切走 1.5s 后释放 GL 上下文，切回时立即重新挂接并重绘。
+  useEffect(() => {
+    if (effectiveOnScreen) {
+      if (webglDisposeTimerRef.current) {
+        clearTimeout(webglDisposeTimerRef.current);
+        webglDisposeTimerRef.current = null;
+      }
+      const term = xtermRef.current;
+      if (term && !webglAddonRef.current) {
+        webglRetriesRef.current = 0;
+        attachWebglRef.current?.();
+        try {
+          if (term.rows > 0) term.refresh(0, term.rows - 1);
+        } catch { /* renderer may be disposing */ }
+      }
+      return;
+    }
+    if (webglRetryTimerRef.current) {
+      clearTimeout(webglRetryTimerRef.current);
+      webglRetryTimerRef.current = null;
+    }
+    if (webglDisposeTimerRef.current) {
+      clearTimeout(webglDisposeTimerRef.current);
+    }
+    webglDisposeTimerRef.current = setTimeout(() => {
+      webglDisposeTimerRef.current = null;
+      if (!onScreenRef.current && webglAddonRef.current) {
+        const addon = webglAddonRef.current;
+        webglAddonRef.current = null;
+        try { addon.dispose(); } catch {}
+      }
+    }, 1500);
+  }, [effectiveOnScreen]);
 
   // 渲染进程内存压力由 utils/rendererMemoryGuard 广播：优先压缩回滚历史，
   // 这是单个终端里占比最大、且可以无损丢弃（对运行中的 TUI 无副作用）的内存。
@@ -1495,10 +1612,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     xtermRef,
     fitAddonRef,
     visibleRef,
+    onScreenRef,
     pendingWebTakeoverRecoveryRef,
     terminalId,
     isActive,
     visible,
+    onScreen: effectiveOnScreen,
     splitMode,
     windowMode,
   });
@@ -1749,38 +1868,40 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           ))}
         </div>
       )}
-      {scrollInfo.visible && (
-        <div className="terminal-scroll-wrapper">
-          <div className="terminal-scroll-track">
-            <div
-              className="terminal-scroll-thumb"
-              style={{ top: scrollInfo.top, height: scrollInfo.height }}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const vp = scrollViewportRef.current;
-                if (!vp) return;
-                const startY = e.clientY;
-                const startScrollTop = vp.scrollTop;
-                const maxScrollTop = vp.scrollHeight - vp.clientHeight;
-                const maxThumbTop = vp.clientHeight - scrollInfo.height;
-                const onMove = (ev: MouseEvent) => {
-                  if (maxThumbTop <= 0 || maxScrollTop <= 0) return;
-                  const delta = ev.clientY - startY;
-                  vp.scrollTop = startScrollTop + (delta / maxThumbTop) * maxScrollTop;
-                };
-                const onUp = () => {
-                  document.removeEventListener('mousemove', onMove);
-                  document.removeEventListener('mouseup', onUp);
-                };
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
-              }}
-            />
-          </div>
+      <div
+        ref={scrollWrapperRef}
+        className="terminal-scroll-wrapper"
+        style={{ display: 'none' }}
+      >
+        <div className="terminal-scroll-track">
+          <div
+            ref={scrollThumbRef}
+            className="terminal-scroll-thumb"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const vp = scrollViewportRef.current;
+              if (!vp) return;
+              const startY = e.clientY;
+              const startScrollTop = vp.scrollTop;
+              const maxScrollTop = vp.scrollHeight - vp.clientHeight;
+              const maxThumbTop = vp.clientHeight - scrollThumbHeightRef.current;
+              const onMove = (ev: MouseEvent) => {
+                if (maxThumbTop <= 0 || maxScrollTop <= 0) return;
+                const delta = ev.clientY - startY;
+                vp.scrollTop = startScrollTop + (delta / maxThumbTop) * maxScrollTop;
+              };
+              const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+              };
+              document.addEventListener('mousemove', onMove);
+              document.addEventListener('mouseup', onUp);
+            }}
+          />
         </div>
-      )}
-      <ServerMonitor terminalId={terminalId} isSsh={isSsh} isActive={Boolean(isActive)} />
+      </div>
+      {isSsh && <ServerMonitor terminalId={terminalId} isSsh isActive={Boolean(isActive)} />}
     </div>
   );
-};
+});

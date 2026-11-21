@@ -70,6 +70,9 @@
   position: absolute;
   width: 100%;
   min-height: 20px;
+  top: 0;
+  left: 0;
+  will-change: transform;
   background: var(--scrollbar-thumb, #5a5a5a);
   border-radius: 5px;
   opacity: 0.4;
@@ -120,6 +123,7 @@
 }
 
 /* URL Ctrl+click cursor */
+html.tb-ctrl-pressed .terminal-instance .xterm-hyperlink,
 .terminal-instance.ctrl-hover .xterm-hyperlink {
   cursor: pointer !important;
   text-decoration: underline;
