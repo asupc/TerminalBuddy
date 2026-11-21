@@ -50,6 +50,24 @@ interface TerminalInstanceProps {
   splitMode?: 'off' | '2x1' | '2x2';
 }
 
+/** xterm 回滚行数上限。237 列时每行约占 8B/格，5 万行单个终端约需 95MB。 */
+const TERMINAL_SCROLLBACK = 50000;
+/** 内存压力下临时压缩回滚：先回收历史，再考虑整页刷新。 */
+const TERMINAL_SCROLLBACK_UNDER_PRESSURE = 4000;
+/**
+ * xterm 已接收但尚未解析完的字符上限。终端输出速度可以远高于解析速度，
+ * 不设上限时待解析字符串会直接堆在 JS 堆里（实测把渲染进程顶到 4GB OOM）。
+ * 超过上限丢弃新输出但仍回执，让 Rust 侧流控暂停 PTY，而不是继续堆积。
+ */
+const MAX_TERMINAL_WRITE_BACKLOG_CHARS = 2_000_000;
+/** xterm 尚未创建时的启动输出缓存上限。 */
+const MAX_PRE_OPEN_BUFFER_CHARS = 1_000_000;
+/** 启动快照尚未落地时的实时输出缓存上限。 */
+const MAX_PENDING_LIVE_OUTPUT_CHARS = 1_000_000;
+/** 回执粒度：一次 invoke 覆盖的字符数。插件宿主的水位是 10 万字符，
+ *  这批粒度既不会让宿主提前暂停，也把回执 IPC 次数压低一个数量级。 */
+const ACK_CHUNK_CHARS = 64 * 1024;
+
 // 半透明皮肤由 terminal-instance 外层统一绘制一次背景。xterm 画布保持透明，
 // 避免相同 rgba 在外层与画布上重复合成（例如 45% 两层叠加后视觉接近 70%）。
 const toXtermCanvasTheme = (colors: TerminalColors) => {
@@ -280,10 +298,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let disposed = false;
     let usesVsCodeTerminal = false;
     let unsentAckCharCount = 0;
+    // xterm 已接收、尚未在 write 回调里确认解析完成的字符数。
+    let pendingWriteChars = 0;
 
     const cleanupFns: (() => void)[] = [];
     const preOpenOutputBuffer: string[] = [];
     const pendingLiveOutput: string[] = [];
+    let preOpenChars = 0;
+    let pendingLiveChars = 0;
     let terminalOutputAttached = false;
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
@@ -365,11 +387,49 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       }
     };
 
+    /** 渲染回执：所有后端都发。Default / Handoff 没有插件水位，但 Rust 侧
+     *  仍用回执控制「已下发未消费」的字符数并在超限时暂停读取 PTY。 */
+    const acknowledgeRendered = (charCount: number) => {
+      if (charCount <= 0) return;
+      unsentAckCharCount += charCount;
+      while (unsentAckCharCount >= ACK_CHUNK_CHARS) {
+        unsentAckCharCount -= ACK_CHUNK_CHARS;
+        acknowledgeTerminalOutput(terminalId, ACK_CHUNK_CHARS).catch(() => {});
+      }
+    };
+
+    /** 缓存超限时丢弃最旧的片段，并回执这些不会渲染的字符，避免流控永久停住。 */
+    const trimBufferedOutput = (
+      list: string[],
+      totalChars: number,
+      limit: number,
+      acknowledge: (chars: number) => void,
+    ): number => {
+      while (totalChars > limit && list.length > 1) {
+        const dropped = list.shift()!;
+        totalChars -= dropped.length;
+        acknowledge(dropped.length);
+      }
+      return totalChars;
+    };
+
     const writeTerminalOutput = (output: string) => {
       if (disposed || !output) return;
       const term = xtermRef.current;
       if (!term) {
         preOpenOutputBuffer.push(output);
+        preOpenChars = trimBufferedOutput(
+          preOpenOutputBuffer,
+          preOpenChars + output.length,
+          MAX_PRE_OPEN_BUFFER_CHARS,
+          acknowledgeRendered,
+        );
+        return;
+      }
+      // 解析严重积压：这一批直接不写，但立刻回执，让后端流控去暂停 PTY。
+      // 宁可丢掉极端洪峰下的输出，也不能让待解析字符串把渲染进程撑到 OOM。
+      if (pendingWriteChars >= MAX_TERMINAL_WRITE_BACKLOG_CHARS) {
+        acknowledgeRendered(output.length);
         return;
       }
 
@@ -381,17 +441,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         : output;
       const renderedOutput = normalizeAnsiForLightBackground(tuiAdaptedOutput, lightBackground);
 
+      pendingWriteChars += output.length;
       term.write(renderedOutput, () => {
+        pendingWriteChars = Math.max(0, pendingWriteChars - output.length);
         if (!allowsTerminalAutocomplete(term)) {
           clearAutocomplete();
         }
-        if (usesVsCodeTerminal) {
-          unsentAckCharCount += output.length;
-          while (unsentAckCharCount > 5000) {
-            unsentAckCharCount -= 5000;
-            acknowledgeTerminalOutput(terminalId, 5000).catch(() => {});
-          }
-        }
+        acknowledgeRendered(output.length);
       });
     };
 
@@ -455,7 +511,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         fontWeightBold: 'bold',
         lineHeight: 1,
         letterSpacing: 0,
-        scrollback: 50000,
+        scrollback: TERMINAL_SCROLLBACK,
         theme: initialTheme,
         allowTransparency: true,
         // 仅跟随应用的浅色终端启用最低对比度增强；黑板/自定义终端配色保持原样
@@ -605,6 +661,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (preOpenOutputBuffer.length > 0) {
         const combined = preOpenOutputBuffer.join('');
         preOpenOutputBuffer.length = 0;
+        preOpenChars = 0;
         writeTerminalOutput(combined);
       }
       fitAddonRef.current = fitAddon;
@@ -1353,6 +1410,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           handleOutput(output);
         } else if (output) {
           pendingLiveOutput.push(output);
+          pendingLiveChars = trimBufferedOutput(
+            pendingLiveOutput,
+            pendingLiveChars + output.length,
+            MAX_PENDING_LIVE_OUTPUT_CHARS,
+            acknowledgeRendered,
+          );
         }
       };
       const unlisten = await onTerminalOutput(terminalId, handleLiveOutput);
@@ -1372,6 +1435,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           if (pendingLiveOutput.length > 0) {
             const pending = pendingLiveOutput.join('');
             pendingLiveOutput.length = 0;
+            pendingLiveChars = 0;
             handleOutput(pending);
           }
         }
@@ -1401,6 +1465,28 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
+    };
+  }, [terminalId]);
+
+  // 渲染进程内存压力由 utils/rendererMemoryGuard 广播：优先压缩回滚历史，
+  // 这是单个终端里占比最大、且可以无损丢弃（对运行中的 TUI 无副作用）的内存。
+  useEffect(() => {
+    const applyScrollback = (value: number) => {
+      const term = xtermRef.current;
+      if (!term || term.options.scrollback === value) return;
+      try {
+        term.options.scrollback = value;
+      } catch {
+        // 渲染器已销毁时忽略。
+      }
+    };
+    const onPressure = () => applyScrollback(TERMINAL_SCROLLBACK_UNDER_PRESSURE);
+    const onRelief = () => applyScrollback(TERMINAL_SCROLLBACK);
+    window.addEventListener('terminal-memory-pressure', onPressure);
+    window.addEventListener('terminal-memory-relief', onRelief);
+    return () => {
+      window.removeEventListener('terminal-memory-pressure', onPressure);
+      window.removeEventListener('terminal-memory-relief', onRelief);
     };
   }, [terminalId]);
 

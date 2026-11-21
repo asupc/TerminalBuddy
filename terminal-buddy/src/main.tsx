@@ -7,6 +7,7 @@ import './mock/setupMock';
 import App from './App';
 import WebEntry from './components/browser/WebEntry';
 import { installBrowserKeyGuard } from './services/browserKeys';
+import { installRendererMemoryGuard } from './utils/rendererMemoryGuard';
 import './styles/global.css';
 import './styles/cartoonAnime1.css';
 import './components/browser/WebEntry.css';
@@ -28,6 +29,9 @@ document.addEventListener('contextmenu', (e) => {
 // 屏蔽 WebView2 的浏览器快捷键（F5 / Ctrl+R / Ctrl+Shift+R 刷新等）：刷新会重建页面，
 // 所有终端会话与未保存内容都会丢失
 installBrowserKeyGuard();
+// WebView2 渲染进程 OOM 会导致 Tauri 事件在浏览器进程里无界堆积（曾达 10GB）。
+// 超阈值时先压缩终端回滚，仍不回落则整页刷新，避免进程崩溃后内存不释放。
+installRendererMemoryGuard();
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

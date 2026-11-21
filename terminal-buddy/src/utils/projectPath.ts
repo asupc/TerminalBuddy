@@ -2,7 +2,14 @@ import type { Profile, Project } from '../types';
 import { serverUsesWindowsPaths } from '../services/platform';
 
 export function normalizeProjectPath(path: string): string {
-  const clean = path.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  let clean = path.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  // 兼容旧版 Web/App 把 canonicalize scope key 当作项目路径落盘：
+  // `\\?\D:\project` / `//?/d:/project` 与项目配置里的 `D:\project` 是同一目录。
+  // 不剥离会让会话与 Git 视图全部落到「默认」分组，且大小写/斜杠比较不相等。
+  if (serverUsesWindowsPaths()) {
+    if (/^\/\/\?\/UNC\//i.test(clean)) clean = `//${clean.slice(8)}`;
+    else if (clean.startsWith('//?/')) clean = clean.slice(4);
+  }
   const normalized = serverUsesWindowsPaths() ? clean.toLowerCase() : clean;
   const prefix = normalized.startsWith('//') ? '//' : normalized.startsWith('/') ? '/' : '';
   const segments: string[] = [];
