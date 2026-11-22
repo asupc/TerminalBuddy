@@ -32,8 +32,6 @@ const FRAME_RESIZE = 2;
 const FRAME_KILL = 3;
 const FRAME_ACK = 4;
 const MAX_FRAME_LENGTH = 16 * 1024 * 1024;
-const HIGH_WATERMARK_CHARS = 100000;
-const LOW_WATERMARK_CHARS = 5000;
 const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE = '\x1b[?61;4c';
 
 function fail(error) {
@@ -67,9 +65,7 @@ try {
   });
 
   let pausedForBackpressure = false;
-  let pausedForFlowControl = false;
   let ptyPaused = false;
-  let unacknowledgedCharCount = 0;
   let handshakeSent = false;
   let killRequested = false;
   let pendingOutput = [];
@@ -94,22 +90,16 @@ try {
   };
 
   const updatePtyPause = () => {
-    const shouldPause = pausedForBackpressure || pausedForFlowControl;
-    if (shouldPause && !ptyPaused) {
+    if (pausedForBackpressure && !ptyPaused) {
       ptyPaused = true;
       terminal.pause();
-    } else if (!shouldPause && ptyPaused) {
+    } else if (!pausedForBackpressure && ptyPaused) {
       ptyPaused = false;
       terminal.resume();
     }
   };
 
   const forwardOutput = data => {
-    unacknowledgedCharCount += data.length;
-    if (!pausedForFlowControl && unacknowledgedCharCount > HIGH_WATERMARK_CHARS) {
-      pausedForFlowControl = true;
-      updatePtyPause();
-    }
     const accepted = process.stdout.write(Buffer.from(data, 'utf8'));
     if (!accepted && !pausedForBackpressure) {
       pausedForBackpressure = true;
@@ -182,12 +172,7 @@ try {
         killRequested = true;
         terminal.kill();
       } else if (type === FRAME_ACK && payload.length === 4) {
-        const charCount = payload.readUInt32LE(0);
-        unacknowledgedCharCount = Math.max(unacknowledgedCharCount - charCount, 0);
-        if (pausedForFlowControl && unacknowledgedCharCount < LOW_WATERMARK_CHARS) {
-          pausedForFlowControl = false;
-          updatePtyPause();
-        }
+        // Flow control is handled in Rust OutputFlowControl, which backpressures stdout directly.
       } else {
         fail(`Invalid frame type ${type} with ${payload.length} bytes`);
       }

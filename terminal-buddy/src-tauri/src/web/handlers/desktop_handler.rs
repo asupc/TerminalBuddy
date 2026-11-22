@@ -342,7 +342,7 @@ async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, ap
             result(app.state::<TerminalService>().resize_terminal(&argument::<String>(&args,"id")?, argument(&args,"rows")?, argument(&args,"cols")?, false, TerminalActor::Web))?
         }
         "acknowledge_terminal_output" => {
-            result(app.state::<TerminalService>().acknowledge_terminal_output(&argument::<String>(&args,"id")?, argument(&args,"charCount")?, TerminalActor::Web))?
+            result(app.state::<TerminalService>().acknowledge_terminal_output(&app, &argument::<String>(&args,"id")?, argument(&args,"charCount")?, TerminalActor::Web))?
         }
         "update_terminal_display_name" => {
             result(app.state::<TerminalService>().update_terminal_display_name(&argument::<String>(&args,"id")?, &argument::<String>(&args,"displayName")?, TerminalActor::Web))?

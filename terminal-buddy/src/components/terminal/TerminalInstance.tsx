@@ -8,7 +8,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../../services/tauri';
-import { defaultShellType, isBrowserClient } from '../../services/platform';
+import { defaultShellType, isBrowserClient, isWebBackend } from '../../services/platform';
 import { ServerMonitor } from '../shared/ServerMonitor';
 import { listen } from './../../services/remoteWorkspace/events';
 import { getAppSettings, matchesHotkey } from '../../utils/settings';
@@ -104,9 +104,10 @@ const MAX_TERMINAL_WRITE_BACKLOG_CHARS = 2_000_000;
 const MAX_PRE_OPEN_BUFFER_CHARS = 1_000_000;
 /** 启动快照尚未落地时的实时输出缓存上限。 */
 const MAX_PENDING_LIVE_OUTPUT_CHARS = 1_000_000;
-/** 回执粒度：一次 invoke 覆盖的字符数。插件宿主的水位是 10 万字符，
- *  这批粒度既不会让宿主提前暂停，也把回执 IPC 次数压低一个数量级。 */
-const ACK_CHUNK_CHARS = 64 * 1024;
+/** 回执粒度：一次 invoke 覆盖的字符数，降低频繁 IPC 次数。 */
+const ACK_CHUNK_CHARS = 32 * 1024;
+/** 尾部回执最长延迟：防止突发输出停下后未满一批的字符迟迟不回执。 */
+const ACK_IDLE_FLUSH_MS = 100;
 
 // 半透明皮肤由 terminal-instance 外层统一绘制一次背景。xterm 画布保持透明，
 // 避免相同 rgba 在外层与画布上重复合成（例如 45% 两层叠加后视觉接近 70%）。
@@ -349,6 +350,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
     let disposed = false;
     let usesVsCodeTerminal = false;
     let unsentAckCharCount = 0;
+    let ackFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    let resyncInFlight = false;
     // xterm 已接收、尚未在 write 回调里确认解析完成的字符数。
     let pendingWriteChars = 0;
 
@@ -438,14 +441,25 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
       }
     };
 
-    /** 渲染回执：所有后端都发。Default / Handoff 没有插件水位，但 Rust 侧
-     *  仍用回执控制「已下发未消费」的字符数并在超限时暂停读取 PTY。 */
+    const flushPendingAck = () => {
+      if (ackFlushTimer !== null) {
+        clearTimeout(ackFlushTimer);
+        ackFlushTimer = null;
+      }
+      if (unsentAckCharCount <= 0) return;
+      const count = unsentAckCharCount;
+      unsentAckCharCount = 0;
+      acknowledgeTerminalOutput(terminalId, count).catch(() => {});
+    };
+
+    /** 渲染回执：所有后端都发。Rust 侧用回执控制「已下发未消费」的字符数并在超限时暂停读取 PTY。 */
     const acknowledgeRendered = (charCount: number) => {
-      if (charCount <= 0) return;
+      if (disposed || charCount <= 0) return;
       unsentAckCharCount += charCount;
-      while (unsentAckCharCount >= ACK_CHUNK_CHARS) {
-        unsentAckCharCount -= ACK_CHUNK_CHARS;
-        acknowledgeTerminalOutput(terminalId, ACK_CHUNK_CHARS).catch(() => {});
+      if (unsentAckCharCount >= ACK_CHUNK_CHARS) {
+        flushPendingAck();
+      } else if (ackFlushTimer === null) {
+        ackFlushTimer = setTimeout(flushPendingAck, ACK_IDLE_FLUSH_MS);
       }
     };
 
@@ -495,6 +509,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
       const outputLen = output.length;
       pendingWriteChars += outputLen;
       term.write(renderedOutput, () => {
+        if (disposed) return;
         pendingWriteChars = Math.max(0, pendingWriteChars - outputLen);
         if (autocompleteRef.current && !allowsTerminalAutocomplete(term)) {
           clearAutocomplete();
@@ -1432,6 +1447,42 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
 
     };
 
+    const resyncTerminalOutput = async () => {
+      if (disposed || resyncInFlight || isWebBackend()) return;
+      resyncInFlight = true;
+      terminalOutputAttached = false;
+      try {
+        const drained = await drainTerminalOutput(terminalId);
+        if (disposed) return;
+        preOpenOutputBuffer.length = 0;
+        preOpenChars = 0;
+        xtermRef.current?.reset();
+        if (drained) {
+          handleOutput(drained);
+        }
+        terminalOutputAttached = true;
+        if (pendingLiveOutput.length > 0) {
+          const pending = pendingLiveOutput.join('');
+          pendingLiveOutput.length = 0;
+          pendingLiveChars = 0;
+          handleOutput(pending);
+        }
+      } catch (err) {
+        console.error('Failed to resync terminal output:', err);
+        if (!disposed) {
+          terminalOutputAttached = true;
+          if (pendingLiveOutput.length > 0) {
+            const pending = pendingLiveOutput.join('');
+            pendingLiveOutput.length = 0;
+            pendingLiveChars = 0;
+            handleOutput(pending);
+          }
+        }
+      } finally {
+        resyncInFlight = false;
+      }
+    };
+
     void Promise.all([
       listen<WebTerminalResizePayload>('terminal-web-resize', (event) => {
         const payload = event.payload;
@@ -1472,6 +1523,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
           pendingWebTakeoverRecoveryRef.current = false;
         }
       }),
+      ...(!isWebBackend()
+        ? [listen<void>(`terminal_output_resync_${terminalId}`, () => {
+            void resyncTerminalOutput();
+          })]
+        : []),
     ]).then((unlisteners) => {
       if (disposed) {
         unlisteners.forEach((unlisten) => unlisten());
@@ -1540,7 +1596,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
         clearTimeout(workingFallback);
         workingFallback = null;
       }
+      unsentAckCharCount += pendingWriteChars + preOpenChars + pendingLiveChars;
+      pendingWriteChars = 0;
+      preOpenChars = 0;
+      pendingLiveChars = 0;
+      flushPendingAck();
       pendingPtyResize = null;
+      preOpenOutputBuffer.length = 0;
       pendingLiveOutput.length = 0;
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();

@@ -118,6 +118,20 @@ try {
 
     assert.ok(output.split('\x1b[?2026h').length - 1 >= 20, 'missing synchronized-output begin sequences');
     assert.ok(output.split('\x1b[?2026l').length - 1 >= 20, 'missing synchronized-output end sequences');
+
+    // Burst > 100,000 chars without sending FRAME_ACK: host.cjs must not deadlock ConPTY.
+    const burstOffset = output.length;
+    writeFrame(1, 'node -e "process.stdout.write(\'A\'.repeat(160000)+[\'__TB\',\'BURST\',\'DONE__\'].join(\'_\'))"\r');
+    await waitFor(() => output.slice(burstOffset).includes('__TB_BURST_DONE__'), '160K burst output without FRAME_ACK');
+
+    // Sending FRAME_ACK must remain accepted as a protocol-compatible no-op.
+    const ackPayload = Buffer.allocUnsafe(4);
+    ackPayload.writeUInt32LE(65536, 0);
+    writeFrame(4, ackPayload);
+
+    const afterBurstOffset = output.length;
+    writeFrame(1, 'echo __TB_AFTER_BURST__\r');
+    await waitFor(() => output.slice(afterBurstOffset).includes('__TB_AFTER_BURST__'), 'interactive command after burst');
   }
 
   writeFrame(3);

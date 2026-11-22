@@ -12,7 +12,6 @@ use crate::runtime::AppHandle;
 pub(crate) const FRAME_INPUT: u8 = 1;
 const FRAME_RESIZE: u8 = 2;
 const FRAME_KILL: u8 = 3;
-pub(crate) const FRAME_ACK: u8 = 4;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[cfg(not(debug_assertions))]
@@ -211,11 +210,6 @@ impl VsCodeTerminalProcess {
                 .kill()
                 .map_err(|error| format!("关闭 VS Code 终端插件失败: {}", error))?;
         }
-        Ok(())
-    }
-
-    pub fn acknowledge_output(&mut self, char_count: u32) -> Result<(), String> {
-        let _ = self.try_write_frame(FRAME_ACK, &char_count.to_le_bytes());
         Ok(())
     }
 

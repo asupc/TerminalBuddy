@@ -170,8 +170,10 @@ struct OutputFlowControl {
 
 #[derive(Default)]
 struct OutputFlowState {
-    /// 已下发、尚未回执的字符数（近似 UTF-16 码元数）。
+    /// 已下发、尚未回执的字符数（UTF-16 码元数，与 JS `string.length` 一致）。
     outstanding: usize,
+    /// 等待回执超时并跳过过一次桌面 emit 后置 true，待前端恢复到低水位时触发一次 resync。
+    missed_output: bool,
     /// 终端已关闭时唤醒所有等待者并停止限流。
     closed: bool,
 }
@@ -184,14 +186,33 @@ impl OutputFlowControl {
         }
     }
 
-    fn add(&self, chars: usize) {
-        if chars == 0 { return; }
+    /// 桌面端重新附着 / 全量 drain 时重置在途计数，防止旧页面的饱和状态锁死新页面。
+    fn reset(&self) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.closed { return; }
-        state.outstanding = state.outstanding.saturating_add(chars);
+        if state.closed {
+            return;
+        }
+        state.outstanding = 0;
+        state.missed_output = false;
+        self.resume.notify_all();
     }
 
-    fn acknowledge(&self, chars: usize) {
+    /// 记录前端回执；若此前发生过流控丢帧且已回落到低水位，返回 `true` 通知前端全量 resync。
+    fn acknowledge(&self, chars: usize) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.outstanding = state.outstanding.saturating_sub(chars);
+        if state.outstanding <= TERMINAL_DESKTOP_INFLIGHT_RESUME_CHARS {
+            self.resume.notify_all();
+            if state.missed_output && !state.closed {
+                state.missed_output = false;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// `app.emit` 失败时回退预占的在途字符数，不触发 resync。
+    fn release(&self, chars: usize) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.outstanding = state.outstanding.saturating_sub(chars);
         if state.outstanding <= TERMINAL_DESKTOP_INFLIGHT_RESUME_CHARS {
@@ -199,29 +220,46 @@ impl OutputFlowControl {
         }
     }
 
-    /// 在途字符超过上限时阻塞，直到前端回执把它降回低水位或等待超时。
-    fn wait_for_capacity(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.outstanding <= TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS {
-            return;
-        }
-        let deadline = Instant::now() + TERMINAL_DESKTOP_FLOW_WAIT_TIMEOUT;
-        while !state.closed && state.outstanding > TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS {
-            let now = Instant::now();
-            if now >= deadline { break; }
-            let (next, _) = self
-                .resume
-                .wait_timeout(state, deadline - now)
-                .unwrap_or_else(|e| e.into_inner());
-            state = next;
-        }
+    /// 申请向桌面端下发 `chars` 个字符：在途超限时等待低水位或超时；超时仍饱和则
+    /// 标记 `missed_output` 并返回 `false` 跳过本次桌面 emit（Web 与环形缓冲不受影响）。
+    fn try_acquire_for_emit(&self, chars: usize) -> bool {
+        self.try_acquire_for_emit_with_timeout(chars, TERMINAL_DESKTOP_FLOW_WAIT_TIMEOUT)
     }
 
-    /// 在途字符是否已超过上限。超过时桌面端不再接收新事件，避免渲染进程
-    /// 崩溃或卡死后脚本继续在 WebView2 浏览器进程里累积。
-    fn is_saturated(&self) -> bool {
-        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.closed || state.outstanding > TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS
+    fn try_acquire_for_emit_with_timeout(&self, chars: usize, timeout: Duration) -> bool {
+        if chars == 0 {
+            return false;
+        }
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.closed {
+            return false;
+        }
+        if state.missed_output && state.outstanding > TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS {
+            return false;
+        }
+        if state.outstanding > TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS {
+            let deadline = Instant::now() + timeout;
+            while !state.closed && state.outstanding > TERMINAL_DESKTOP_INFLIGHT_RESUME_CHARS {
+                let now = Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                let (next, _) = self
+                    .resume
+                    .wait_timeout(state, deadline - now)
+                    .unwrap_or_else(|e| e.into_inner());
+                state = next;
+            }
+        }
+        if state.closed {
+            return false;
+        }
+        if state.outstanding > TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS {
+            state.missed_output = true;
+            return false;
+        }
+        state.outstanding = state.outstanding.saturating_add(chars);
+        true
     }
 
     /// teardown 时调用：不再等待回执，避免关闭流程被卡住。
@@ -229,6 +267,7 @@ impl OutputFlowControl {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.closed = true;
         state.outstanding = 0;
+        state.missed_output = false;
         self.resume.notify_all();
     }
 }
@@ -375,22 +414,6 @@ impl TerminalInputHandle {
                     &mut stdin,
                     crate::services::vscode_terminal_service::FRAME_INPUT,
                     data,
-                )
-            }
-        }
-    }
-
-    /// 渲染流控回执。Default 后端无流控（Ok(())）。
-    fn acknowledge_output(&self, char_count: u32) -> Result<(), String> {
-        match self {
-            Self::Writer(_) => Ok(()),
-            #[cfg(feature = "desktop")]
-            Self::VsCode(stdin) => {
-                let mut stdin = stdin.lock().unwrap_or_else(|e| e.into_inner());
-                crate::services::vscode_terminal_service::write_vscode_frame(
-                    &mut stdin,
-                    crate::services::vscode_terminal_service::FRAME_ACK,
-                    &char_count.to_le_bytes(),
                 )
             }
         }
@@ -716,7 +739,7 @@ fn spawn_output_forwarder(
                 batch.shrink_to(64 * 1024);
             }
             if !output.is_empty() {
-                let emitted_chars = output.chars().count();
+                let emitted_chars = output.encode_utf16().count();
                 let desktop_attached = {
                     let mut buffer = output_buffer.lock().unwrap_or_else(|e| e.into_inner());
                     let attached = buffer.push(output.clone());
@@ -725,18 +748,13 @@ fn spawn_output_forwarder(
                     web_state.broadcast(&terminal_id, &output);
                     attached
                 };
-                if desktop_attached {
-                    // 渲染端长期不回执（页面已卸载 / 渲染进程崩溃）时不再向桌面
-                    // emit：那些脚本只会堆在浏览器进程里，等终端重新挂载时用
-                    // drain 快照恢复即可。Web 广播与环形缓冲不受影响。
-                    if !output_flow.is_saturated() {
-                        // 先记账再 emit：渲染端可能在 emit 返回前就已回执。
-                        output_flow.add(emitted_chars);
-                        let _ = app.emit(&format!("terminal_output_{}", terminal_id), output.clone());
+                if desktop_attached && output_flow.try_acquire_for_emit(emitted_chars) {
+                    if app
+                        .emit(&format!("terminal_output_{}", terminal_id), output.clone())
+                        .is_err()
+                    {
+                        output_flow.release(emitted_chars);
                     }
-                    // 在途过多时暂停读取：data_rx 与 PTY 管道被填满后，子进程会
-                    // 在 write 上自然阻塞，内存不再随输出量增长。
-                    output_flow.wait_for_capacity();
                 }
             }
 
@@ -1818,36 +1836,32 @@ impl TerminalService {
         }
     }
 
-    /// 渲染流控回执。属于只读查看链路，因此按 `View` 授权：
-    /// 非共享模式下桌面端仍可只读观察 Web 终端，不能因为拿不到回执而卡住渲染。
+    /// 渲染流控回执。桌面端流控仅追踪桌面 WebView2 消费进度；非 Pc 发起的回执
+    /// 经授权校验后直接返回 `Ok(())`，避免影响桌面流控状态。
     pub fn acknowledge_terminal_output(
         &self,
+        app: &AppHandle,
         id: &str,
         char_count: u32,
         actor: TerminalActor,
     ) -> Result<(), String> {
         self.authorize(id, actor, TerminalAction::View)
             .map_err(|error| error.to_string())?;
-        // 回执对 VsCode 后端要写插件 stdin（可能阻塞），同样移出全局锁（审查 H-2）。
-        let (handle, output_flow) = {
-            let instances = self.lock_instances();
-            let instance = instances
-                .get(id)
-                .ok_or_else(|| TerminalAccessError::NotFound.to_string())?;
-            // 输入句柄可能不存在（只读/已收尾的 handoff 终端）；流控回执仍必须生效，
-            // 否则桌面端在途字符永远降不下来，终端会被限流到停住。
-            (
-                instance.backend.input_handle(),
-                instance.output_flow.clone(),
-            )
-        };
-        // 流控回执对所有后端生效：Default / Handoff 没有插件侧水位，但同样需要
-        // 把桌面端在途字符数降下来，否则高吞吐输出会把 WebView2 的脚本队列撑爆。
-        output_flow.acknowledge(char_count as usize);
-        match handle {
-            Some(handle) => handle.acknowledge_output(char_count),
-            None => Ok(()),
+        if actor != TerminalActor::Pc {
+            return Ok(());
         }
+        let output_flow = {
+            let instances = self.lock_instances();
+            instances
+                .get(id)
+                .ok_or_else(|| TerminalAccessError::NotFound.to_string())?
+                .output_flow
+                .clone()
+        };
+        if output_flow.acknowledge(char_count as usize) {
+            let _ = app.emit(&format!("terminal_output_resync_{}", id), ());
+        }
+        Ok(())
     }
 
     pub fn terminal_loading_mode(
@@ -1867,11 +1881,19 @@ impl TerminalService {
     pub fn drain_terminal_output(&self, id: &str, actor: TerminalActor) -> Result<String, String> {
         self.authorize(id, actor, TerminalAction::View)
             .map_err(|error| error.to_string())?;
-        let buf_arc = self.output_buffer_arc(id)?;
+        let (buf_arc, output_flow) = {
+            let instances = self.lock_instances();
+            let instance = instances
+                .get(id)
+                .ok_or_else(|| TerminalAccessError::NotFound.to_string())?;
+            (instance.output_buffer.clone(), instance.output_flow.clone())
+        };
         let mut buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
         // This command is the desktop attachment handshake: the lock makes the
         // returned startup snapshot and all later live events mutually exclusive.
-        Ok(buffer.snapshot_and_attach())
+        let snapshot = buffer.snapshot_and_attach();
+        output_flow.reset();
+        Ok(snapshot)
     }
 
     pub fn peek_terminal_output(&self, id: &str, actor: TerminalActor) -> Result<String, String> {
@@ -2235,9 +2257,10 @@ pub fn resize_terminal(
 pub fn acknowledge_terminal_output(
     id: String,
     char_count: u32,
+    app: AppHandle,
     terminal_service: State<TerminalService>,
 ) -> Result<(), String> {
-    terminal_service.acknowledge_terminal_output(&id, char_count, TerminalActor::Pc)
+    terminal_service.acknowledge_terminal_output(&app, &id, char_count, TerminalActor::Pc)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
@@ -2417,6 +2440,7 @@ mod default_cwd_tests {
 mod output_flow_tests {
     use super::{
         OutputFlowControl, TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS,
+        TERMINAL_DESKTOP_INFLIGHT_RESUME_CHARS,
     };
     use std::sync::Arc;
     use std::thread;
@@ -2430,32 +2454,38 @@ mod output_flow_tests {
     #[test]
     fn acknowledge_releases_blocked_forwarder() {
         let flow = Arc::new(OutputFlowControl::new());
-        flow.add(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1);
+        assert!(flow.try_acquire_for_emit_with_timeout(
+            TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1,
+            Duration::from_millis(20),
+        ));
         let waiter = {
             let flow = flow.clone();
-            thread::spawn(move || flow.wait_for_capacity())
+            thread::spawn(move || flow.try_acquire_for_emit_with_timeout(64, Duration::from_secs(2)))
         };
         thread::sleep(Duration::from_millis(30));
         let started = Instant::now();
-        flow.acknowledge(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1);
-        waiter.join().unwrap();
+        assert!(!flow.acknowledge(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1));
+        assert!(waiter.join().unwrap());
         assert!(started.elapsed() < Duration::from_secs(1));
-        assert_eq!(outstanding(&flow), 0);
+        assert_eq!(outstanding(&flow), 64);
     }
 
     /// teardown 关闭流控后不能还让转发线程等满超时。
     #[test]
     fn close_releases_blocked_forwarder() {
         let flow = Arc::new(OutputFlowControl::new());
-        flow.add(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1);
+        assert!(flow.try_acquire_for_emit_with_timeout(
+            TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1,
+            Duration::from_millis(20),
+        ));
         let waiter = {
             let flow = flow.clone();
-            thread::spawn(move || flow.wait_for_capacity())
+            thread::spawn(move || flow.try_acquire_for_emit_with_timeout(64, Duration::from_secs(2)))
         };
         thread::sleep(Duration::from_millis(30));
         let started = Instant::now();
         flow.close();
-        waiter.join().unwrap();
+        assert!(!waiter.join().unwrap());
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 
@@ -2463,17 +2493,74 @@ mod output_flow_tests {
     #[test]
     fn acknowledge_saturates_at_zero() {
         let flow = OutputFlowControl::new();
-        flow.add(5);
-        flow.acknowledge(100);
+        assert!(flow.try_acquire_for_emit_with_timeout(5, Duration::from_millis(20)));
+        assert!(!flow.acknowledge(100));
         assert_eq!(outstanding(&flow), 0);
-        flow.wait_for_capacity();
-        flow.add(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS);
-        flow.wait_for_capacity();
+        assert!(flow.try_acquire_for_emit_with_timeout(
+            TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS,
+            Duration::from_millis(20),
+        ));
         assert_eq!(outstanding(&flow), TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS);
-        assert!(!flow.is_saturated());
-        flow.add(1);
-        assert!(flow.is_saturated());
-        flow.acknowledge(1);
-        assert!(!flow.is_saturated());
+        assert!(flow.try_acquire_for_emit_with_timeout(1, Duration::from_millis(20)));
+        assert!(!flow.try_acquire_for_emit_with_timeout(1, Duration::from_millis(20)));
+        assert!(flow.acknowledge(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS));
+        assert!(flow.try_acquire_for_emit_with_timeout(1, Duration::from_millis(20)));
+    }
+
+    /// 超时后标记 missed_output，后续仍饱和时立即跳过避免重复等 2s；
+    /// 直到回执降回低水位才精确触发一次 resync。
+    #[test]
+    fn timeout_marks_missed_output_avoids_repeated_waits_and_triggers_resync_once() {
+        let flow = OutputFlowControl::new();
+        assert!(flow.try_acquire_for_emit_with_timeout(
+            TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1,
+            Duration::from_millis(20),
+        ));
+        assert!(!flow.try_acquire_for_emit_with_timeout(100, Duration::from_millis(30)));
+
+        let started = Instant::now();
+        assert!(!flow.try_acquire_for_emit_with_timeout(100, Duration::from_secs(2)));
+        assert!(started.elapsed() < Duration::from_millis(500));
+
+        let partial = TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS - TERMINAL_DESKTOP_INFLIGHT_RESUME_CHARS;
+        assert!(!flow.acknowledge(partial));
+        assert!(flow.acknowledge(10));
+        assert!(!flow.acknowledge(10));
+        assert!(flow.try_acquire_for_emit_with_timeout(100, Duration::from_millis(20)));
+    }
+
+    /// drain_terminal_output 重置流控后必须清除饱和态并唤醒等待者。
+    #[test]
+    fn reset_clears_saturation_and_wakes_waiter() {
+        let flow = Arc::new(OutputFlowControl::new());
+        assert!(flow.try_acquire_for_emit_with_timeout(
+            TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1,
+            Duration::from_millis(20),
+        ));
+        let waiter = {
+            let flow = flow.clone();
+            thread::spawn(move || flow.try_acquire_for_emit_with_timeout(128, Duration::from_secs(2)))
+        };
+        thread::sleep(Duration::from_millis(30));
+        let started = Instant::now();
+        flow.reset();
+        assert!(waiter.join().unwrap());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(outstanding(&flow), 128);
+    }
+
+    /// app.emit 失败时 release 回退在途数但不误清空 missed_output 标记。
+    #[test]
+    fn release_on_emit_error_does_not_trigger_resync() {
+        let flow = OutputFlowControl::new();
+        assert!(flow.try_acquire_for_emit_with_timeout(
+            TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1,
+            Duration::from_millis(20),
+        ));
+        assert!(!flow.try_acquire_for_emit_with_timeout(100, Duration::from_millis(10)));
+        flow.release(TERMINAL_DESKTOP_INFLIGHT_MAX_CHARS + 1);
+        assert_eq!(outstanding(&flow), 0);
+        assert!(flow.acknowledge(0));
+        assert!(!flow.acknowledge(0));
     }
 }
