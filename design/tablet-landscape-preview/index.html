@@ -1,0 +1,1095 @@
+<title>平板横屏适配预览</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* 设计计划
+   颜色：松柏绿皮肤（墨绿底 + 薄荷强调），预览页用绿灰中性色；
+   字体：Space Grotesk 负责标题与数字，中文回落系统黑体，终端用等宽；
+   布局：规格说明 + 六块固定尺寸设备稿，按容器宽度等比缩放。 */
+:root {
+  color-scheme: light;
+  --bg: #edf0ea; --bg-soft: #e5eae2; --panel: #fff; --panel-2: #f5f7f2;
+  --ink: #1b2a21; --ink-2: #55645a; --ink-3: #7d8b81;
+  --line: #d6ded4; --line-soft: #e5ebe2;
+  --accent: #206c54; --accent-soft: #dceae0;
+  --warn: #9a6a13; --danger: #b03b46;
+  --grid: rgba(32,108,84,.06);
+  --shadow-device: 0 30px 70px rgba(24,44,33,.16), 0 4px 14px rgba(24,44,33,.08);
+  --bezel: #232c26; --bezel-edge: #3b473f;
+  --font-ui: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  --app-canvas: #f6f8f5; --app-surface: #fff; --app-field: #eef3e9; --app-tint: #e6efe2;
+  --app-text: #243d32; --app-soft: #55705f; --app-muted: #7b8c81; --app-border: #e0e8dd;
+  --app-accent: #206c54; --app-accent-ink: #fff; --app-secondary: #557c46;
+  --app-danger: #b03b46; --app-track: #e9efe5; --app-raise: #f2f6ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0c1410; --bg-soft: #101a14; --panel: #141f18; --panel-2: #18251d;
+    --ink: #e9f1ea; --ink-2: #a3b5a8; --ink-3: #7a8c7f;
+    --line: #27362c; --line-soft: #1e2b23;
+    --accent: #95d3b2; --accent-soft: #20382a;
+    --warn: #d9a441; --danger: #ef8189;
+    --grid: rgba(149,211,178,.055);
+    --shadow-device: 0 34px 80px rgba(0,0,0,.55), 0 4px 16px rgba(0,0,0,.35);
+    --bezel: #050907; --bezel-edge: #1d2822;
+    --app-canvas: #101c16; --app-surface: #192a20; --app-field: #24392b; --app-tint: #294532;
+    --app-text: #eef5ea; --app-soft: #a9beab; --app-muted: #7c9184; --app-border: #344e3b;
+    --app-accent: #95d3b2; --app-accent-ink: #102d1f; --app-secondary: #bdd598;
+    --app-danger: #f08a8f; --app-track: #23362a; --app-raise: #1e3227;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0c1410; --bg-soft: #101a14; --panel: #141f18; --panel-2: #18251d;
+  --ink: #e9f1ea; --ink-2: #a3b5a8; --ink-3: #7a8c7f;
+  --line: #27362c; --line-soft: #1e2b23;
+  --accent: #95d3b2; --accent-soft: #20382a;
+  --warn: #d9a441; --danger: #ef8189;
+  --grid: rgba(149,211,178,.055);
+  --shadow-device: 0 34px 80px rgba(0,0,0,.55), 0 4px 16px rgba(0,0,0,.35);
+  --bezel: #050907; --bezel-edge: #1d2822;
+  --app-canvas: #101c16; --app-surface: #192a20; --app-field: #24392b; --app-tint: #294532;
+  --app-text: #eef5ea; --app-soft: #a9beab; --app-muted: #7c9184; --app-border: #344e3b;
+  --app-accent: #95d3b2; --app-accent-ink: #102d1f; --app-secondary: #bdd598;
+  --app-danger: #f08a8f; --app-track: #23362a; --app-raise: #1e3227;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px);
+  background-size: 26px 26px;
+  background-position: 0 0;
+}
+.page {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+
+/* ── 页头 ─────────────────────────────────────────────── */
+.mast { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px; align-items: end; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--accent); margin: 0 0 14px;
+}
+h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.12; letter-spacing: -.02em; margin: 0 0 14px; text-wrap: balance; font-weight: 700; }
+.lede { max-width: 62ch; margin: 0; color: var(--ink-2); font-size: 15px; line-height: 1.7; }
+.lede b { color: var(--ink); font-weight: 600; }
+.controls { display: flex; flex-direction: column; gap: 10px; align-items: flex-end; }
+.ctl-label { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); font-family: var(--font-mono); }
+.pills { display: flex; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 2px; }
+.pill {
+  appearance: none; border: 0; background: transparent; color: var(--ink-2); font: inherit; font-size: 12.5px;
+  padding: 7px 13px; border-radius: 9px; cursor: pointer; white-space: nowrap;
+}
+.pill:hover { color: var(--ink); }
+.pill[aria-pressed="true"], .pill.on { background: var(--accent); color: var(--accent-soft); color: #fff; }
+:root[data-theme="dark"] .pill.on { color: #102d1f; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pill.on { color: #102d1f; } }
+.pill:focus-visible, .go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── 规格条 ───────────────────────────────────────────── */
+.specs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 34px; }
+.spec {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 15px 16px 16px;
+  display: flex; flex-direction: column; gap: 7px; min-width: 0;
+}
+.spec-k { font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; color: var(--ink-3); text-transform: uppercase; }
+.spec-v { font-size: 14.5px; font-weight: 600; letter-spacing: -.01em; }
+.spec-v code, .mono { font-family: var(--font-mono); font-size: .92em; font-variant-numeric: tabular-nums; }
+.spec-n { font-size: 12px; color: var(--ink-3); line-height: 1.55; }
+
+/* ── 章节与图纸 ───────────────────────────────────────── */
+.sec-head { display: flex; align-items: baseline; gap: 14px; margin: 52px 0 20px; flex-wrap: wrap; }
+.sec-head h2 { font-size: 20px; letter-spacing: -.01em; margin: 0; }
+.sec-head p { margin: 0; color: var(--ink-3); font-size: 13px; }
+.sec-rule { flex: 1; height: 1px; background: var(--line); min-width: 40px; }
+.fig { margin: 0 0 40px; }
+.fig-head { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 4px 12px; align-items: baseline; margin-bottom: 14px; }
+.idx { font-family: var(--font-mono); font-size: 12px; color: var(--accent); padding-top: 3px; letter-spacing: .04em; }
+.fig-head h3 { margin: 0; font-size: 16.5px; letter-spacing: -.01em; }
+.fig-head p { margin: 2px 0 0; color: var(--ink-2); font-size: 13px; max-width: 78ch; }
+.fig-head .hint { color: var(--ink-3); }
+.device-slot { position: relative; width: 100%; overflow: hidden; }
+.device {
+  position: absolute; top: 0; left: 0; transform-origin: top left;
+  background: linear-gradient(160deg, var(--bezel-edge), var(--bezel));
+  border-radius: 30px; padding: 11px; box-shadow: var(--shadow-device);
+}
+.screen {
+  position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 22px;
+  background: var(--app-canvas); color: var(--app-text);
+  display: flex; flex-direction: column; font-size: 13px; line-height: 1.45;
+  font-family: var(--font-ui);
+}
+.screen button { font: inherit; color: inherit; background: none; border: 0; padding: 0; }
+.screen .mono { font-family: var(--font-mono); }
+.wide-slot { max-width: 1180px; margin: 0 auto; }
+.narrow-slot { max-width: 340px; margin: 0 auto; }
+
+/* ── 应用通用组件 ─────────────────────────────────────── */
+.statusbar { height: 30px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; font-size: 11.5px; font-weight: 600; color: var(--app-soft); flex: none; }
+.statusbar .sb-r { display: flex; align-items: center; gap: 6px; color: var(--app-muted); }
+.statusbar svg { width: 15px; height: 15px; }
+.appbar { height: 58px; display: flex; align-items: center; gap: 10px; padding: 0 14px; flex: none; border-bottom: 1px solid var(--app-border); background: var(--app-surface); }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.logo {
+  width: 30px; height: 30px; border-radius: 9px; background: var(--app-accent); color: var(--app-accent-ink);
+  display: grid; place-items: center; font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: -.04em; flex: none;
+}
+.brand-t { display: flex; flex-direction: column; min-width: 0; }
+.brand-t b { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.brand-t span { font-size: 10.5px; color: var(--app-muted); }
+.row { display: flex; align-items: center; min-width: 0; }
+.col { display: flex; flex-direction: column; min-width: 0; }
+.grow { flex: 1; min-width: 0; }
+.gap-2 { gap: 2px; } .gap-4 { gap: 4px; } .gap-6 { gap: 6px; } .gap-8 { gap: 8px; }
+.gap-10 { gap: 10px; } .gap-12 { gap: 12px; } .gap-14 { gap: 14px; } .gap-16 { gap: 16px; }
+.muted { color: var(--app-muted); }
+.soft { color: var(--app-soft); }
+.label { font-size: 10.5px; color: var(--app-muted); letter-spacing: .01em; }
+.icon-btn {
+  width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; color: var(--app-soft); flex: none;
+}
+.icon-btn.sm { width: 30px; height: 30px; border-radius: 9px; }
+.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.ic.sm { width: 15px; height: 15px; }
+.card { background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 16px; min-width: 0; }
+.pad-13 { padding: 13px; } .pad-14 { padding: 14px; } .pad-16 { padding: 16px; } .pad-18 { padding: 18px; }
+.title-sm { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.field {
+  display: flex; align-items: center; gap: 10px; background: var(--app-field); border-radius: 12px;
+  padding: 9px 12px; min-height: 46px; color: var(--app-soft);
+}
+.field .field-v { font-size: 13px; font-weight: 500; color: var(--app-text); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.field svg.lead { width: 17px; height: 17px; color: var(--app-muted); }
+.agent-seg { display: flex; gap: 3px; background: var(--app-track); border-radius: 12px; padding: 3px; }
+.agent-opt { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; border-radius: 9px; color: var(--app-soft); font-size: 12.5px; font-weight: 600; }
+.agent-opt.on { background: var(--app-surface); border: 1px solid var(--app-border); color: var(--app-text); box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.agent-logo { width: 18px; height: 18px; display: grid; place-items: center; flex: none; }
+.agent-logo svg { width: 100%; height: 100%; }
+.claude-mark { color: #d97757; }
+.codex-mark { width: 17px; height: 17px; border-radius: 5px; background: currentColor; color: var(--app-text); position: relative; }
+.codex-mark::after { content: "❯"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 8px; color: var(--app-canvas); font-family: var(--font-mono); }
+:root[data-theme="dark"] .codex-mark::after { color: #101c16; }
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 42px;
+  padding: 10px 14px; border-radius: 12px; background: var(--app-accent); color: var(--app-accent-ink);
+  font-size: 13px; font-weight: 600;
+}
+.btn .ic { width: 15px; height: 15px; }
+.btn.ghost { background: var(--app-field); color: var(--app-text); border: 1px solid var(--app-border); }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 6px 9px; border-radius: 9px; background: var(--app-field); color: var(--app-soft); font-size: 11.5px; font-weight: 500; white-space: nowrap; }
+.chip.on { background: var(--app-tint); color: var(--app-accent); }
+.chip .ic { width: 13px; height: 13px; }
+.tabs { display: flex; gap: 3px; background: var(--app-track); border-radius: 12px; padding: 3px; flex: none; }
+.tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; border-radius: 9px; color: var(--app-soft); font-size: 12.5px; font-weight: 600; }
+.tab.on { background: var(--app-surface); border: 1px solid var(--app-border); color: var(--app-text); }
+.tab .count { font-size: 10.5px; color: var(--app-muted); font-weight: 500; }
+.list { display: flex; flex-direction: column; overflow: hidden; }
+.list-row { display: flex; align-items: center; gap: 11px; padding: 12px 14px; min-height: 62px; }
+.list-row + .list-row { border-top: 1px solid var(--app-border); }
+.avatar { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; background: var(--app-field); flex: none; }
+.avatar.round { border-radius: 50%; }
+.list-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.list-t b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.list-t span { font-size: 11px; color: var(--app-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tag { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 5px; background: var(--app-field); color: var(--app-soft); white-space: nowrap; flex: none; }
+.tag.attn { background: var(--app-tint); color: var(--app-accent); }
+.tag.run { background: var(--app-tint); color: var(--app-secondary); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-secondary); flex: none; }
+.foot { font-size: 10.5px; color: var(--app-muted); text-align: center; padding-top: 4px; }
+.divider { height: 1px; background: var(--app-border); }
+
+/* ── 简版首页 ─────────────────────────────────────────── */
+.home-body { flex: 1; display: flex; gap: 20px; padding: 18px 20px 20px; min-height: 0; }
+.composer-col { width: 384px; flex: none; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+.composer { display: flex; flex-direction: column; gap: 11px; padding: 15px; }
+.list-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.mini { display: flex; flex-direction: column; gap: 9px; padding: 12px 14px; border: 1px solid var(--app-border); border-radius: 14px; background: var(--app-surface); }
+.mini-head { display: flex; align-items: center; gap: 6px; }
+.mini-head .label { display: inline-flex; align-items: center; gap: 5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.hint-line { font-size: 11px; line-height: 1.6; color: var(--app-muted); padding: 0 2px; }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--app-border); border-top-color: var(--app-accent); }
+
+/* ── 对话 ─────────────────────────────────────────────── */
+.page-body { flex: 1; display: flex; min-height: 0; padding: 16px; gap: 16px; }
+.bar { height: 5px; border-radius: 99px; background: var(--app-track); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 99px; background: var(--app-accent); }
+.chat { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 18px; overflow: hidden; }
+.chat-scroll { flex: 1; overflow: hidden; padding: 18px 22px 6px; display: flex; flex-direction: column; gap: 14px; }
+.chat-inner { width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+.msg { display: flex; gap: 9px; align-items: flex-start; }
+.msg.user { justify-content: flex-end; }
+.msg .avatar { margin-top: 2px; }
+.bubble { background: var(--app-raise); border-radius: 4px 14px 14px 14px; padding: 10px 13px; font-size: 12.5px; line-height: 1.65; color: var(--app-text); max-width: min(680px, 86%); }
+.bubble p { margin: 0; }
+.bubble p + p { margin-top: 7px; }
+.bubble ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.bubble li { padding-left: 2px; }
+.bubble code { font-family: var(--font-mono); font-size: .92em; background: var(--app-field); padding: 1px 5px; border-radius: 5px; }
+.msg.user .bubble { background: var(--app-tint); border-radius: 14px 4px 14px 14px; max-width: min(560px, 74%); }
+.tool { display: flex; align-items: center; gap: 8px; background: var(--app-field); border: 1px dashed var(--app-border); border-radius: 10px; padding: 8px 11px; font-size: 11px; color: var(--app-soft); margin-left: 37px; max-width: 680px; }
+.tool .mono { font-size: 10.5px; color: var(--app-muted); }
+.thinking { display: flex; align-items: center; gap: 8px; color: var(--app-muted); font-size: 11.5px; padding-left: 37px; }
+.thinking .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--app-accent); }
+.ctx-strip { display: flex; align-items: center; gap: 10px; padding: 7px 22px; border-top: 1px solid var(--app-border); font-size: 10.5px; color: var(--app-muted); }
+.ctx-strip .bar { width: 110px; height: 4px; }
+.composer-bar { flex: none; padding: 8px 14px 12px; }
+.composer-inner { margin: 0 auto; }
+.input { display: flex; align-items: center; gap: 6px; background: var(--app-field); border: 1px solid var(--app-border); border-radius: 14px; padding: 7px 7px 7px 14px; min-height: 48px; }
+.input .ph { flex: 1; color: var(--app-muted); font-size: 12.5px; }
+.input .mini-btn { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--app-muted); }
+.send { width: 34px; height: 34px; border-radius: 10px; background: var(--app-accent); color: var(--app-accent-ink); display: grid; place-items: center; flex: none; }
+.send .ic { width: 17px; height: 17px; }
+
+/* ── 终端 Agent 同屏 ──────────────────────────────────── */
+.pane-head { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--app-border); flex: none; }
+.pane-title { font-size: 12px; font-weight: 600; letter-spacing: .01em; }
+.term-shell { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #0b1110; color: #cddad1; }
+.term-shell .pane-head { border-bottom: 1px solid #1d2a24; color: #9db0a4; padding: 11px 20px; }
+.term-shell .pane-title { color: #cddad1; }
+.term-shell .term-body { padding: 16px 22px; font-size: 12.5px; line-height: 1.9; }
+.term-shell .term-fn { padding: 8px 18px; }
+.term-shell .term-input { padding: 8px 18px 14px; }
+.term-shell .term-input .box { min-height: 40px; font-size: 12px; }
+.term-body { flex: 1; min-height: 0; overflow: hidden; padding: 12px 15px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.8; color: #c7d4ca; }
+.term-body .ln { white-space: pre; }
+.t-green { color: #8ed6ae; } .t-cyan { color: #82c7e6; } .t-yellow { color: #e3c179; } .t-red { color: #e88a90; } .t-dim { color: #6b7f74; } .t-blue { color: #94b8f2; }
+.caret { display: inline-block; width: 7px; height: 13px; background: #8ed6ae; vertical-align: -2px; }
+.term-fn { display: flex; align-items: center; gap: 4px; padding: 6px 10px; border-top: 1px solid #1b2821; flex: none; }
+.term-key { padding: 5px 10px; border-radius: 7px; background: #15231b; color: #a7bbae; font-family: var(--font-mono); font-size: 10.5px; }
+.term-input { display: flex; align-items: center; gap: 6px; padding: 7px 10px 10px; flex: none; }
+.term-input .box { flex: 1; display: flex; align-items: center; gap: 8px; background: #101b15; border: 1px solid #23342a; border-radius: 11px; padding: 8px 11px; color: #7f9589; font-size: 11.5px; font-family: var(--font-mono); min-height: 38px; }
+.term-send { padding: 7px 12px; border-radius: 9px; background: #24382b; color: #bfe0cb; font-size: 11.5px; font-weight: 600; }
+.approval { margin: 0 14px 8px; border: 1px solid var(--app-accent); background: var(--app-tint); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.approval .a-head { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--app-accent); }
+.approval .cmd { font-family: var(--font-mono); font-size: 11px; color: var(--app-text); background: var(--app-surface); border-radius: 7px; padding: 6px 8px; }
+.approval .a-actions { display: flex; gap: 7px; }
+.approval .a-btn { flex: 1; text-align: center; padding: 6px 8px; border-radius: 8px; font-size: 11.5px; font-weight: 600; background: var(--app-accent); color: var(--app-accent-ink); }
+.approval .a-btn.no { background: var(--app-surface); color: var(--app-soft); border: 1px solid var(--app-border); }
+
+/* ── 导航栏与完整版 ───────────────────────────────────── */
+.rail { width: 94px; flex: none; background: var(--app-surface); border-right: 1px solid var(--app-border); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 8px; }
+.rail-item { width: 66px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 2px; border-radius: 12px; color: var(--app-muted); font-size: 10px; font-weight: 600; position: relative; }
+.rail-item .ic { width: 21px; height: 21px; }
+.rail-item.on { background: var(--app-tint); color: var(--app-accent); }
+.rail-badge { position: absolute; top: 3px; right: 8px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 99px; background: var(--app-accent); color: var(--app-accent-ink); font-size: 9px; display: grid; place-items: center; font-weight: 700; }
+.content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.content-head { display: flex; align-items: center; gap: 14px; padding: 16px 22px 6px; flex: none; }
+.content-head h4 { margin: 0; font-size: 19px; letter-spacing: -.02em; font-weight: 600; }
+.content-head p { margin: 1px 0 0; font-size: 11px; color: var(--app-muted); }
+.cols { flex: 1; display: flex; gap: 18px; padding: 12px 22px 20px; min-height: 0; }
+.col-left { width: 470px; flex: none; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+.col-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+.recent-card { display: flex; align-items: center; gap: 11px; padding: 12px 14px; }
+.recent-card + .recent-card { border-top: 1px solid var(--app-border); }
+
+/* ── 我的 ─────────────────────────────────────────────── */
+.profile-body { flex: 1; display: flex; gap: 18px; padding: 16px 20px 20px; min-height: 0; }
+.profile-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+.identity { display: flex; align-items: center; gap: 14px; padding: 17px; }
+.identity .pic { width: 54px; height: 54px; border-radius: 50%; background: var(--app-accent); color: var(--app-accent-ink); display: grid; place-items: center; font-size: 22px; font-weight: 600; flex: none; }
+.identity b { display: block; font-size: 17px; letter-spacing: -.01em; }
+.identity span { display: block; font-size: 11.5px; color: var(--app-muted); overflow-wrap: anywhere; }
+.setting { display: flex; align-items: center; gap: 12px; padding: 11px 15px; min-height: 52px; }
+.setting + .setting { border-top: 1px solid var(--app-border); }
+.setting .lead { width: 28px; height: 28px; border-radius: 8px; background: var(--app-field); display: grid; place-items: center; color: var(--app-soft); flex: none; }
+.setting .lead .ic { width: 15px; height: 15px; }
+.setting .txt { flex: 1; min-width: 0; }
+.setting .txt b { display: block; font-size: 12.5px; font-weight: 600; }
+.setting .txt span { display: block; font-size: 10.5px; color: var(--app-muted); }
+.switch { width: 36px; height: 21px; border-radius: 99px; background: var(--app-accent); position: relative; flex: none; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 17px; width: 17px; height: 17px; border-radius: 50%; background: var(--app-surface); }
+.section-label { font-size: 11px; font-weight: 600; color: var(--app-soft); padding: 0 2px; }
+.logout { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; border-radius: 13px; border: 1px solid var(--app-border); color: var(--app-soft); font-size: 12.5px; font-weight: 600; }
+.version { text-align: center; font-size: 10.5px; color: var(--app-muted); padding-top: 2px; }
+
+/* ── 标注 ─────────────────────────────────────────────── */
+.annotation { position: absolute; border: 1px dashed var(--app-accent); border-radius: 12px; pointer-events: none; }
+.annotation > .tag {
+  position: absolute; top: -10px; left: 12px; background: var(--app-accent); color: var(--app-accent-ink);
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: .02em;
+  padding: 2px 7px; border-radius: 99px; white-space: nowrap;
+}
+.no-annotations .annotation { display: none; }
+
+/* ── 页脚 ─────────────────────────────────────────────── */
+.notes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.note { display: flex; gap: 11px; padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+.note .n { font-family: var(--font-mono); font-size: 11px; color: var(--accent); padding-top: 1px; }
+.note b { display: block; font-size: 12.5px; margin-bottom: 2px; }
+.note span { display: block; font-size: 11.5px; color: var(--ink-3); line-height: 1.6; }
+.page-foot { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-3); font-family: var(--font-mono); }
+
+/* ── 响应式 ───────────────────────────────────────────── */
+@media (max-width: 1020px) {
+  .specs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mast { grid-template-columns: 1fr; align-items: start; }
+  .controls { align-items: flex-start; }
+}
+@media (max-width: 620px) {
+  .page { padding-block: 26px 52px; }
+  .specs { grid-template-columns: 1fr; }
+  .notes { grid-template-columns: 1fr; }
+  .sec-head { margin-top: 38px; }
+  .fig { margin-bottom: 30px; }
+  .fig-head { grid-template-columns: 30px minmax(0, 1fr); gap: 2px 8px; }
+  .pills { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; scroll-behavior: auto; }
+}
+</style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="2.6"/></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 19.5c1.4-3.4 4-5 7-5s5.6 1.6 7 5"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h15l-3.2-3.2M20 16H5l3.2 3.2"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="m7 9.5 2.8 2.5L7 14.5M12.5 15H17"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20.5 11.5a8.5 8.5 0 0 1-8.5 8.5H4.2L3 21v-9.5A8.5 8.5 0 0 1 11.5 3h.5a8.5 8.5 0 0 1 8.5 8.5Z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.2h7.5A2.5 2.5 0 0 1 21 9.7v7.3a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17Z"/></symbol>
+  <symbol id="i-tune" viewBox="0 0 24 24"><path d="M4 7h8M17 7h3M4 17h4M13 17h7"/><circle cx="14.5" cy="7" r="2.2"/><circle cx="10.5" cy="17" r="2.2"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13.2 2.5 5 13.5h5.6L9.8 21.5l8.4-11h-5.7Z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2.5"/><path d="M9 20h6M12 16.5V20"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M15 6.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h.5"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 13 4.5 4.5L19 7"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18.5h9.5a3.8 3.8 0 0 0 .4-7.6A5.6 5.6 0 0 0 6.2 9.6 4.5 4.5 0 0 0 7 18.5Z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5Z"/></symbol>
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8.5 8.5M18 14v4.5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7M20 4v4.5h-4.5"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="m5.5 17 4.5-4.5 3 3 2.5-2.5 3.5 4"/></symbol>
+  <symbol id="i-bottom" viewBox="0 0 24 24"><path d="M12 4v12M6.5 10.5 12 16l5.5-5.5M5 20h14"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5 5 6v6c0 4.2 2.9 7.2 7 8.5 4.1-1.3 7-4.3 7-8.5V6Z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M3.5 9.5a13 13 0 0 1 17 0M6.8 13a8.4 8.4 0 0 1 10.4 0M10 16.4a3.6 3.6 0 0 1 4 0"/><path d="M12 20h.01" stroke-width="2.4"/></symbol>
+  <symbol id="i-battery" viewBox="0 0 28 24"><rect x="2.5" y="7" width="19" height="10" rx="3"/><path d="M24 10.5v3"/><rect x="5.5" y="10" width="12" height="4" rx="1.2" fill="currentColor" stroke="none"/></symbol>
+</defs></svg>
+
+<div class="page">
+  <header class="mast">
+    <div>
+      <p class="eyebrow">Terminal Buddy · Android Tablet</p>
+      <h1>平板横屏适配预览</h1>
+      <p class="lede">竖屏保持现在的单列布局；横屏平板按需拆分：底部导航改为左侧导航栏，首页拆成「配置 + 会话」，终端 Agent 保留「对话 / 终端」页签，普通对话页保持满宽单栏。</p>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">预览主题</span>
+      <div class="pills" role="group" aria-label="预览主题">
+        <button class="pill" type="button" data-theme-set="auto" aria-pressed="true">跟随系统</button>
+        <button class="pill" type="button" data-theme-set="light" aria-pressed="false">浅色</button>
+        <button class="pill" type="button" data-theme-set="dark" aria-pressed="false">深色</button>
+      </div>
+      <span class="ctl-label">参考线</span>
+      <div class="pills">
+        <button class="pill on" type="button" id="anno-toggle" aria-pressed="true">显示标注</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="specs" aria-label="适配规格">
+    <div class="spec">
+      <span class="spec-k">宽屏判定</span>
+      <span class="spec-v"><code>平板 &amp;&amp; 横屏 &amp;&amp; 窗口 ≥ 600dp</code></span>
+      <span class="spec-n">设备最小宽度 ≥ 600dp 且横屏窗口 ≥ 600dp；手机横屏与分屏窄窗口保持单列。</span>
+    </div>
+    <div class="spec">
+      <span class="spec-k">主导航</span>
+      <span class="spec-v"><code>底部 → 左侧 94dp</code></span>
+      <span class="spec-n">完整版三个一级入口移入侧栏；简版入口保留在顶栏。</span>
+    </div>
+    <div class="spec">
+      <span class="spec-k">内容宽度</span>
+      <span class="spec-v"><code>对话满宽 · 设置 960dp</code></span>
+      <span class="spec-n">对话页横向铺满（左右 ≥ 24dp），单条气泡限宽避免超长行；设置页保持 960dp 居中。</span>
+    </div>
+    <div class="spec">
+      <span class="spec-k">分栏比例</span>
+      <span class="spec-v"><code>仅首页 38 : 62</code></span>
+      <span class="spec-n">终端 Agent 保留「对话 / 终端」页签；对话页满宽单栏，设置页双列。</span>
+    </div>
+  </section>
+
+  <div class="sec-head"><h2>竖屏对照</h2><p>现有布局原样保留</p><span class="sec-rule"></span></div>
+
+  <figure class="fig">
+  <div class="fig-head">
+    <span class="idx">01</span>
+    <div>
+      <h3>竖屏 · 简版首页（现状）</h3>
+      <p>保持现有单列：顶栏、配置卡、会话列表依次向下。横屏改版以这一版为对照，竖屏路径不做任何修改。</p>
+    </div>
+  </div>
+  <div class="device-slot narrow-slot" style="height:735px">
+    <div class="device" data-w="390" data-h="844" style="width:390px;height:844px">
+      <div class="screen">
+        <div class="statusbar"><span>14:32</span><span class="sb-r"><svg class="ic"><use href="#i-wifi"/></svg><svg class="ic"><use href="#i-battery"/></svg></span></div>
+        <div class="appbar" style="border-bottom:0">
+          <div class="brand">
+            <span class="logo">&gt;_</span>
+            <div class="brand-t"><b>Terminal Buddy</b><span>快速开始</span></div>
+          </div>
+          <span class="grow"></span>
+          <button class="icon-btn sm"><svg class="ic"><use href="#i-swap"/></svg></button>
+          <button class="icon-btn sm"><svg class="ic"><use href="#i-person"/></svg></button>
+        </div>
+        <div class="col" style="padding:0 14px 18px;gap:14px;flex:1;min-height:0">
+          <div class="card composer" style="padding:13px;gap:10px">
+            <div class="row"><span class="title-sm">开启新会话</span><span class="grow"></span><span class="spinner"></span></div>
+            <div class="field" style="min-height:44px">
+              <svg class="ic lead"><use href="#i-folder"/></svg>
+              <div class="col grow"><span class="label">工作项目</span><span class="field-v">terminal-buddy</span></div>
+              <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-expand"/></svg>
+            </div>
+            <div class="agent-seg">
+              <div class="agent-opt on"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>Claude</div>
+              <div class="agent-opt"><span class="codex-mark"></span>Codex</div>
+            </div>
+            <div class="field" style="min-height:44px">
+              <svg class="ic lead"><use href="#i-tune"/></svg>
+              <div class="col grow"><span class="label">使用模型</span><span class="field-v">Fable 5.2 · 思考强度 中</span></div>
+              <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-expand"/></svg>
+            </div>
+            <button class="btn"><svg class="ic"><use href="#i-plus"/></svg>开始对话<svg class="ic"><use href="#i-chev"/></svg></button>
+          </div>
+          <div class="mini" style="padding:11px 13px">
+            <div class="mini-head">
+              <span class="label"><svg class="ic" style="width:13px;height:13px"><use href="#i-terminal"/></svg>项目配置</span>
+              <span class="grow"></span><span class="label">3 项</span>
+            </div>
+            <div class="chips">
+              <span class="chip on"><svg class="ic"><use href="#i-open"/></svg>继续 · web-console</span>
+              <span class="chip"><svg class="ic"><use href="#i-play"/></svg>api-server</span>
+              <span class="chip"><svg class="ic"><use href="#i-play"/></svg>docs</span>
+            </div>
+          </div>
+          <div class="tabs">
+            <div class="tab on">已打开<span class="count">3</span></div>
+            <div class="tab">历史会话<span class="count">12</span></div>
+          </div>
+          <div class="card list">
+            <div class="list-row">
+              <span class="avatar"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span></span>
+              <div class="list-t grow"><div class="row gap-6"><b class="grow">重构终端流控</b><span class="tag attn">等待确认</span></div><span>Claude · terminal-buddy · 2 分钟前</span></div>
+              <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+            </div>
+            <div class="list-row">
+              <span class="avatar"><span class="codex-mark"></span></span>
+              <div class="list-t grow"><div class="row gap-6"><b class="grow">Android 平板适配</b><span class="tag run">运行中</span></div><span>Codex · android · 12 分钟前</span></div>
+              <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+            </div>
+            <div class="list-row">
+              <span class="avatar"><svg class="ic" style="color:var(--app-accent)"><use href="#i-terminal"/></svg></span>
+              <div class="list-t grow"><b>生产日志 · web-01</b><span>SSH · /var/log/nginx</span></div>
+              <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+            </div>
+          </div>
+          <div class="foot">只显示当前已打开的会话，点击继续</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+<figure class="fig">
+  <div class="fig-head">
+    <span class="idx">02</span>
+    <div>
+      <h3>横屏 · 简版首页</h3>
+      <p>新会话配置固定在左栏 384dp，已打开与历史会话占据右侧；下拉刷新、长按关闭等交互保持原样。手机横屏宽度不足 600dp 时仍走 01。</p>
+    </div>
+  </div>
+  <div class="device-slot wide-slot" style="height:620px">
+    <div class="device" data-w="1180" data-h="720" style="width:1180px;height:720px">
+      <div class="screen">
+        <div class="statusbar"><span>14:32</span><span class="sb-r"><svg class="ic"><use href="#i-wifi"/></svg><svg class="ic"><use href="#i-battery"/></svg></span></div>
+        <div class="appbar">
+          <div class="brand">
+            <span class="logo">&gt;_</span>
+            <div class="brand-t"><b>Terminal Buddy</b><span>快速开始</span></div>
+          </div>
+          <span class="grow"></span>
+          <button class="icon-btn"><svg class="ic"><use href="#i-swap"/></svg></button>
+          <button class="icon-btn"><svg class="ic"><use href="#i-person"/></svg></button>
+        </div>
+        <div class="home-body">
+          <div class="composer-col">
+            <div class="card composer">
+              <div class="row"><span class="title-sm">开启新会话</span><span class="grow"></span><span class="spinner"></span></div>
+              <div class="field">
+                <svg class="ic lead"><use href="#i-folder"/></svg>
+                <div class="col grow"><span class="label">工作项目</span><span class="field-v">terminal-buddy</span></div>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-expand"/></svg>
+              </div>
+              <div class="field">
+                <svg class="ic lead"><use href="#i-tune"/></svg>
+                <div class="col grow"><span class="label">使用模型</span><span class="field-v">Fable 5.2 · 思考强度 中</span></div>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-expand"/></svg>
+              </div>
+              <div class="agent-seg">
+                <div class="agent-opt on"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>Claude</div>
+                <div class="agent-opt"><span class="codex-mark"></span>Codex</div>
+              </div>
+              <button class="btn"><svg class="ic"><use href="#i-plus"/></svg>开始对话<svg class="ic"><use href="#i-chev"/></svg></button>
+            </div>
+            <div class="mini">
+              <div class="mini-head">
+                <span class="label"><svg class="ic" style="width:13px;height:13px"><use href="#i-terminal"/></svg>项目配置</span>
+                <span class="grow"></span><span class="label">3 项</span>
+              </div>
+              <div class="chips">
+                <span class="chip on"><svg class="ic"><use href="#i-open"/></svg>继续 · web-console</span>
+                <span class="chip"><svg class="ic"><use href="#i-play"/></svg>api-server</span>
+                <span class="chip"><svg class="ic"><use href="#i-play"/></svg>docs</span>
+              </div>
+            </div>
+            <div class="hint-line">横屏固定左栏放配置，右侧列表滚动时左侧不会跟着离开视野。</div>
+          </div>
+          <div class="list-col">
+            <div class="tabs" style="max-width:420px">
+              <div class="tab on">已打开<span class="count">3</span></div>
+              <div class="tab">历史会话<span class="count">12</span></div>
+            </div>
+            <div class="card list">
+              <div class="list-row">
+                <span class="avatar"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span></span>
+                <div class="list-t grow"><div class="row gap-6"><b class="grow">重构终端流控</b><span class="tag attn">等待确认</span></div><span>Claude · terminal-buddy · 2 分钟前</span></div>
+                <span class="tag">待决策 2</span>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+              </div>
+              <div class="list-row">
+                <span class="avatar"><span class="codex-mark"></span></span>
+                <div class="list-t grow"><div class="row gap-6"><b class="grow">Android 平板适配</b><span class="tag run">运行中</span></div><span>Codex · android · 12 分钟前</span></div>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+              </div>
+              <div class="list-row">
+                <span class="avatar"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span></span>
+                <div class="list-t grow"><b>Web 端 WS 重连整理</b><span>Claude · terminal-buddy · 35 分钟前</span></div>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+              </div>
+              <div class="list-row">
+                <span class="avatar"><svg class="ic" style="color:var(--app-accent)"><use href="#i-terminal"/></svg></span>
+                <div class="list-t grow"><b>生产日志 · web-01</b><span>SSH · /var/log/nginx</span></div>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+              </div>
+            </div>
+            <div class="foot">只显示当前已打开的会话，点击继续；长按终端 Agent 可关闭</div>
+          </div>
+        </div>
+        <div class="annotation" style="left:20px;top:104px;width:384px;height:474px"><span class="tag">新会话配置 · 384dp</span></div>
+        <div class="annotation" style="left:424px;top:104px;width:736px;height:474px"><span class="tag">列表区 · 自适应剩余宽度</span></div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+
+  <div class="sec-head"><h2>横屏平板</h2><p>仅在平板横屏、窗口宽度 ≥ 600dp 时启用</p><span class="sec-rule"></span></div>
+
+  <figure class="fig">
+  <div class="fig-head">
+    <span class="idx">03</span>
+    <div>
+      <h3>横屏 · AI 对话</h3>
+      <p>只展示对话本身：消息区横向铺满，用户消息贴右、助手消息贴左；单条气泡限制宽度，避免超长行。会话信息与操作仍在顶栏「更多」里按需打开。</p>
+    </div>
+  </div>
+  <div class="device-slot wide-slot" style="height:620px">
+    <div class="device" data-w="1180" data-h="720" style="width:1180px;height:720px">
+      <div class="screen">
+        <div class="statusbar"><span>14:32</span><span class="sb-r"><svg class="ic"><use href="#i-wifi"/></svg><svg class="ic"><use href="#i-battery"/></svg></span></div>
+        <div class="appbar">
+          <button class="icon-btn sm"><svg class="ic"><use href="#i-back"/></svg></button>
+          <div class="col grow" style="padding-left:2px">
+            <b style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">重构终端流控成配额预占</b>
+            <span class="label">Claude Code · terminal-buddy</span>
+          </div>
+          <span class="tag run">实时</span>
+          <button class="icon-btn sm"><svg class="ic"><use href="#i-more"/></svg></button>
+        </div>
+        <div class="page-body" style="padding:0;justify-content:center">
+          <section class="chat" style="border:0;border-radius:0;background:var(--app-surface)">
+            <div class="chat-scroll" style="padding:18px 24px 6px">
+              <div class="chat-inner">
+                <div class="msg user"><div class="bubble"><p>帮我把桌面端的输出流控改成配额预占，插件侧不要再发回执水位。</p></div></div>
+                <div class="msg">
+                  <span class="avatar"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span></span>
+                  <div class="bubble">
+                    <p>我会分三步改：</p>
+                    <ul>
+                      <li>PTY 出口按 16ms 帧做配额预占，超出部分排队而不是丢弃；</li>
+                      <li>失帧时触发一次 resync，不再依赖插件回执来校准水位；</li>
+                      <li>前端把批量回执合并成空闲回执，减少往返。</li>
+                    </ul>
+                  </div>
+                </div>
+                <div class="tool"><svg class="ic" style="width:14px;height:14px"><use href="#i-terminal"/></svg><span>执行记录 · 4 条</span><span class="mono">rg · cargo check · 2 个文件</span><span class="grow"></span><svg class="ic" style="width:13px;height:13px"><use href="#i-chev"/></svg></div>
+                <div class="msg user"><div class="bubble"><p>失帧时也补一次 resync。</p></div></div>
+                <div class="msg">
+                  <span class="avatar"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span></span>
+                  <div class="bubble"><p>已经把 resync 接在失帧分支上，并补了回归用例：<code>cargo test --lib</code> 428 个用例全部通过。</p></div>
+                </div>
+                <div class="thinking"><span class="pulse"></span>正在整理改动摘要…<span class="mono" style="font-size:10px">12s</span></div>
+              </div>
+            </div>
+            <div class="ctx-strip" style="border-top:0;justify-content:center;padding:7px 24px">
+              <div class="row gap-10" style="width:100%">
+                <span>上下文 64%</span><span class="bar"><i style="width:64%"></i></span><span class="grow"></span><span>128K / 200K</span>
+              </div>
+            </div>
+            <div class="composer-bar" style="padding:8px 24px 12px">
+              <div class="composer-inner">
+                <div class="input">
+                  <span class="ph">给 Claude Code 发消息…</span>
+                  <span class="mini-btn"><svg class="ic"><use href="#i-image"/></svg></span>
+                  <span class="send"><svg class="ic"><use href="#i-up"/></svg></span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+        <div class="annotation" style="left:24px;top:98px;width:1132px;height:500px"><span class="tag">消息区满宽 · 左右 24dp · 两端对齐</span></div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+<figure class="fig">
+  <div class="fig-head">
+    <span class="idx">04</span>
+    <div>
+      <h3>横屏 · 终端 Agent · 对话页签</h3>
+      <p>保留「对话 / 终端」页签切换，不改成分屏：对话页签满宽展示消息与决策卡，切到终端页签再看原终端。</p>
+    </div>
+  </div>
+  <div class="device-slot wide-slot" style="height:620px">
+    <div class="device" data-w="1180" data-h="720" style="width:1180px;height:720px">
+      <div class="screen">
+        <div class="statusbar"><span>14:32</span><span class="sb-r"><svg class="ic"><use href="#i-wifi"/></svg><svg class="ic"><use href="#i-battery"/></svg></span></div>
+        <div class="appbar">
+          <button class="icon-btn sm"><svg class="ic"><use href="#i-back"/></svg></button>
+          <div class="col grow" style="padding-left:2px">
+            <b style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">重构终端流控 · 终端会话</b>
+            <span class="label">Claude Code · zsh · terminal-buddy</span>
+          </div>
+          <div class="tabs" style="width:196px;flex:none">
+            <div class="tab on"><svg class="ic sm"><use href="#i-chat"/></svg>对话</div>
+            <div class="tab"><svg class="ic sm"><use href="#i-terminal"/></svg>终端</div>
+          </div>
+          <button class="icon-btn sm"><svg class="ic"><use href="#i-more"/></svg></button>
+        </div>
+        <section class="chat" style="border:0;border-radius:0;flex:1;min-height:0">
+          <div class="row" style="padding:8px 24px;border-bottom:1px solid var(--app-border);gap:8px;flex:none">
+            <svg class="ic sm" style="color:var(--app-accent)"><use href="#i-chat"/></svg>
+            <span class="pane-title">对话</span>
+            <span class="tag run">镜像已连接</span>
+            <span class="grow"></span>
+            <span class="label">只读转录 · 可受限回复</span>
+          </div>
+          <div class="chat-scroll" style="padding:16px 24px 4px">
+            <div class="chat-inner" style="gap:13px">
+              <div class="msg user"><div class="bubble"><p>跑一下流控的回归用例，失败就贴出前 20 行日志。</p></div></div>
+              <div class="msg">
+                <span class="avatar"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span></span>
+                <div class="bubble"><p>已在终端执行 <code>npm run test:flow</code>，16 个用例全部通过，没有失败日志。</p></div>
+              </div>
+              <div class="tool"><svg class="ic" style="width:14px;height:14px"><use href="#i-terminal"/></svg><span>执行记录 · 3 条</span><span class="mono">vitest · cargo test · 完整输出在终端页签</span><span class="grow"></span><svg class="ic" style="width:13px;height:13px"><use href="#i-chev"/></svg></div>
+              <div class="msg user"><div class="bubble"><p>失帧的分支也覆盖到了吗？</p></div></div>
+              <div class="msg">
+                <span class="avatar"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span></span>
+                <div class="bubble"><p>覆盖到了：<code>resync.test.ts</code> 新增了丢帧用例，16 个前端用例与 428 个 Rust 用例全部通过。</p></div>
+              </div>
+              <div class="thinking"><span class="pulse"></span>正在等待下一条回复…<span class="mono" style="font-size:10px">6s</span></div>
+            </div>
+          </div>
+          <div class="approval" style="margin:6px 24px 8px;max-width:680px">
+            <div class="a-head"><svg class="ic" style="width:14px;height:14px"><use href="#i-shield"/></svg>等待确认</div>
+            <div class="cmd">npm run test:flow -- --update-snapshots</div>
+            <div class="a-actions"><span class="a-btn">允许执行</span><span class="a-btn no">跳过</span></div>
+          </div>
+          <div class="composer-bar" style="padding:8px 24px 12px">
+            <div class="composer-inner">
+              <div class="input" style="min-height:44px">
+                <span class="ph">回复这条终端会话…</span>
+                <span class="send" style="width:32px;height:32px"><svg class="ic"><use href="#i-up"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </section>
+        <div class="annotation" style="right:58px;top:40px;width:196px;height:38px"><span class="tag">页签切换保留</span></div>
+        <div class="annotation" style="left:24px;top:128px;width:1132px;height:352px"><span class="tag">对话页签 · 满宽两端对齐</span></div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+<figure class="fig">
+  <div class="fig-head">
+    <span class="idx">05</span>
+    <div>
+      <h3>横屏 · 终端 Agent · 终端页签</h3>
+      <p>切到终端页签后，原终端视图占满整页；快捷键、复制与滚动到底部保持现有位置。页签切换仍会断开对话镜像，行为不变。</p>
+    </div>
+  </div>
+  <div class="device-slot wide-slot" style="height:620px">
+    <div class="device" data-w="1180" data-h="720" style="width:1180px;height:720px">
+      <div class="screen">
+        <div class="statusbar"><span>14:32</span><span class="sb-r"><svg class="ic"><use href="#i-wifi"/></svg><svg class="ic"><use href="#i-battery"/></svg></span></div>
+        <div class="appbar">
+          <button class="icon-btn sm"><svg class="ic"><use href="#i-back"/></svg></button>
+          <div class="col grow" style="padding-left:2px">
+            <b style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">重构终端流控 · 终端会话</b>
+            <span class="label">Claude Code · zsh · terminal-buddy</span>
+          </div>
+          <div class="tabs" style="width:196px;flex:none">
+            <div class="tab"><svg class="ic sm"><use href="#i-chat"/></svg>对话</div>
+            <div class="tab on"><svg class="ic sm"><use href="#i-terminal"/></svg>终端</div>
+          </div>
+          <button class="icon-btn sm"><svg class="ic"><use href="#i-more"/></svg></button>
+        </div>
+        <div class="term-shell">
+          <div class="pane-head">
+            <span class="dot" style="background:#8ed6ae"></span>
+            <span class="pane-title">终端 · zsh</span>
+            <span class="label" style="color:#7f9589">已连接 · 120 × 44</span>
+            <span class="grow"></span>
+            <span class="icon-btn sm" style="color:#9db0a4"><svg class="ic sm"><use href="#i-copy"/></svg></span>
+            <span class="icon-btn sm" style="color:#9db0a4"><svg class="ic sm"><use href="#i-bottom"/></svg></span>
+            <span class="icon-btn sm" style="color:#9db0a4"><svg class="ic sm"><use href="#i-close"/></svg></span>
+          </div>
+          <div class="term-body">
+            <div class="ln"><span class="t-green">$</span> npm run test:flow</div>
+            <div class="ln t-dim">&gt; terminal-buddy@1.11.0 test:flow</div>
+            <div class="ln t-dim">&gt; vitest run --reporter=dot</div>
+            <div class="ln">&nbsp;</div>
+            <div class="ln"><span class="t-green"> ✓</span> src/flow/quota.test.ts <span class="t-dim">(8)</span></div>
+            <div class="ln"><span class="t-green"> ✓</span> src/flow/resync.test.ts <span class="t-dim">(5)</span></div>
+            <div class="ln"><span class="t-green"> ✓</span> src/flow/batch.test.ts <span class="t-dim">(3)</span></div>
+            <div class="ln">&nbsp;</div>
+            <div class="ln"><span class="t-green">Tests</span> <span class="t-green">16 passed</span> <span class="t-dim">(1.2s)</span></div>
+            <div class="ln">&nbsp;</div>
+            <div class="ln"><span class="t-green">$</span> cargo test --lib <span class="t-cyan">--</span> flow::</div>
+            <div class="ln t-yellow">running 428 tests</div>
+            <div class="ln">test flow::quota::reserves_per_frame ... <span class="t-green">ok</span></div>
+            <div class="ln">test flow::resync::on_drop ... <span class="t-green">ok</span></div>
+            <div class="ln">test flow::batch::idle_ack ... <span class="t-green">ok</span></div>
+            <div class="ln">&nbsp;</div>
+            <div class="ln"><span class="t-green">test result: ok.</span> 428 passed; 0 failed</div>
+            <div class="ln">&nbsp;</div>
+            <div class="ln"><span class="t-green">$</span> <span class="caret"></span></div>
+          </div>
+          <div class="term-fn">
+            <span class="term-key">Ctrl+C</span><span class="term-key">Tab</span><span class="term-key">回车</span>
+            <span class="grow"></span>
+            <span class="term-key">Esc</span><span class="term-key">↑</span><span class="term-key">↓</span>
+          </div>
+          <div class="term-input">
+            <div class="box">输入命令或回答</div>
+            <span class="term-send">发送</span>
+          </div>
+        </div>
+        <div class="annotation" style="right:58px;top:40px;width:196px;height:38px"><span class="tag">页签切换保留</span></div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+<figure class="fig">
+  <div class="fig-head">
+    <span class="idx">06</span>
+    <div>
+      <h3>横屏 · 完整版首页</h3>
+      <p>底部三栏导航改为左侧 94dp 导航栏，图标与文字纵向排列；快速开始内部再拆「配置 + 最近任务」两列，减少纵向滚动。</p>
+    </div>
+  </div>
+  <div class="device-slot wide-slot" style="height:620px">
+    <div class="device" data-w="1180" data-h="720" style="width:1180px;height:720px">
+      <div class="screen">
+        <div class="statusbar"><span>14:32</span><span class="sb-r"><svg class="ic"><use href="#i-wifi"/></svg><svg class="ic"><use href="#i-battery"/></svg></span></div>
+        <div class="row" style="flex:1;min-height:0">
+          <nav class="rail">
+            <span class="logo" style="width:36px;height:36px;border-radius:11px;font-size:12px;margin-bottom:10px">&gt;_</span>
+            <div class="rail-item on"><svg class="ic"><use href="#i-bolt"/></svg>快速开始</div>
+            <div class="rail-item"><svg class="ic"><use href="#i-chat"/></svg>会话<span class="rail-badge">12</span></div>
+            <div class="rail-item"><svg class="ic"><use href="#i-person"/></svg>我的</div>
+            <span class="grow"></span>
+            <div class="rail-item"><svg class="ic"><use href="#i-sun"/></svg>外观</div>
+          </nav>
+          <div class="content">
+            <div class="content-head">
+              <div class="col grow">
+                <h4>快速开始</h4>
+                <p>从一个新想法开始</p>
+              </div>
+              <span class="row gap-6 label"><span class="dot"></span>实时连接</span>
+              <button class="icon-btn"><svg class="ic"><use href="#i-refresh"/></svg></button>
+            </div>
+            <div class="cols">
+              <div class="col-left">
+                <div class="card composer" style="padding:16px;gap:12px">
+                  <div class="row"><span class="title-sm">开启新会话</span><span class="grow"></span><button class="icon-btn sm"><svg class="ic sm"><use href="#i-more"/></svg></button></div>
+                  <div class="field">
+                    <svg class="ic lead"><use href="#i-folder"/></svg>
+                    <div class="col grow"><span class="label">工作项目</span><span class="field-v">terminal-buddy</span></div>
+                    <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-expand"/></svg>
+                  </div>
+                  <div class="col gap-6">
+                    <span class="label">选择助手</span>
+                    <div class="agent-seg">
+                      <div class="agent-opt on"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>Claude Code</div>
+                      <div class="agent-opt"><span class="codex-mark"></span>Codex</div>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <svg class="ic lead"><use href="#i-tune"/></svg>
+                    <div class="col grow"><span class="label">使用模型</span><span class="field-v">Fable 5.2 · 思考强度 中</span></div>
+                    <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-expand"/></svg>
+                  </div>
+                  <button class="btn"><svg class="ic"><use href="#i-plus"/></svg>开始对话<svg class="ic"><use href="#i-chev"/></svg></button>
+                </div>
+                <div class="mini">
+                  <div class="mini-head">
+                    <span class="label"><svg class="ic" style="width:13px;height:13px"><use href="#i-terminal"/></svg>项目配置</span>
+                    <span class="grow"></span><span class="label">3 项</span>
+                  </div>
+                  <div class="chips">
+                    <span class="chip on"><svg class="ic"><use href="#i-open"/></svg>继续 · web-console</span>
+                    <span class="chip"><svg class="ic"><use href="#i-play"/></svg>api-server</span>
+                    <span class="chip"><svg class="ic"><use href="#i-play"/></svg>docs</span>
+                  </div>
+                </div>
+              </div>
+              <div class="col-right">
+                <div class="row" style="padding:0 2px">
+                  <span class="title-sm">最近任务</span><span class="grow"></span>
+                  <span class="label row gap-4" style="color:var(--app-accent)">查看全部<svg class="ic sm"><use href="#i-chev"/></svg></span>
+                </div>
+                <div class="card list">
+                  <div class="recent-card">
+                    <span class="avatar"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span></span>
+                    <div class="list-t grow"><div class="row gap-6"><b class="grow">重构终端流控</b><span class="tag attn">进行中</span></div><span>Claude · terminal-buddy · 2 分钟前</span></div>
+                    <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+                  </div>
+                  <div class="recent-card">
+                    <span class="avatar"><span class="codex-mark"></span></span>
+                    <div class="list-t grow"><b>修复 WS 重连丢帧</b><span>Codex · terminal-buddy · 今天 11:20</span></div>
+                    <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+                  </div>
+                  <div class="recent-card">
+                    <span class="avatar"><span class="agent-logo claude-mark"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span></span>
+                    <div class="list-t grow"><b>调度器时区处理</b><span>Claude · terminal-buddy · 昨天 18:42</span></div>
+                    <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+                  </div>
+                  <div class="recent-card">
+                    <span class="avatar"><span class="codex-mark"></span></span>
+                    <div class="list-t grow"><b>Docker 部署脚本</b><span>Codex · scripts · 昨天 09:15</span></div>
+                    <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+                  </div>
+                </div>
+                <div class="card" style="padding:12px 14px;display:flex;align-items:center;gap:10px">
+                  <svg class="ic" style="color:var(--app-accent)"><use href="#i-cloud"/></svg>
+                  <div class="grow col"><b style="font-size:12px;font-weight:600">服务端 tb.example.com</b><span class="label">已连接 · 2 个终端运行中</span></div>
+                  <span class="tag run">正常</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="annotation" style="left:12px;top:42px;width:70px;height:666px"><span class="tag">导航栏 · 94dp</span></div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+<figure class="fig">
+  <div class="fig-head">
+    <span class="idx">07</span>
+    <div>
+      <h3>横屏 · 我的</h3>
+      <p>二级页保持顶栏返回；内容改为两列，身份与偏好居左，账号服务与退出居右，横屏下不再需要长距离滚动。</p>
+    </div>
+  </div>
+  <div class="device-slot wide-slot" style="height:620px">
+    <div class="device" data-w="1180" data-h="720" style="width:1180px;height:720px">
+      <div class="screen">
+        <div class="statusbar"><span>14:32</span><span class="sb-r"><svg class="ic"><use href="#i-wifi"/></svg><svg class="ic"><use href="#i-battery"/></svg></span></div>
+        <div class="appbar">
+          <button class="icon-btn sm"><svg class="ic"><use href="#i-back"/></svg></button>
+          <b style="font-size:14px;font-weight:600;padding-left:2px">我的</b>
+          <span class="grow"></span>
+          <span class="tag">简版</span>
+        </div>
+        <div class="profile-body">
+          <div class="profile-col">
+            <div class="card identity">
+              <span class="pic">A</span>
+              <div class="grow">
+                <b>admin</b>
+                <span>https://tb.example.com:9600</span>
+                <span class="label" style="margin-top:2px">当前登录账号</span>
+              </div>
+              <span class="chip">切换服务端</span>
+            </div>
+            <span class="section-label">偏好设置</span>
+            <div class="card">
+              <div class="setting">
+                <span class="lead"><svg class="ic"><use href="#i-bolt"/></svg></span>
+                <div class="txt"><b>界面模式</b><span>简版 · 只保留快速开始</span></div>
+                <span class="switch"></span>
+              </div>
+              <div class="setting">
+                <span class="lead"><svg class="ic"><use href="#i-sun"/></svg></span>
+                <div class="txt"><b>主题</b><span>深色</span></div>
+                <span class="label">跟随系统</span>
+              </div>
+              <div class="setting">
+                <span class="lead"><svg class="ic"><use href="#i-tune"/></svg></span>
+                <div class="txt"><b>皮肤</b><span>松柏绿</span></div>
+                <span class="row gap-4">
+                  <span style="width:14px;height:14px;border-radius:50%;background:#206c54"></span>
+                  <span style="width:14px;height:14px;border-radius:50%;background:#3562bd"></span>
+                  <span style="width:14px;height:14px;border-radius:50%;background:#7742c2"></span>
+                </span>
+              </div>
+              <div class="setting">
+                <span class="lead"><svg class="ic"><use href="#i-chat"/></svg></span>
+                <div class="txt"><b>通知</b><span>任务进度、决策与完成提醒</span></div>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+              </div>
+              <div class="setting">
+                <span class="lead"><svg class="ic"><use href="#i-up"/></svg></span>
+                <div class="txt"><b>发送方式</b><span>排队发送 · 当前回合完成后继续</span></div>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+              </div>
+            </div>
+          </div>
+          <div class="profile-col">
+            <span class="section-label">账号与服务</span>
+            <div class="card">
+              <div class="setting">
+                <span class="lead"><svg class="ic"><use href="#i-person"/></svg></span>
+                <div class="txt"><b>账号切换</b><span>2 个已保存账号</span></div>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+              </div>
+              <div class="setting">
+                <span class="lead"><svg class="ic"><use href="#i-cloud"/></svg></span>
+                <div class="txt"><b>服务信息</b><span>连接地址、服务状态与应用版本</span></div>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+              </div>
+              <div class="setting">
+                <span class="lead"><svg class="ic"><use href="#i-refresh"/></svg></span>
+                <div class="txt"><b>在线更新</b><span>免登录连接更新服务，编译、下载并安装</span></div>
+                <svg class="ic sm" style="color:var(--app-muted)"><use href="#i-chev"/></svg>
+              </div>
+            </div>
+            <div class="card" style="padding:13px 15px;display:flex;align-items:center;gap:12px">
+              <span class="lead" style="width:30px;height:30px;border-radius:9px;background:var(--app-field);display:grid;place-items:center;color:var(--app-accent)"><svg class="ic"><use href="#i-shield"/></svg></span>
+              <div class="grow"><b style="display:block;font-size:12.5px">通知权限已开启</b><span class="label">任务完成、等待决策时推送</span></div>
+              <span class="tag run">已允许</span>
+            </div>
+            <span class="grow"></span>
+            <div class="logout"><svg class="ic sm"><use href="#i-back"/></svg>退出当前账号</div>
+            <div class="version">Terminal Buddy · 版本 1.0.37</div>
+          </div>
+        </div>
+        <div class="annotation" style="left:20px;top:104px;width:552px;height:590px"><span class="tag">身份与偏好</span></div>
+        <div class="annotation" style="left:588px;top:104px;width:572px;height:590px"><span class="tag">账号、服务与退出</span></div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+
+  <div class="sec-head"><h2>实现约定</h2><p>新增分支只在宽屏生效</p><span class="sec-rule"></span></div>
+  <div class="notes">
+    <div class="note"><span class="n">01</span><div><b>尺寸判定集中在根节点</b><span>用 <code>LocalConfiguration</code> 的 <code>smallestScreenWidthDp</code>、<code>screenWidthDp</code> 与方向计算一次 <code>tabletLandscape</code>，各页面复用同一判断。</span></div></div>
+    <div class="note"><span class="n">02</span><div><b>状态与 ViewModel 不重建</b><span>分栏与双列布局复用现有 ViewModel 和 <code>rememberSaveable</code> key；旋转只切换布局，不重置会话、滚动位置和输入草稿。</span></div></div>
+    <div class="note"><span class="n">03</span><div><b>页签行为不变</b><span>终端 Agent 仍用「对话 / 终端」页签切换，镜像 WS 只在对话页签保持；横屏只调整内容宽度与顶栏，不新增分屏层级。</span></div></div>
+    <div class="note"><span class="n">04</span><div><b>竖屏路径零改动</b><span>宽屏布局包在独立分支中，竖屏组合顺序、内边距与现有测试保持不变，便于回退与对比。</span></div></div>
+  </div>
+
+  <footer class="page-foot">
+    <span>Terminal Buddy · Android · 平板横屏适配 · 设计预览</span>
+    <span>竖屏不变 / 横屏 ≥ 600dp 启用</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+
+  function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  var savedTheme = safeGet('tb-tablet-theme') || 'auto';
+  function applyTheme(mode) {
+    if (mode === 'dark' || mode === 'light') root.setAttribute('data-theme', mode);
+    else root.removeAttribute('data-theme');
+    document.querySelectorAll('[data-theme-set]').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-theme-set') === mode));
+    });
+  }
+  document.querySelectorAll('[data-theme-set]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var mode = b.getAttribute('data-theme-set');
+      applyTheme(mode);
+      safeSet('tb-tablet-theme', mode);
+    });
+  });
+  applyTheme(savedTheme);
+
+  var anno = document.getElementById('anno-toggle');
+  var savedAnno = safeGet('tb-tablet-anno');
+  function applyAnno(on) {
+    document.body.classList.toggle('no-annotations', !on);
+    anno.classList.toggle('on', on);
+    anno.setAttribute('aria-pressed', String(on));
+  }
+  applyAnno(savedAnno !== 'off');
+  anno.addEventListener('click', function () {
+    var on = anno.getAttribute('aria-pressed') !== 'true';
+    applyAnno(on);
+    safeSet('tb-tablet-anno', on ? 'on' : 'off');
+  });
+
+  var slots = Array.prototype.slice.call(document.querySelectorAll('.device-slot'));
+  function fit() {
+    slots.forEach(function (slot) {
+      var dev = slot.querySelector('.device');
+      if (!dev) return;
+      var w = parseFloat(dev.dataset.w) || 1180;
+      var h = parseFloat(dev.dataset.h) || 720;
+      var avail = slot.clientWidth;
+      if (!avail) return;
+      var scale = Math.min(1, avail / w);
+      dev.style.transform = 'scale(' + scale + ')';
+      slot.style.height = Math.round(h * scale) + 'px';
+    });
+  }
+  window.addEventListener('resize', fit, { passive: true });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+  requestAnimationFrame(fit);
+  setTimeout(fit, 120);
+})();
+</script>

@@ -1,0 +1,2313 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TerminalBuddy · ACP 升级前后体验对比预览</title>
+<style>
+/* ───────────────────────────────────────────────────────────────────────────
+   沿用 TerminalBuddy 设计 Token（深色默认 + 可切换浅色）
+   零外部依赖：所有字体、图标、交互脚本均内联，可离线直接打开预览
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+  --bg-page: #0d0f11;
+  --bg-primary: #181a1d;
+  --bg-secondary: #202226;
+  --bg-tertiary: #2a2d31;
+  --bg-elevated: #25282c;
+  --text-primary: #e3e5e8;
+  --text-secondary: #9aa0a8;
+  --text-tertiary: #6f767f;
+  --accent: #4b95e9;
+  --accent-hover: #62a4ed;
+  --border: #34383d;
+  --border-subtle: #2b2f33;
+  --success: #55b988;
+  --warning: #d9a441;
+  --danger: #ef6b73;
+  --agent: #a78bfa;
+  --bubble-user: #25364a;
+  --bubble-ai: #1b1e22;
+  --bubble-tool: #15171a;
+  --shadow-window: 0 24px 68px rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 10px 28px rgba(0, 0, 0, 0.35);
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #dfe3e8;
+  --bg-primary: #f3f4f6;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e9ebee;
+  --bg-elevated: #ffffff;
+  --text-primary: #24272c;
+  --text-secondary: #5c636c;
+  --text-tertiary: #848b94;
+  --accent: #176fbd;
+  --accent-hover: #0d62aa;
+  --border: #d4d8de;
+  --border-subtle: #e4e7ec;
+  --success: #208258;
+  --warning: #a06b10;
+  --danger: #c83e48;
+  --agent: #7c5ce0;
+  --bubble-user: #dcebfa;
+  --bubble-ai: #f6f7f9;
+  --bubble-tool: #f1f3f5;
+  --shadow-window: 0 20px 56px rgba(24, 30, 38, 0.16);
+  --shadow-card: 0 8px 24px rgba(24, 30, 38, 0.12);
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px 14px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+code, pre, .mono {
+  font-family: var(--font-mono);
+}
+
+/* ── 顶部预览控制栏 ──────────────────────────────────────────────────────── */
+.preview-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.preview-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.preview-brand strong {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.segmented button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.segmented button:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.segmented button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-primary));
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.mode-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  display: inline-block;
+}
+.mode-dot.legacy { background: var(--warning); }
+.mode-dot.acp { background: var(--success); }
+
+/* ── 主窗口外壳 ───────────────────────────────────────────────────────────── */
+.app-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-window);
+  overflow: hidden;
+}
+
+.titlebar {
+  flex: 0 0 38px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  user-select: none;
+}
+
+.win-dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.win-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--border);
+}
+.win-dots span:nth-child(1) { background: #ef6b73; }
+.win-dots span:nth-child(2) { background: #d9a441; }
+.win-dots span:nth-child(3) { background: #55b988; }
+
+.titlebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.titlebar-pill {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.titlebar-pill.is-acp {
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+.titlebar-pill.is-legacy {
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
+}
+
+/* ── 5 大场景标签页导航 ───────────────────────────────────────────────────── */
+.scenario-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-x: auto;
+}
+
+.scenario-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.scenario-tab:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.scenario-tab[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-primary));
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tab-num {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-secondary);
+}
+.scenario-tab[aria-selected="true"] .tab-num {
+  background: var(--accent);
+  color: #fff;
+}
+
+.tab-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── 通用卡片与排版组件 ───────────────────────────────────────────────────── */
+.banner {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.banner-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.banner-block.boundary {
+  border-left: 3px solid var(--warning);
+}
+.banner-block.same-agent {
+  border-left: 3px solid var(--accent);
+}
+.banner-block.cross-agent {
+  border-left: 3px solid var(--success);
+}
+
+.banner-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.banner-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.split-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.38fr) minmax(300px, 0.92fr);
+  gap: 14px;
+  min-height: 520px;
+}
+
+.split-equal {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 1020px) {
+  .split-grid, .split-equal {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+}
+
+.panel-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-card-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+.btn:hover { background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-tertiary)); }
+.btn:disabled { opacity: 0.48; cursor: not-allowed; }
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-success {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  border-color: color-mix(in srgb, var(--success) 50%, transparent);
+  color: var(--success);
+  font-weight: 600;
+}
+.btn-danger {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+}
+.btn-sm { padding: 3px 8px; font-size: 11.5px; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-secondary);
+}
+.badge.ok { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
+.badge.warn { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+.badge.err { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+.badge.accent { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.badge.agent { background: color-mix(in srgb, var(--agent) 18%, transparent); color: var(--agent); }
+
+/* ── 仿真聊天窗口（复用 AgentChat 风格）─────────────────────────────────────── */
+.chat-window {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  min-height: 500px;
+  position: relative;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  flex-wrap: wrap;
+}
+
+.chat-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.agent-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.chat-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.chat-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.config-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 14px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+}
+
+.config-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+}
+
+.config-select {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.config-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-messages {
+  flex: 1 1 auto;
+  min-height: 220px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 90%;
+  padding: 8px 11px;
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  border: 1px solid var(--border-subtle);
+}
+.msg.user {
+  align-self: flex-end;
+  background: var(--bubble-user);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--bubble-ai);
+}
+.msg.tool {
+  align-self: flex-start;
+  background: var(--bubble-tool);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  width: 100%;
+  max-width: 100%;
+}
+.msg.error-toast {
+  align-self: stretch;
+  max-width: 100%;
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary));
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+  font-size: 12px;
+}
+.msg-meta {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.handoff-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+  padding: 7px 11px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--agent) 13%, var(--bg-primary));
+  border: 1px dashed color-mix(in srgb, var(--agent) 45%, transparent);
+  font-size: 11.5px;
+  color: var(--text-primary);
+}
+.handoff-divider .detail {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+/* ── 思考气泡 & Plan 卡片 ─────────────────────────────────────────────────── */
+.thinking-bar {
+  margin: 0 14px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--agent) 10%, var(--bg-primary));
+  border: 1px solid color-mix(in srgb, var(--agent) 28%, transparent);
+  font-size: 11.5px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--agent);
+  font-weight: 600;
+}
+.thinking-preview {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thinking-bar.expanded .thinking-preview {
+  white-space: pre-wrap;
+  overflow: visible;
+}
+
+.plan-card {
+  margin: 8px 14px 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+}
+.plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.plan-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 4px 10px;
+}
+.plan-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+.plan-item.done { color: var(--text-tertiary); text-decoration: line-through; }
+.plan-item.doing { color: var(--accent); font-weight: 600; }
+
+/* ── 悬浮审批/Elicitation 卡片 ────────────────────────────────────────────── */
+.approval-float {
+  margin: 8px 14px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warning) 10%, var(--bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--warning) 48%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.approval-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--warning);
+}
+.approval-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.choice-chip {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.choice-chip.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-primary));
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── 输入区 + / 命令弹窗 ──────────────────────────────────────────────────── */
+.composer-wrap {
+  position: relative;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+
+.slash-popover {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: calc(100% - 4px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 6px;
+  z-index: 20;
+  max-height: 190px;
+  overflow-y: auto;
+}
+.slash-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-size: 12px;
+}
+.slash-item:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.slash-item .cmd { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+.slash-item .hint { color: var(--text-tertiary); font-size: 11px; }
+
+.composer-box {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.composer-input {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 12.5px;
+  outline: none;
+}
+.composer-input:focus { border-color: var(--accent); }
+
+/* ── 跨 Agent 接力抽屉（模态浮层）──────────────────────────────────────── */
+.handoff-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.56);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 30;
+}
+.handoff-modal {
+  width: min(460px, 100%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-window);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.handoff-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.handoff-checklist label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+.handoff-checklist small {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+/* ── JSON-RPC 报文与状态透视 ──────────────────────────────────────────────── */
+.rpc-log {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 11.2px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.rpc-log .k { color: var(--accent); }
+.rpc-log .s { color: var(--success); }
+.rpc-log .w { color: var(--warning); }
+
+/* ── 对比表格 ─────────────────────────────────────────────────────────────── */
+.cmp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.cmp-table th, .cmp-table td {
+  text-align: left;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+.cmp-table th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  background: var(--bg-primary);
+  font-size: 11.5px;
+}
+
+/* ── Tab 2: Registry & Agent 卡片 ────────────────────────────────────────── */
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+}
+.agent-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.agent-card:hover { border-color: var(--border); }
+.agent-card.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-primary));
+}
+.agent-card.disabled-card {
+  opacity: 0.62;
+}
+.agent-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.agent-card-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+  font-size: 12.5px;
+}
+.agent-card-desc {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+/* ── Tab 4: 进程拓扑 & 终端 Dock ──────────────────────────────────────────── */
+.proc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.proc-node {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.proc-node-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+}
+.session-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.session-pill {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.term-dock {
+  background: #0b0d10;
+  color: #d8dee9;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow: hidden;
+}
+.term-dock-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: #14181e;
+  border-bottom: 1px solid #252b34;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+}
+.term-dock-body {
+  padding: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.ansi-green { color: #55b988; }
+.ansi-cyan { color: #67c7eb; }
+.ansi-yellow { color: #e5c07b; }
+.ansi-dim { color: #7b8494; }
+
+/* ── Tab 5: 短板警示卡 ────────────────────────────────────────────────────── */
+.shortcoming-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+.shortcoming-item {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 8%, var(--bg-primary));
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  font-size: 12px;
+}
+.shortcoming-item strong {
+  display: block;
+  color: var(--warning);
+  margin-bottom: 4px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.field-input {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+</style>
+</head>
+<body>
+
+  <!-- 顶部预览工具条 -->
+  <header class="preview-bar">
+    <div class="preview-brand">
+      <strong>TerminalBuddy</strong>
+      <span>·</span>
+      <span>ACP（Agent Client Protocol）升级前后体验对比预览</span>
+    </div>
+
+    <div class="preview-controls">
+      <div class="segmented" role="group" aria-label="对比状态切换">
+        <button type="button" id="btn-mode-legacy" aria-pressed="false">
+          <span class="mode-dot legacy"></span>现状（无 ACP）
+        </button>
+        <button type="button" id="btn-mode-acp" aria-pressed="true">
+          <span class="mode-dot acp"></span>升级 ACP 后
+        </button>
+      </div>
+
+      <div class="segmented" role="group" aria-label="主题切换">
+        <button type="button" id="btn-theme-dark" aria-pressed="true">深色</button>
+        <button type="button" id="btn-theme-light" aria-pressed="false">浅色</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主应用窗口模拟 -->
+  <main class="app-shell">
+    <div class="titlebar">
+      <div class="win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+      <span class="titlebar-title">TerminalBuddy 工作台预览 · D:\terminal-buddy</span>
+      <span class="titlebar-pill is-acp" id="titlebar-mode-pill">已启用 ACP 统一协议层 + 直连混合驱动</span>
+      <span class="badge" style="margin-left:auto">离线交互原型 · 点击各功能可直接体验</span>
+    </div>
+
+    <!-- 5 大场景标签 -->
+    <nav class="scenario-tabs" role="tablist" aria-label="ACP 体验对比场景">
+      <button class="scenario-tab" role="tab" id="tab-btn-1" aria-selected="true" data-tab="1">
+        <span class="tab-num">1</span>跨 Agent 恢复与接力会话
+      </button>
+      <button class="scenario-tab" role="tab" id="tab-btn-2" aria-selected="false" data-tab="2">
+        <span class="tab-num">2</span>多 Agent · Registry · 动态配置
+      </button>
+      <button class="scenario-tab" role="tab" id="tab-btn-3" aria-selected="false" data-tab="3">
+        <span class="tab-num">3</span>思考流 · Plan · / 补全 · 统一审批
+      </button>
+      <button class="scenario-tab" role="tab" id="tab-btn-4" aria-selected="false" data-tab="4">
+        <span class="tab-num">4</span>进程池资源 &amp; 终端能力托管
+      </button>
+      <button class="scenario-tab" role="tab" id="tab-btn-5" aria-selected="false" data-tab="5">
+        <span class="tab-num">5</span>全局差距总览与务实边界
+      </button>
+    </nav>
+
+    <!-- ═══════════════ TAB 1: 跨 Agent 恢复与接力 ═══════════════ -->
+    <section class="tab-panel" id="panel-1" role="tabpanel">
+      <div class="banner">
+        <div class="banner-block boundary">
+          <div class="banner-label"><span class="badge warn">核心结论 / 协议边界</span>ACP 能否直接「跨 Agent 原生恢复」？</div>
+          <div class="banner-desc">
+            <strong>不能直接用底层会话 ID 原生恢复。</strong>ACP 的 <code>session/load(sessionId)</code> 由单个 Agent 自己持久化上下文（Claude 存 <code>~/.claude/projects</code>、Codex 存 <code>~/.codex/sessions</code>、Antigravity 存私有脑区），各家内部工具链与 KV 缓存互不兼容。
+          </div>
+        </div>
+        <div class="banner-block same-agent">
+          <div class="banner-label"><span class="badge accent">能力 A · 同 Agent 域内</span>无损恢复 + 会话内热切模型/模式</div>
+          <div class="banner-desc">
+            同 Agent 下任意跨端恢复走标准 <code>session/load</code>；同一会话中途想换模型、推理强度或权限模式，直接发 <code>session/set_config_option</code>，<strong>不杀进程、不丢上下文</strong>（打破现状 Codex 不能切模型的限制）。
+          </div>
+        </div>
+        <div class="banner-block cross-agent">
+          <div class="banner-label"><span class="badge ok">能力 B · 跨 Agent 接力</span>一键结构化交接（Handoff / Fork）</div>
+          <div class="banner-desc">
+            正因为 ACP 让消息、<code>Plan</code>、文件变更与审批决策都以<strong>统一结构</strong>沉淀在 <code>AiSession</code>，升级后可实现「一键把当前 Codex 会话接力给 Antigravity / Claude / Gemini」——后端自动创建新目标会话并注入结构化交接包，保留 90%+ 任务语义。
+          </div>
+        </div>
+      </div>
+
+      <div class="split-grid">
+        <!-- 左侧：可交互对话窗口 -->
+        <div class="chat-window">
+          <div class="chat-header">
+            <div class="chat-heading">
+              <div class="agent-avatar" id="t1-agent-icon"></div>
+              <div>
+                <div class="chat-title-row">
+                  <span id="t1-session-title">重构 WebSocket 鉴权中间件</span>
+                  <span class="badge accent" id="t1-agent-badge">Codex CLI</span>
+                  <span class="badge ok" id="t1-status-badge">空闲</span>
+                </div>
+                <div class="chat-sub-row">
+                  <span class="mono" id="t1-session-id">session: codex-thread-8a4f</span>
+                  <span>·</span>
+                  <span>D:\terminal-buddy</span>
+                  <span>·</span>
+                  <span id="t1-protocol-tag">协议：codex app-server（直连）</span>
+                </div>
+              </div>
+            </div>
+            <div class="chat-actions">
+              <button class="btn btn-sm" id="t1-btn-handoff">跨 Agent 接力 ▾</button>
+              <button class="btn btn-sm" id="t1-btn-reset">重置演示</button>
+            </div>
+          </div>
+
+          <!-- 会话内动态配置条 -->
+          <div class="config-strip">
+            <span class="config-item">
+              模型:
+              <select class="config-select" id="t1-select-model">
+                <option value="gpt-5.3-codex">gpt-5.3-codex</option>
+                <option value="gpt-5.4-high">gpt-5.4-high</option>
+                <option value="o3-pro">o3-pro</option>
+              </select>
+            </span>
+            <span class="config-item">
+              推理强度:
+              <select class="config-select" id="t1-select-effort">
+                <option value="medium">medium</option>
+                <option value="high" selected>high</option>
+                <option value="xhigh">xhigh</option>
+              </select>
+            </span>
+            <span class="config-item">
+              模式:
+              <select class="config-select" id="t1-select-mode">
+                <option value="code">Code（自动读写）</option>
+                <option value="architect">Architect（只读规划）</option>
+                <option value="ask">Ask（只答不改）</option>
+              </select>
+            </span>
+            <span class="badge" id="t1-config-hint" style="margin-left:auto">支持热切换</span>
+          </div>
+
+          <!-- 消息流 -->
+          <div class="chat-messages" id="t1-messages"></div>
+
+          <!-- 底部 Plan 清单预览 -->
+          <div class="plan-card" id="t1-plan-card">
+            <div class="plan-head">
+              <span id="t1-plan-title">任务清单（ACP Plan 统一投影）</span>
+              <span class="badge accent" id="t1-plan-progress">2 / 4</span>
+            </div>
+            <div class="plan-list" id="t1-plan-list"></div>
+          </div>
+
+          <!-- 跨 Agent 接力配置弹窗 -->
+          <div class="handoff-modal-backdrop" id="t1-handoff-modal" hidden>
+            <div class="handoff-modal">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <strong style="font-size:13.5px">跨 Agent 一键结构化接力（Handoff）</strong>
+                <span class="badge agent">新建目标 Session · 非底层 KV 恢复</span>
+              </div>
+              <div style="font-size:12px;color:var(--text-secondary)">
+                将当前 <code>Codex CLI</code> 会话沉淀的统一结构化上下文打包，通过 ACP <code>session/new(cwd)</code> 交接给目标 Agent：
+              </div>
+              <div>
+                <div style="font-size:11.5px;color:var(--text-secondary);margin-bottom:4px;">选择接力目标 Agent：</div>
+                <select class="field-input" id="t1-handoff-target">
+                  <option value="agy">Antigravity CLI（agy acp · Gemini 4 Neon）</option>
+                  <option value="claude">Claude Code（claude-sonnet-4-6）</option>
+                  <option value="gemini">Gemini CLI（gemini --acp · gemini-2.5-pro）</option>
+                </select>
+              </div>
+              <div class="handoff-checklist">
+                <label><input type="checkbox" id="chk-goal" checked> <span><strong>任务目标与背景摘要</strong><small>重构 WS 鉴权中间件并补齐限流单元测试</small></span></label>
+                <label><input type="checkbox" id="chk-plan" checked> <span><strong>当前 Plan 清单进度（2 / 4 已完成）</strong><small>保留已完成项与待办步骤，目标 Agent 可接着勾销</small></span></label>
+                <label><input type="checkbox" id="chk-diff" checked> <span><strong>已变更文件与关键 Diff 摘要（3 个文件）</strong><small>ws_auth.rs、rate_limit.rs、mod.rs 关键符号与行数</small></span></label>
+                <label><input type="checkbox" id="chk-turns" checked> <span><strong>最近 6 条结构化对话与工具结论</strong><small>精简过长工具 stdout，避免撑爆目标 Agent 上下文</small></span></label>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px;">
+                <button class="btn" id="t1-handoff-cancel">取消</button>
+                <button class="btn btn-primary" id="t1-handoff-confirm">创建接力会话并继续</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右侧：协议报文 & 两种恢复机制对比 -->
+        <div style="display:flex;flex-direction:column;gap:12px;min-height:0;">
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <div class="panel-card-title">实时协议与状态透视</div>
+              <span class="badge accent" id="t1-rpc-badge">ACP JSON-RPC 2.0</span>
+            </div>
+            <div class="panel-card-body">
+              <div class="rpc-log" id="t1-rpc-log"></div>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <div class="panel-card-title">同 Agent 原生恢复 vs 跨 Agent 接力</div>
+            </div>
+            <div class="panel-card-body" style="padding:0;">
+              <table class="cmp-table">
+                <thead>
+                  <tr>
+                    <th>维度</th>
+                    <th>同 Agent 原生恢复</th>
+                    <th>跨 Agent 结构化接力</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>ACP 原语</strong></td>
+                    <td><code>session/load(sessionId)</code></td>
+                    <td><code>session/new(cwd)</code> + Handoff <code>prompt</code></td>
+                  </tr>
+                  <tr>
+                    <td><strong>底层状态</strong></td>
+                    <td>完整复用原 Agent 内部历史、工具调用树与 Prompt Cache</td>
+                    <td>新建干净目标 Session，不共享私有 KV 缓存</td>
+                  </tr>
+                  <tr>
+                    <td><strong>为什么可行</strong></td>
+                    <td>同品牌 Agent 内部 schema 自洽</td>
+                    <td>ACP 统一了 Plan / Diff / Thought / Message 结构，不再各自为政</td>
+                  </tr>
+                  <tr>
+                    <td><strong>适用场景</strong></td>
+                    <td>PC ↔ 手机继续同一对话、进程空闲回收后冷重启</td>
+                    <td>Codex 额度耗尽 / 卡壳 → 一键切 Antigravity 或 Claude 接手</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ TAB 2: 多 Agent、Registry 与动态配置 ═══════════════ -->
+    <section class="tab-panel" id="panel-2" role="tabpanel" hidden>
+      <div class="banner" style="grid-template-columns:1fr;">
+        <div class="banner-block" style="border-left:3px solid var(--accent);padding:6px 10px;">
+          <div class="banner-label">核心变化：从「每接一个 Agent 写 2000 行私有适配」→「统一 ACP 驱动 + Registry 发现 + 动态 configOptions」</div>
+          <div class="banner-desc" id="t2-mode-summary"></div>
+        </div>
+      </div>
+
+      <div class="split-grid">
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <div class="panel-card-title" id="t2-left-title">已配置 Agent 与 ACP Agent Registry</div>
+            <span class="badge ok" id="t2-enabled-count">已启用 4 个原生对话 Agent</span>
+          </div>
+          <div class="panel-card-body">
+            <div class="agent-grid" id="t2-agent-grid"></div>
+
+            <!-- 自定义 ACP Agent 接入表单（仅 ACP 模式可见） -->
+            <div class="panel-card" id="t2-custom-form" style="background:var(--bg-primary);">
+              <div class="panel-card-header" style="padding:8px 10px;">
+                <span style="font-size:12px;font-weight:600;">+ 挂载自定义 ACP Agent（无需改 Rust 代码）</span>
+                <span class="badge accent">通用 stdio 协议</span>
+              </div>
+              <div class="panel-card-body" style="padding:10px;">
+                <div class="field-row">
+                  <input class="field-input" id="t2-custom-name" value="公司内部 Coding Agent" placeholder="显示名称">
+                  <input class="field-input mono" id="t2-custom-cmd" value="my-corp-agent --acp --stdio" placeholder="启动命令">
+                  <button class="btn btn-primary btn-sm" id="t2-btn-add-custom">立即测试并添加</button>
+                </div>
+                <div style="font-size:11px;color:var(--text-tertiary);" id="t2-custom-feedback">
+                  输入命令后自动探测 <code>initialize</code> 返回的协议版本、能力与动态配置项。
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <div class="panel-card-title" id="t2-inspector-title">Agent 能力与动态配置预览</div>
+            <span class="badge" id="t2-inspector-badge">ACP initialize / session/new</span>
+          </div>
+          <div class="panel-card-body" id="t2-inspector-body"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ TAB 3: 会话内实时体验 ═══════════════ -->
+    <section class="tab-panel" id="panel-3" role="tabpanel" hidden>
+      <div class="banner" style="grid-template-columns:1fr;">
+        <div class="banner-block" style="border-left:3px solid var(--success);padding:6px 10px;">
+          <div class="banner-label">对比对象：过去只有 Claude 才享有的「思考流 / 任务清单 / 斜杠命令 / 表单提问」，升级后全部 ACP Agent 拉齐</div>
+          <div class="banner-desc" id="t3-banner-desc"></div>
+        </div>
+      </div>
+
+      <div class="chat-window" style="min-height:470px;">
+        <div class="chat-header">
+          <div class="chat-heading">
+            <div class="agent-avatar" id="t3-avatar"></div>
+            <div>
+              <div class="chat-title-row">
+                <span id="t3-title">排查 Android 后台断连重试</span>
+                <span class="badge agent" id="t3-agent-pill">Antigravity CLI · agy acp</span>
+              </div>
+              <div class="chat-sub-row" id="t3-subrow">
+                <span>实时事件流：agent_thought_chunk · plan · available_commands_update · request_permission</span>
+              </div>
+            </div>
+          </div>
+          <div class="chat-actions">
+            <button class="btn btn-sm" id="t3-btn-slash">模拟输入 / 查看补全</button>
+            <button class="btn btn-sm" id="t3-btn-trigger-approval">触发权限 / 提问卡片</button>
+          </div>
+        </div>
+
+        <!-- 实时思考流 -->
+        <div class="thinking-bar" id="t3-thinking-bar">
+          <div class="thinking-head">
+            <span>● 正在思考 · 第 2 段 · 1,482 字</span>
+            <span class="badge agent" style="margin-left:auto" id="t3-thinking-toggle">点击展开全文</span>
+          </div>
+          <div class="thinking-preview" id="t3-thinking-text">正在比对 AiTaskMonitorService.kt 的指数退避策略与服务端 WS 45 秒心跳超时阈值……
+发现第 184 行在网络切换瞬间未重置 retryCount，导致回到前台后延迟了 32 秒才重连。
+下一步：准备检查 Android 单元测试并修改 reconnectBackoffMs。</div>
+        </div>
+
+        <!-- 消息区 -->
+        <div class="chat-messages" id="t3-messages" style="max-height:240px;"></div>
+
+        <!-- 统一任务清单（来自 ACP plan） -->
+        <div class="plan-card" id="t3-plan-card">
+          <div class="plan-head">
+            <span>执行计划（ACP <code>session/update: plan</code>）</span>
+            <span class="badge ok">2 / 3</span>
+          </div>
+          <div class="plan-list">
+            <div class="plan-item done">✓ 定位断连日志与退避计时器</div>
+            <div class="plan-item doing">◔ 修复网络切换重置逻辑</div>
+            <div class="plan-item">○ 运行 :app:testDebugUnitTest</div>
+          </div>
+        </div>
+
+        <!-- 统一悬浮审批 / Elicitation 卡片 -->
+        <div class="approval-float" id="t3-approval-card">
+          <div class="approval-head">
+            <span id="t3-approval-title">等待确认 · session/request_permission + elicitation/create</span>
+            <span class="badge warn">交互式决策</span>
+          </div>
+          <div style="font-size:12px;" id="t3-approval-question">
+            检测到网络切换重连有两套兼容策略，请选择希望写入的默认行为（随后将执行文件修改）：
+          </div>
+          <div class="approval-options" id="t3-approval-options">
+            <button type="button" class="choice-chip selected" data-choice="立即清零退避并重连（推荐）">立即清零退避并重连（推荐）</button>
+            <button type="button" class="choice-chip" data-choice="保留最小 1 秒防抖后再重连">保留最小 1 秒防抖后再重连</button>
+            <button type="button" class="choice-chip" data-choice="仅记录诊断日志，不改重连策略">仅记录诊断日志，不改重连策略</button>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;">
+            <button class="btn btn-danger btn-sm" id="t3-approval-deny">拒绝</button>
+            <button class="btn btn-primary btn-sm" id="t3-approval-allow">允许并提交选择</button>
+          </div>
+        </div>
+
+        <!-- 输入区 + / 补全菜单 -->
+        <div class="composer-wrap">
+          <div class="slash-popover" id="t3-slash-popover" hidden></div>
+          <div class="composer-box">
+            <input class="composer-input" id="t3-input" placeholder="输入消息，或键入 / 触发 ACP 动态斜杠命令补全…">
+            <button class="btn btn-primary btn-sm" id="t3-send">发送</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ TAB 4: 进程池 & 终端托管 ═══════════════ -->
+    <section class="tab-panel" id="panel-4" role="tabpanel" hidden>
+      <div class="split-equal">
+        <!-- 左：进程池与供应商隔离 -->
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <div class="panel-card-title">进程模型与第三方供应商隔离</div>
+            <span class="badge ok" id="t4-proc-summary">2 个常驻进程托管 5 个会话</span>
+          </div>
+          <div class="panel-card-body">
+            <div style="font-size:12px;color:var(--text-secondary);" id="t4-proc-desc"></div>
+            <div class="proc-list" id="t4-proc-list"></div>
+          </div>
+        </div>
+
+        <!-- 右：TerminalService 终端能力托管 -->
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <div class="panel-card-title">ACP 终端能力桥接（TerminalBuddy 独有优势）</div>
+            <span class="badge accent">clientCapabilities.terminal</span>
+          </div>
+          <div class="panel-card-body">
+            <div class="toggle-row">
+              <div>
+                <strong>由 TerminalBuddy 托管 Agent 终端命令</strong>
+                <div style="font-size:11px;color:var(--text-tertiary);">
+                  将 ACP <code>terminal/create</code> / <code>terminal/output</code> 桥接到现有 ConPTY/PTY <code>TerminalService</code>
+                </div>
+              </div>
+              <button class="btn btn-sm btn-primary" id="t4-btn-toggle-term">已开启</button>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button class="btn btn-primary" id="t4-btn-run-cmd">模拟 Agent 执行 cargo test --lib</button>
+              <span style="font-size:11.5px;color:var(--text-tertiary);" id="t4-term-hint">点击查看开启前后的真实差异</span>
+            </div>
+
+            <div id="t4-term-output-area"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ TAB 5: 全局差距总览与务实边界 ═══════════════ -->
+    <section class="tab-panel" id="panel-5" role="tabpanel" hidden>
+      <div class="panel-card">
+        <div class="panel-card-header">
+          <div class="panel-card-title">升级 ACP 前后能力全景对比矩阵</div>
+          <span class="badge ok">推荐路径：Claude / Codex 直连保留 + ACP 统一扩展层</span>
+        </div>
+        <div class="panel-card-body" style="padding:0;">
+          <table class="cmp-table">
+            <thead>
+              <tr>
+                <th style="width:170px;">能力维度</th>
+                <th style="width:32%;">现状（无 ACP · Claude/Codex 私有协议）</th>
+                <th style="width:36%;">升级 ACP 后（混合架构）</th>
+                <th>评估</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>新 Agent 接入成本</strong></td>
+                <td>每个 Agent 需新增上千行协议解析 + 历史扫描 + CLI 检测（目前 `agy` 仅有终端与历史，原生对话写死禁入）</td>
+                <td>一套 <code>AcpDriver</code> 直接覆盖 <code>agy acp</code>、Gemini CLI、OpenCode、Qwen Code、Copilot CLI 及自定义 ACP Agent</td>
+                <td><span class="badge ok">极大收益</span></td>
+              </tr>
+              <tr>
+                <td><strong>Antigravity CLI（agy）</strong></td>
+                <td>仅能启动 PTY 终端或看只读历史回放，手机端/桌面原生聊天不可用</td>
+                <td>开箱即用原生结构化对话、审批卡、思考流、Plan、图片发送</td>
+                <td><span class="badge ok">立刻补齐</span></td>
+              </tr>
+              <tr>
+                <td><strong>同 / 跨 Agent 会话恢复</strong></td>
+                <td>同 Agent 可恢复；跨 Agent 只能人工复制粘贴对话片段，丢上下文与进度</td>
+                <td>同 Agent 走标准 <code>session/load</code>；跨 Agent 支持<strong>一键结构化接力（Handoff）</strong>保留目标/Plan/Diff</td>
+                <td><span class="badge ok">显著提升</span></td>
+              </tr>
+              <tr>
+                <td><strong>会话内切换模型 / 模式</strong></td>
+                <td>仅 Claude 允许在空闲时杀进程切模型；Codex 直接报错「请新建」</td>
+                <td>通过 <code>session/set_config_option</code> / <code>set_mode</code> 会话内热切换，不重启进程</td>
+                <td><span class="badge ok">体验跃升</span></td>
+              </tr>
+              <tr>
+                <td><strong>思考流 / Plan / <code>/</code> 补全</strong></td>
+                <td>仅 Claude 完整支持；Codex 缺失思考与 <code>/</code> 补全，其他 Agent 无</td>
+                <td>全 Agent 统一映射 <code>agent_thought_chunk</code>、<code>plan</code>、<code>available_commands_update</code></td>
+                <td><span class="badge ok">能力拉齐</span></td>
+              </tr>
+              <tr>
+                <td><strong>进程与供应商隔离</strong></td>
+                <td>每会话常驻 1 棵进程树（10 个会话 = 10 个常驻 CLI 进程）</td>
+                <td>按 <code>(agentId, providerEnvHash)</code> 分桶进程池：同配置多会话共享，不同中转商严格隔离</td>
+                <td><span class="badge ok">更省内存</span></td>
+              </tr>
+              <tr>
+                <td><strong>终端命令执行可见性</strong></td>
+                <td>原生会话与终端完全割裂，命令输出只能挤在工具气泡里</td>
+                <td>支持实现 <code>terminal/*</code> Client 能力，把命令实时投射到真实终端标签页观察或接管</td>
+                <td><span class="badge accent">独特联动</span></td>
+              </tr>
+              <tr>
+                <td><strong>客户端复用（Web / Android / 定时）</strong></td>
+                <td>依赖后端 <code>AiSession</code> 结构</td>
+                <td>继续投影回 <code>AiSession</code>，Web 端、Android App 与定时任务几乎零改动即可享全部新 Agent</td>
+                <td><span class="badge ok">复用拉满</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel-card">
+        <div class="panel-card-header">
+          <div class="panel-card-title">坦诚盘点：为什么不能「一刀切删掉 Claude / Codex 现有直连」？</div>
+          <span class="badge warn">必须正视的 ACP 当前短板</span>
+        </div>
+        <div class="panel-card-body">
+          <div class="shortcoming-grid">
+            <div class="shortcoming-item">
+              <strong>1. 细粒度 Token 与缓存分项</strong>
+              ACP 标准 <code>usage_update</code> 粒度较粗（多为总上下文/总消耗），缺少目前 Claude 直连下精确的 <code>cacheRead</code> / <code>cacheCreation</code> / 缓存命中率统计。
+            </div>
+            <div class="shortcoming-item">
+              <strong>2. 嵌套子代理抽屉（AiAgent）</strong>
+              Claude 直连通过 <code>--forward-subagent-text</code> + <code>task_*</code> + <code>run_id</code> 校准实现了完整子代理抽屉；ACP 子代理扩展仍在演进，部分适配器信息不完整。
+            </div>
+            <div class="shortcoming-item">
+              <strong>3. 结构化提问（elicitation/create）与插话（steer）</strong>
+              各 ACP Agent 与适配器对 <code>elicitation/create</code> 多选表单和运行中不打断插话 <code>_session/steering</code> 支持参差不齐；而目前 Claude HTTP Hook + Codex 动态工具已打磨得很稳。
+            </div>
+            <div class="shortcoming-item">
+              <strong>4. 本地历史管理仍需 SQLite</strong>
+              ACP <code>session/list</code> 只负责列举单个进程下的会话，无法替代 <code>terminal-buddy</code> 现有的全文检索（FTS）、星标、自定义标题、自动归档与回收站保护。
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script>
+(function () {
+  // ── 内联 Agent SVG 图标 ──────────────────────────────────────────────────
+  const ICONS = {
+    codex: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10a37f" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M9 9l3-2 3 2v4l-3 2-3-2V9z"/><path d="M12 3v4M12 17v4M4.2 7.5l3.5 2M16.3 14.5l3.5 2M19.8 7.5l-3.5 2M7.7 14.5l-3.5 2"/></svg>`,
+    claude: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2.5v19M3.8 7.2l16.4 9.6M20.2 7.2L3.8 16.8M6.5 4.2l11 15.6M17.5 4.2l-11 15.6" stroke="#d97757" stroke-width="2" stroke-linecap="round"/></svg>`,
+    agy: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3L4 20h3.6l1.7-3.8h5.4L16.4 20H20L12 3zm-1.4 10.2L12 9.8l1.4 3.4h-2.8z" fill="#4b95e9"/><circle cx="18.5" cy="5.5" r="2.2" fill="#a78bfa"/></svg>`,
+    gemini: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2C12 7.5 16.5 12 22 12c-5.5 0-10 4.5-10 10 0-5.5-4.5-10-10-10 5.5 0 10-4.5 10-10z" fill="#60a5fa"/></svg>`,
+    opencode: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#55b988" stroke-width="2"><polyline points="8 7 3 12 8 17"/><polyline points="16 7 21 12 16 17"/><line x1="13" y1="5" x2="11" y2="19"/></svg>`,
+    qwen: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2"><polygon points="12 3 20 8 20 16 12 21 4 16 4 8 12 3"/><circle cx="12" cy="12" r="2.5" fill="#a78bfa"/></svg>`,
+    copilot: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9aa0a8" stroke-width="1.8"><rect x="4" y="6" width="16" height="12" rx="5"/><circle cx="9.5" cy="12" r="1.4" fill="#e3e5e8"/><circle cx="14.5" cy="12" r="1.4" fill="#e3e5e8"/></svg>`,
+    custom: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d9a441" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h5"/></svg>`
+  };
+
+  const state = {
+    mode: "acp", // "legacy" | "acp"
+    theme: "dark",
+    activeTab: "1",
+    // Tab 1 状态
+    t1Agent: "codex",
+    t1Model: "gpt-5.3-codex",
+    t1Effort: "high",
+    t1Mode: "code",
+    t1HandoffDone: false,
+    t1HandoffTarget: "agy",
+    t1ExtraMsgs: [],
+    t1RpcText: "",
+    // Tab 2 状态
+    t2SelectedId: "agy",
+    t2Agents: [
+      { id: "claude", name: "Claude Code", kind: "直连保留 (可切 ACP)", installed: true, enabled: true, desc: "保留细粒度缓存统计、子代理抽屉与 HTTP Hook 决策。", command: "claude -p --output-format stream-json", caps: ["loadSession", "subagents", "thinking", "slash", "usage_detail"], config: { model: ["claude-sonnet-4-6", "claude-opus-4-6"], mode: ["default", "plan", "bypassPermissions"], effort: ["medium", "high"] } },
+      { id: "codex", name: "Codex CLI", kind: "直连保留 (可选 ACP)", installed: true, enabled: true, desc: "app-server 原生连接；开启 ACP 后可补齐热切模型与标准化 Plan。", command: "codex app-server", caps: ["loadSession", "plan", "images", "request_user_input"], config: { model: ["gpt-5.3-codex", "gpt-5.4-high"], mode: ["code", "read-only"], effort: ["low", "medium", "high", "xhigh"] } },
+      { id: "agy", name: "Antigravity CLI", kind: "内置原生 ACP", installed: true, enabled: true, desc: "通过官方 agy acp 子命令直连，立刻拥有桌面/网页/Android 原生对话。", command: "agy acp", caps: ["loadSession", "plan", "agent_thought_chunk", "available_commands_update", "images"], config: { model: ["gemini-4-neon", "gemini-3.5-pro"], mode: ["code", "plan", "ask"], effort: ["standard", "xhigh"] } },
+      { id: "gemini", name: "Gemini CLI", kind: "ACP Registry", installed: true, enabled: true, desc: "Google 官方 ACP 参考实现，支持完整多模态与 Plan 流。", command: "gemini --acp", caps: ["loadSession", "plan", "agent_thought_chunk", "available_commands_update"], config: { model: ["gemini-2.5-pro", "gemini-2.5-flash"], mode: ["code", "ask"], effort: ["auto", "deep"] } },
+      { id: "opencode", name: "OpenCode", kind: "ACP Registry", installed: false, enabled: false, desc: "开源多模型 Coding Agent，原生 ACP 支持与灵活工具权限。", command: "opencode acp", caps: ["loadSession", "plan", "available_commands_update"], config: { model: ["anthropic/claude-sonnet", "openai/gpt-5"], mode: ["build", "plan"], effort: ["default"] } },
+      { id: "qwen", name: "Qwen Code", kind: "ACP Registry", installed: false, enabled: false, desc: "面向代码仓库改造的 CLI，通过 Registry 一键安装拉起。", command: "qwen --acp", caps: ["loadSession", "plan", "agent_thought_chunk"], config: { model: ["qwen3-coder-plus", "qwen3-coder-480b"], mode: ["code", "architect"], effort: ["normal", "high"] } }
+    ],
+    // Tab 3 状态
+    t3ThinkingExpanded: false,
+    t3ApprovalResolved: false,
+    t3ChosenOption: "立即清零退避并重连（推荐）",
+    t3Messages: [
+      { role: "user", text: "Android 客户端在 Wi-Fi 切 5G 后总是等半天才重连，帮我查一下 AiTaskMonitorService.kt 里的退避逻辑。" },
+      { role: "tool", text: "fs/read_text_file · android/app/src/.../AiTaskMonitorService.kt (lines 140-210)" },
+      { role: "assistant", text: "已经定位到问题：`ConnectivityCallback.onAvailable` 只触发了重新连接，没有重置指数退避计数器 `retryAttempt`，导致从后台切网络后仍然等待上一轮累计的 32s 窗口。\n\n在修改前，我先向你确认兼容策略：" }
+    ],
+    // Tab 4 状态
+    t4TermHosted: true,
+    t4CmdRan: false
+  };
+
+  // ── 顶部全局控制 ────────────────────────────────────────────────────────
+  const btnModeLegacy = document.getElementById("btn-mode-legacy");
+  const btnModeAcp = document.getElementById("btn-mode-acp");
+  const btnThemeDark = document.getElementById("btn-theme-dark");
+  const btnThemeLight = document.getElementById("btn-theme-light");
+  const titlebarModePill = document.getElementById("titlebar-mode-pill");
+
+  function setMode(mode) {
+    state.mode = mode;
+    btnModeLegacy.setAttribute("aria-pressed", String(mode === "legacy"));
+    btnModeAcp.setAttribute("aria-pressed", String(mode === "acp"));
+    if (mode === "acp") {
+      titlebarModePill.textContent = "已启用 ACP 统一协议层 + 直连混合驱动";
+      titlebarModePill.className = "titlebar-pill is-acp";
+    } else {
+      titlebarModePill.textContent = "当前现状：仅 Claude / Codex 各自私有协议直连";
+      titlebarModePill.className = "titlebar-pill is-legacy";
+    }
+    renderAll();
+  }
+
+  function setTheme(theme) {
+    state.theme = theme;
+    document.documentElement.setAttribute("data-theme", theme);
+    btnThemeDark.setAttribute("aria-pressed", String(theme === "dark"));
+    btnThemeLight.setAttribute("aria-pressed", String(theme === "light"));
+  }
+
+  btnModeLegacy.addEventListener("click", () => setMode("legacy"));
+  btnModeAcp.addEventListener("click", () => setMode("acp"));
+  btnThemeDark.addEventListener("click", () => setTheme("dark"));
+  btnThemeLight.addEventListener("click", () => setTheme("light"));
+
+  // ── 5 大场景标签切换 ────────────────────────────────────────────────────
+  const tabButtons = Array.from(document.querySelectorAll(".scenario-tab"));
+  tabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const target = btn.getAttribute("data-tab");
+      state.activeTab = target;
+      tabButtons.forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
+      for (let i = 1; i <= 5; i++) {
+        const panel = document.getElementById("panel-" + i);
+        if (panel) panel.hidden = String(i) !== target;
+      }
+    });
+  });
+
+  // ── TAB 1: 跨 Agent 恢复与接力交互 ──────────────────────────────────────
+  const t1AgentIcon = document.getElementById("t1-agent-icon");
+  const t1AgentBadge = document.getElementById("t1-agent-badge");
+  const t1StatusBadge = document.getElementById("t1-status-badge");
+  const t1SessionId = document.getElementById("t1-session-id");
+  const t1ProtocolTag = document.getElementById("t1-protocol-tag");
+  const t1SelectModel = document.getElementById("t1-select-model");
+  const t1SelectEffort = document.getElementById("t1-select-effort");
+  const t1SelectMode = document.getElementById("t1-select-mode");
+  const t1ConfigHint = document.getElementById("t1-config-hint");
+  const t1Messages = document.getElementById("t1-messages");
+  const t1PlanTitle = document.getElementById("t1-plan-title");
+  const t1PlanProgress = document.getElementById("t1-plan-progress");
+  const t1PlanList = document.getElementById("t1-plan-list");
+  const t1RpcBadge = document.getElementById("t1-rpc-badge");
+  const t1RpcLog = document.getElementById("t1-rpc-log");
+  const t1BtnHandoff = document.getElementById("t1-btn-handoff");
+  const t1BtnReset = document.getElementById("t1-btn-reset");
+  const t1Modal = document.getElementById("t1-handoff-modal");
+  const t1HandoffTarget = document.getElementById("t1-handoff-target");
+  const t1HandoffCancel = document.getElementById("t1-handoff-cancel");
+  const t1HandoffConfirm = document.getElementById("t1-handoff-confirm");
+  const chkGoal = document.getElementById("chk-goal");
+  const chkPlan = document.getElementById("chk-plan");
+  const chkDiff = document.getElementById("chk-diff");
+  const chkTurns = document.getElementById("chk-turns");
+
+  const T1_MODELS_BY_AGENT = {
+    codex: ["gpt-5.3-codex", "gpt-5.4-high", "o3-pro"],
+    agy: ["gemini-4-neon", "gemini-3.5-pro"],
+    claude: ["claude-sonnet-4-6", "claude-opus-4-6"],
+    gemini: ["gemini-2.5-pro", "gemini-2.5-flash"]
+  };
+
+  function agentDisplayName(id) {
+    return ({ codex: "Codex CLI", agy: "Antigravity (agy acp)", claude: "Claude Code", gemini: "Gemini CLI" })[id] || id;
+  }
+
+  function appendT1Msg(msg) {
+    state.t1ExtraMsgs.push(msg);
+  }
+
+  function resetT1() {
+    state.t1Agent = "codex";
+    state.t1Model = "gpt-5.3-codex";
+    state.t1Effort = "high";
+    state.t1Mode = "code";
+    state.t1HandoffDone = false;
+    state.t1ExtraMsgs = [];
+    state.t1RpcText = "";
+    t1Modal.hidden = true;
+    renderT1();
+  }
+
+  function renderT1() {
+    const isAcp = state.mode === "acp";
+    t1AgentIcon.innerHTML = ICONS[state.t1Agent] || ICONS.codex;
+    t1AgentBadge.textContent = agentDisplayName(state.t1Agent);
+    t1AgentBadge.className = state.t1HandoffDone ? "badge agent" : "badge accent";
+    t1StatusBadge.textContent = isAcp ? "会话已就绪 · 可热切换" : "受限于直连私有协议";
+    t1StatusBadge.className = isAcp ? "badge ok" : "badge warn";
+    t1SessionId.textContent = state.t1HandoffDone
+      ? `session: acp-${state.t1Agent}-2f9c (接力自 codex-thread-8a4f)`
+      : "session: codex-thread-8a4f";
+    t1ProtocolTag.textContent = isAcp
+      ? (state.t1HandoffDone ? `协议：ACP stdio (${state.t1Agent})` : "协议：混合调度（ACP 统一会管）")
+      : "协议：codex app-server（无统一扩展）";
+
+    // 更新模型下拉选项
+    const models = T1_MODELS_BY_AGENT[state.t1Agent] || T1_MODELS_BY_AGENT.codex;
+    t1SelectModel.innerHTML = models.map((m) => `<option value="${m}">${m}</option>`).join("");
+    if (!models.includes(state.t1Model)) state.t1Model = models[0];
+    t1SelectModel.value = state.t1Model;
+    t1SelectEffort.value = state.t1Effort;
+    t1SelectMode.value = state.t1Mode;
+
+    if (!isAcp) {
+      t1SelectEffort.disabled = true;
+      t1SelectMode.disabled = true;
+      t1ConfigHint.textContent = "现状：Codex 不支持中途切换";
+      t1ConfigHint.className = "badge warn";
+      t1BtnHandoff.textContent = "尝试切换 Agent ▾";
+    } else {
+      t1SelectEffort.disabled = false;
+      t1SelectMode.disabled = false;
+      t1ConfigHint.textContent = "ACP session/set_config_option 实时生效";
+      t1ConfigHint.className = "badge ok";
+      t1BtnHandoff.textContent = state.t1HandoffDone ? "再次接力给其他 Agent ▾" : "跨 Agent 一键接力 ▾";
+    }
+
+    // 基础消息流
+    const baseMsgs = [
+      { role: "user", meta: "用户 · 13:20", text: "帮我重构 web/handlers/ws_auth.rs 的 Token 复查逻辑，拆出限流模块并补全单元测试。" },
+      { role: "tool", meta: "Codex CLI · 工具调用", text: "已修改 3 个文件：ws_auth.rs (+48/-21)、rate_limit.rs (+64)、mod.rs (+6)" },
+      { role: "assistant", meta: "Codex CLI · 13:24", text: "鉴权拆分和限流逻辑已完成前两步，目前已经写完 ws_auth 与 rate_limit 的重构，还差集成测试与 cargo check 验证。" }
+    ];
+
+    let html = baseMsgs.map((m) => `
+      <div class="msg ${m.role}">
+        <div class="msg-meta">${m.meta}</div>
+        <div>${m.text}</div>
+      </div>`).join("");
+
+    if (!isAcp && state.t1ExtraMsgs.length === 0) {
+      html += `
+        <div class="msg error-toast">
+          <strong>当前痛点演示：</strong>试着在上方修改「模型」或点击「尝试切换 Agent」——目前 Codex 会话无法热切换（<code>ai_chat_service.rs:1052</code>），跨 Agent 也只能人工新建会话并手动复制上文。
+        </div>`;
+    }
+
+    for (const em of state.t1ExtraMsgs) {
+      if (em.type === "handoff") {
+        html += `
+          <div class="handoff-divider">
+            <span class="badge agent">跨 Agent 结构化接力</span>
+            <span><strong>${em.from}</strong> → <strong>${em.to}</strong></span>
+            <span class="detail">${em.summary}</span>
+          </div>`;
+      } else {
+        html += `
+          <div class="msg ${em.role}">
+            <div class="msg-meta">${em.meta}</div>
+            <div>${em.text}</div>
+          </div>`;
+      }
+    }
+    t1Messages.innerHTML = html;
+    t1Messages.scrollTop = t1Messages.scrollHeight;
+
+    // Plan 面板
+    if (!isAcp) {
+      t1PlanTitle.textContent = "任务清单（现状：Codex 会话无统一 Plan 视图）";
+      t1PlanProgress.textContent = "未采集";
+      t1PlanProgress.className = "badge warn";
+      t1PlanList.innerHTML = `<div class="plan-item" style="grid-column:1/-1;color:var(--text-tertiary);">当前只有 Claude 的 TodoWrite / TaskCreate 会显示在这里；Codex / Antigravity 任务进度无法结构化沉淀，换 Agent 后完全丢失。</div>`;
+    } else {
+      t1PlanTitle.textContent = state.t1HandoffDone
+        ? `任务清单（已完整移交给 ${agentDisplayName(state.t1Agent)}）`
+        : "任务清单（ACP Plan 统一投影 · 可跨 Agent 交接）";
+      t1PlanProgress.textContent = state.t1HandoffDone ? "3 / 4" : "2 / 4";
+      t1PlanProgress.className = "badge ok";
+      t1PlanList.innerHTML = `
+        <div class="plan-item done">✓ 抽取 ws_auth Token 复查函数</div>
+        <div class="plan-item done">✓ 实现 rate_limit 滑动窗口限流</div>
+        <div class="plan-item ${state.t1HandoffDone ? "done" : "doing"}">${state.t1HandoffDone ? "✓" : "◔"} 补齐单元测试与边界断言</div>
+        <div class="plan-item ${state.t1HandoffDone ? "doing" : ""}">${state.t1HandoffDone ? "◔" : "○"} 运行 cargo check &amp; cargo test --lib</div>`;
+    }
+
+    // RPC 透视
+    t1RpcBadge.textContent = isAcp ? "ACP JSON-RPC 2.0 报文" : "现有私有实现";
+    t1RpcBadge.className = isAcp ? "badge accent" : "badge warn";
+    if (!isAcp) {
+      t1RpcLog.innerHTML = state.t1RpcText || `<span class="w">// 现状 ai_chat_service.rs:1052</span>
+if data.provider != "claude" {
+    return Err("当前仅 Claude 会话支持切换模型，Codex 会话请新建");
+}
+
+<span class="w">// 跨 Agent 接力：</span>
+不支持。必须手动新建标签页，
+人工总结目标 + 修改过的文件再发送。`;
+    } else {
+      t1RpcLog.innerHTML = state.t1RpcText || `<span class="s">// 当前会话已接入 ACP 统一生命周期</span>
+<span class="k">→</span> { "method": "session/load", "params": { "sessionId": "codex-thread-8a4f" } }
+<span class="s">←</span> { "configOptions": [ "model", "reasoning_effort", "mode" ] }
+
+<span class="w">提示：</span>试着切换上方「模型 / 推理强度 / 模式」下拉框，
+或点击「跨 Agent 一键接力」查看真实 JSON-RPC 交接包。`;
+    }
+  }
+
+  function handleConfigChange(field, value) {
+    if (state.mode === "legacy") {
+      appendT1Msg({
+        role: "error-toast",
+        meta: "拦截提示 · 现状行为",
+        text: "操作失败：当前仅 Claude 会话支持在空闲时杀进程切换模型，Codex 会话请新建会话（ai_chat_service.rs:1052）。"
+      });
+      state.t1RpcText = `<span class="w">ERR 400</span> 当前仅 Claude 会话支持切换模型，Codex 会话请新建。\n即使 Claude 切换模型也必须发送 Control::Retire 终止常驻进程。`;
+      renderT1();
+      return;
+    }
+    if (field === "model") state.t1Model = value;
+    if (field === "effort") state.t1Effort = value;
+    if (field === "mode") state.t1Mode = value;
+
+    const configId = field === "model" ? "model" : field === "effort" ? "reasoning_effort" : "mode";
+    appendT1Msg({
+      role: "tool",
+      meta: `${agentDisplayName(state.t1Agent)} · 会话内热更新`,
+      text: `已热更新配置 ${configId} = "${value}"（常驻进程未重启，上下文完整保留）`
+    });
+    state.t1RpcText = `<span class="k">→ 请求</span> {
+  "jsonrpc": "2.0", "id": 18,
+  "method": "session/set_config_option",
+  "params": {
+    "sessionId": "${state.t1HandoffDone ? `acp-${state.t1Agent}-2f9c` : "codex-thread-8a4f"}",
+    "configId": "${configId}",
+    "value": "${value}"
+  }
+}
+<span class="s">← 响应</span> { "ok": true, "restartedProcess": false }`;
+    renderT1();
+  }
+
+  t1SelectModel.addEventListener("change", (e) => handleConfigChange("model", e.target.value));
+  t1SelectEffort.addEventListener("change", (e) => handleConfigChange("effort", e.target.value));
+  t1SelectMode.addEventListener("change", (e) => handleConfigChange("mode", e.target.value));
+
+  t1BtnHandoff.addEventListener("click", () => {
+    if (state.mode === "legacy") {
+      appendT1Msg({
+        role: "error-toast",
+        meta: "现状限制",
+        text: "无法跨 Agent 接力：AiSession 未包含通用 Plan 与标准化 Diff 摘要，且 Antigravity / Gemini 尚未接入原生会话引擎，只能手动新建会话复制上下文。"
+      });
+      renderT1();
+      return;
+    }
+    t1Modal.hidden = false;
+  });
+
+  t1HandoffCancel.addEventListener("click", () => { t1Modal.hidden = true; });
+  t1BtnReset.addEventListener("click", resetT1);
+
+  t1HandoffConfirm.addEventListener("click", () => {
+    const target = t1HandoffTarget.value;
+    const prevName = agentDisplayName(state.t1Agent);
+    const nextName = agentDisplayName(target);
+    const parts = [];
+    if (chkGoal.checked) parts.push("任务目标");
+    if (chkPlan.checked) parts.push("Plan 2/4");
+    if (chkDiff.checked) parts.push("3 文件 Diff");
+    if (chkTurns.checked) parts.push("最近 6 轮对话");
+
+    state.t1Agent = target;
+    state.t1Model = (T1_MODELS_BY_AGENT[target] || [])[0] || "default";
+    state.t1HandoffDone = true;
+    t1Modal.hidden = true;
+
+    appendT1Msg({
+      type: "handoff",
+      from: prevName,
+      to: nextName,
+      summary: `携带：${parts.join(" + ") || "基础项目目录"}`
+    });
+    appendT1Msg({
+      role: "assistant",
+      meta: `${nextName} · 接力续接响应`,
+      text: `已通过 ACP 新建接力会话并接收来自 ${prevName} 的上下文包（${parts.join("、")}）。我已经读取 <code>ws_auth.rs</code> 与 <code>rate_limit.rs</code> 的当前变更，并承接了 2/4 的 Plan 进度，现在直接开始第 3 步补充单元测试。`
+    });
+
+    state.t1RpcText = `<span class="k">1) 新建目标 Agent 会话</span>
+→ { "method": "session/new", "params": { "cwd": "D:\\\\terminal-buddy" } }
+← { "sessionId": "acp-${target}-2f9c" }
+
+<span class="k">2) 注入结构化接力包（非底层 KV 原生恢复）</span>
+→ {
+  "method": "session/prompt",
+  "params": {
+    "sessionId": "acp-${target}-2f9c",
+    "prompt": [
+      { "type": "text", "text": "[Handoff from ${prevName}]\\n包含: ${parts.join(", ")}" }
+    ]
+  }
+}
+<span class="s">← target Agent 已承接上下文并继续推进 Plan #3</span>`;
+    renderT1();
+  });
+
+  // ── TAB 2: 多 Agent、Registry 与动态配置 ────────────────────────────────
+  const t2ModeSummary = document.getElementById("t2-mode-summary");
+  const t2LeftTitle = document.getElementById("t2-left-title");
+  const t2EnabledCount = document.getElementById("t2-enabled-count");
+  const t2AgentGrid = document.getElementById("t2-agent-grid");
+  const t2CustomForm = document.getElementById("t2-custom-form");
+  const t2CustomName = document.getElementById("t2-custom-name");
+  const t2CustomCmd = document.getElementById("t2-custom-cmd");
+  const t2BtnAddCustom = document.getElementById("t2-btn-add-custom");
+  const t2CustomFeedback = document.getElementById("t2-custom-feedback");
+  const t2InspectorTitle = document.getElementById("t2-inspector-title");
+  const t2InspectorBadge = document.getElementById("t2-inspector-badge");
+  const t2InspectorBody = document.getElementById("t2-inspector-body");
+
+  function renderT2() {
+    const isAcp = state.mode === "acp";
+    t2CustomForm.hidden = !isAcp;
+
+    if (!isAcp) {
+      t2ModeSummary.textContent = "现状：原生对话入口写死仅支持 Claude 与 Codex；Antigravity 仅能开终端/看只读历史；权限需要用正则表达式从终端启动命令里猜参数。";
+      t2LeftTitle.textContent = "硬编码 CLI 管理列表（agent_cli_service.rs）";
+      t2EnabledCount.textContent = "原生对话仅 2 个可用";
+      t2EnabledCount.className = "badge warn";
+
+      const legacyList = [
+        { id: "claude", name: "Claude Code", status: "原生对话可用", ok: true, desc: "私有 stream-json + 临时 HTTP Hook 19601" },
+        { id: "codex", name: "Codex CLI", status: "原生对话可用", ok: true, desc: "私有 app-server JSON-RPC + 动态决策工具" },
+        { id: "agy", name: "Antigravity CLI", status: "原生对话不可用", ok: false, desc: "仅限 PTY 终端与只读历史回放；ai_chat_service 拦截" }
+      ];
+      t2AgentGrid.innerHTML = legacyList.map((a) => `
+        <div class="agent-card ${a.ok ? "" : "disabled-card"}">
+          <div class="agent-card-top">
+            <div class="agent-card-name">${ICONS[a.id]}<span>${a.name}</span></div>
+            <span class="badge ${a.ok ? "ok" : "err"}">${a.status}</span>
+          </div>
+          <div class="agent-card-desc">${a.desc}</div>
+        </div>`).join("");
+
+      t2InspectorTitle.textContent = "现状配置与权限解析方式";
+      t2InspectorBadge.textContent = "ai_permission_service.rs";
+      t2InspectorBadge.className = "badge warn";
+      t2InspectorBody.innerHTML = `
+        <div style="font-size:12px;color:var(--text-secondary);">
+          无标准 <code>configOptions</code> 协商，每次启动靠切分字符串解析 CLI 参数：
+        </div>
+        <div class="rpc-log"><span class="w">// 现状硬编码守卫 (ai_chat_service.rs:632)</span>
+if !matches!(input.provider.as_str(), "claude" | "codex") {
+    return Err("请选择 Claude 或 Codex".into());
+}
+
+<span class="w">// Antigravity / Gemini / OpenCode 接入成本：</span>
+必须分别为每家重写流解析、审批适配、用量与历史索引（预计每家 1,500+ 行 Rust）。</div>`;
+      return;
+    }
+
+    t2ModeSummary.textContent = "升级后：点击任意 Agent 卡片即可查看通过 ACP initialize 协商出的动态配置项与能力；Registry 中的新 Agent 可一键启用或直接挂载自定义命令。";
+    t2LeftTitle.textContent = "混合架构引擎 · 已安装与 ACP Registry 生态";
+    const enabledCount = state.t2Agents.filter((a) => a.enabled).length;
+    t2EnabledCount.textContent = `原生对话可用：${enabledCount} 个 Agent`;
+    t2EnabledCount.className = "badge ok";
+
+    t2AgentGrid.innerHTML = state.t2Agents.map((a) => {
+      const active = state.t2SelectedId === a.id;
+      const actionText = a.installed ? (a.enabled ? "已启用" : "启用") : "一键安装并启用";
+      return `
+        <div class="agent-card ${active ? "active" : ""}" data-agent-id="${a.id}">
+          <div class="agent-card-top">
+            <div class="agent-card-name">${ICONS[a.id] || ICONS.custom}<span>${a.name}</span></div>
+            <span class="badge ${a.enabled ? "ok" : "accent"}">${a.kind}</span>
+          </div>
+          <div class="agent-card-desc">${a.desc}</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:auto;">
+            <code style="font-size:10.5px;color:var(--text-tertiary);">${a.command}</code>
+            <button type="button" class="btn btn-sm ${a.enabled ? "btn-success" : "btn-primary"}" data-install-id="${a.id}">${actionText}</button>
+          </div>
+        </div>`;
+    }).join("");
+
+    t2AgentGrid.querySelectorAll(".agent-card").forEach((card) => {
+      card.addEventListener("click", (e) => {
+        const installBtn = e.target.closest("[data-install-id]");
+        const id = card.getAttribute("data-agent-id");
+        if (installBtn) {
+          e.stopPropagation();
+          const target = state.t2Agents.find((x) => x.id === id);
+          if (target) {
+            target.installed = true;
+            target.enabled = !target.enabled;
+            state.t2SelectedId = id;
+            renderT2();
+          }
+          return;
+        }
+        state.t2SelectedId = id;
+        renderT2();
+      });
+    });
+
+    const selected = state.t2Agents.find((x) => x.id === state.t2SelectedId) || state.t2Agents[0];
+    t2InspectorTitle.textContent = `${selected.name} · 动态能力与配置面板`;
+    t2InspectorBadge.textContent = selected.enabled ? "已协商就绪" : "待安装/启用";
+    t2InspectorBadge.className = selected.enabled ? "badge ok" : "badge warn";
+    t2InspectorBody.innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${selected.caps.map((c) => `<span class="badge accent">✓ ${c}</span>`).join("")}
+      </div>
+      <div style="font-size:12px;color:var(--text-secondary);">
+        前端与 Android 不再写死模型表，直接渲染 Agent 下发的 <code>configOptions</code>：
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;background:var(--bg-primary);padding:10px;border-radius:6px;border:1px solid var(--border-subtle);">
+        <div>
+          <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:3px;">model</div>
+          <select class="field-input">${selected.config.model.map((m) => `<option>${m}</option>`).join("")}</select>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:3px;">mode</div>
+          <select class="field-input">${selected.config.mode.map((m) => `<option>${m}</option>`).join("")}</select>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:3px;">reasoning_effort</div>
+          <select class="field-input">${selected.config.effort.map((m) => `<option>${m}</option>`).join("")}</select>
+        </div>
+      </div>
+      <div class="rpc-log"><span class="s">// 启动与握手摘要</span>
+command: ${selected.command}
+capabilities: ${JSON.stringify(selected.caps)}
+protocolVersion: 1 (ACP JSON-RPC 2.0 over stdio)</div>`;
+  }
+
+  t2BtnAddCustom.addEventListener("click", () => {
+    const name = t2CustomName.value.trim() || "自定义 ACP Agent";
+    const cmd = t2CustomCmd.value.trim() || "custom-agent --acp";
+    const id = "custom-" + Date.now();
+    state.t2Agents.push({
+      id, name, kind: "自定义 ACP", installed: true, enabled: true,
+      desc: "用户挂载的通用 ACP Agent，直接复用原生聊天界面与通知。",
+      command: cmd,
+      caps: ["loadSession", "plan", "agent_thought_chunk"],
+      config: { model: ["corp-coder-v2", "corp-fast"], mode: ["code", "review"], effort: ["standard", "deep"] }
+    });
+    state.t2SelectedId = id;
+    t2CustomFeedback.innerHTML = `<span style="color:var(--success)">✓ 探测成功：</span><code>${name}</code> 已响应 initialize 并加入可选 Agent 列表！`;
+    renderT2();
+  });
+
+  // ── TAB 3: 会话内实时体验 ────────────────────────────────────────────────
+  const t3BannerDesc = document.getElementById("t3-banner-desc");
+  const t3Avatar = document.getElementById("t3-avatar");
+  const t3AgentPill = document.getElementById("t3-agent-pill");
+  const t3Subrow = document.getElementById("t3-subrow");
+  const t3ThinkingBar = document.getElementById("t3-thinking-bar");
+  const t3ThinkingToggle = document.getElementById("t3-thinking-toggle");
+  const t3Messages = document.getElementById("t3-messages");
+  const t3PlanCard = document.getElementById("t3-plan-card");
+  const t3ApprovalCard = document.getElementById("t3-approval-card");
+  const t3ApprovalOptions = document.getElementById("t3-approval-options");
+  const t3ApprovalDeny = document.getElementById("t3-approval-deny");
+  const t3ApprovalAllow = document.getElementById("t3-approval-allow");
+  const t3SlashPopover = document.getElementById("t3-slash-popover");
+  const t3Input = document.getElementById("t3-input");
+  const t3Send = document.getElementById("t3-send");
+  const t3BtnSlash = document.getElementById("t3-btn-slash");
+  const t3BtnTriggerApproval = document.getElementById("t3-btn-trigger-approval");
+
+  const SLASH_COMMANDS = [
+    { cmd: "/review", hint: "对当前 Git 改动执行结构化代码审查" },
+    { cmd: "/compact", hint: "压缩当前上下文并保留核心目标" },
+    { cmd: "/test-android", hint: "项目级 Skill · 运行 Android 单元测试" },
+    { cmd: "/plan", hint: "切换到只读架构规划模式" }
+  ];
+
+  function renderT3() {
+    const isAcp = state.mode === "acp";
+    t3Avatar.innerHTML = isAcp ? ICONS.agy : ICONS.codex;
+    t3AgentPill.textContent = isAcp ? "Antigravity CLI · agy acp" : "Codex CLI（无 ACP）";
+    t3AgentPill.className = isAcp ? "badge agent" : "badge warn";
+
+    if (!isAcp) {
+      t3BannerDesc.textContent = "现状下，Antigravity 无法进入原生会话页；即便换成 Codex，也缺少 thinking 实时思考气泡、Plan 底部清单和 / 斜杠命令补全，用户面对长思考回合只能看呼吸灯猜测是否卡死。";
+      t3Subrow.textContent = "现状缺失：无 thinking 流 · 无 Plan 清单 · 无 / 补全（Antigravity 无原生入口）";
+      t3ThinkingBar.hidden = true;
+      t3PlanCard.hidden = true;
+      t3ApprovalCard.hidden = true;
+      t3SlashPopover.hidden = true;
+      t3Input.placeholder = "现状 Codex 无 / 补全；Antigravity 请回到 PTY 终端手动操作…";
+      t3Messages.innerHTML = `
+        <div class="msg user"><div>Android 客户端在 Wi-Fi 切 5G 后总是等半天才重连，帮我查一下 AiTaskMonitorService.kt 里的退避逻辑。</div></div>
+        <div class="msg error-toast"><strong>能力落差对比：</strong>在当前无 ACP 架构下，除 Claude 外的 Agent 要么（如 Antigravity）根本没有原生对话 UI，要么（如 Codex）长回合思考时界面空白、无 Plan 进度卡、无斜杠命令补全，也不支持通用 <code>elicitation/create</code> 表单提问。</div>`;
+      return;
+    }
+
+    t3BannerDesc.textContent = "试一试下面可交互组件：展开上方思考气泡、在输入框敲入 /（或点「模拟输入 /」）、点击底部悬浮决策卡片并提交，体验完全统一的 ACP 会话交互。";
+    t3Subrow.textContent = "实时事件流：agent_thought_chunk · plan · available_commands_update · request_permission";
+    t3ThinkingBar.hidden = false;
+    t3ThinkingBar.classList.toggle("expanded", state.t3ThinkingExpanded);
+    t3ThinkingToggle.textContent = state.t3ThinkingExpanded ? "点击收起" : "点击展开全文";
+    t3PlanCard.hidden = false;
+    t3ApprovalCard.hidden = state.t3ApprovalResolved;
+    t3Input.placeholder = "输入消息，或键入 / 触发 ACP 动态斜杠命令补全…";
+
+    t3Messages.innerHTML = state.t3Messages.map((m) => `
+      <div class="msg ${m.role}"><div>${m.text.replace(/\n/g, "<br>")}</div></div>`).join("");
+    t3Messages.scrollTop = t3Messages.scrollHeight;
+  }
+
+  t3ThinkingBar.addEventListener("click", () => {
+    state.t3ThinkingExpanded = !state.t3ThinkingExpanded;
+    renderT3();
+  });
+
+  t3ApprovalOptions.querySelectorAll(".choice-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      state.t3ChosenOption = chip.getAttribute("data-choice");
+      t3ApprovalOptions.querySelectorAll(".choice-chip").forEach((c) => c.classList.toggle("selected", c === chip));
+    });
+  });
+
+  t3ApprovalAllow.addEventListener("click", () => {
+    state.t3ApprovalResolved = true;
+    state.t3Messages.push({
+      role: "tool",
+      text: `✓ 用户已通过统一审批卡提交决策：「${state.t3ChosenOption}」→ 已回填 JSON-RPC 响应，Agent 继续写入补丁。`
+    });
+    state.t3Messages.push({
+      role: "assistant",
+      text: `已收到你的选择（${state.t3ChosenOption}），正在更新 <code>AiTaskMonitorService.kt</code> 并运行单元测试。`
+    });
+    renderT3();
+  });
+
+  t3ApprovalDeny.addEventListener("click", () => {
+    state.t3ApprovalResolved = true;
+    state.t3Messages.push({
+      role: "tool",
+      text: "✕ 用户已拒绝本次写入授权（session/request_permission -> outcome: cancelled）"
+    });
+    renderT3();
+  });
+
+  t3BtnTriggerApproval.addEventListener("click", () => {
+    if (state.mode !== "acp") return;
+    state.t3ApprovalResolved = false;
+    renderT3();
+  });
+
+  function updateSlashPopover(value) {
+    if (state.mode !== "acp" || !value.startsWith("/")) {
+      t3SlashPopover.hidden = true;
+      return;
+    }
+    const q = value.slice(1).toLowerCase();
+    const matched = SLASH_COMMANDS.filter((item) => item.cmd.toLowerCase().includes(q));
+    if (matched.length === 0) {
+      t3SlashPopover.hidden = true;
+      return;
+    }
+    t3SlashPopover.hidden = false;
+    t3SlashPopover.innerHTML = matched.map((item) => `
+      <div class="slash-item" data-cmd="${item.cmd}">
+        <span class="cmd">${item.cmd}</span>
+        <span class="hint">${item.hint}</span>
+      </div>`).join("");
+    t3SlashPopover.querySelectorAll(".slash-item").forEach((el) => {
+      el.addEventListener("click", () => {
+        t3Input.value = el.getAttribute("data-cmd") + " ";
+        t3SlashPopover.hidden = true;
+        t3Input.focus();
+      });
+    });
+  }
+
+  t3Input.addEventListener("input", (e) => updateSlashPopover(e.target.value));
+  t3BtnSlash.addEventListener("click", () => {
+    if (state.mode !== "acp") return;
+    t3Input.value = "/";
+    updateSlashPopover("/");
+    t3Input.focus();
+  });
+  t3Send.addEventListener("click", () => {
+    const val = t3Input.value.trim();
+    if (!val || state.mode !== "acp") return;
+    t3SlashPopover.hidden = true;
+    state.t3Messages.push({ role: "user", text: val });
+    state.t3Messages.push({ role: "assistant", text: `已通过 ACP <code>session/prompt</code> 接收指令「${val}」并流式执行。` });
+    t3Input.value = "";
+    renderT3();
+  });
+
+  // ── TAB 4: 进程池 & 终端托管 ────────────────────────────────────────────
+  const t4ProcSummary = document.getElementById("t4-proc-summary");
+  const t4ProcDesc = document.getElementById("t4-proc-desc");
+  const t4ProcList = document.getElementById("t4-proc-list");
+  const t4BtnToggleTerm = document.getElementById("t4-btn-toggle-term");
+  const t4BtnRunCmd = document.getElementById("t4-btn-run-cmd");
+  const t4TermHint = document.getElementById("t4-term-hint");
+  const t4TermOutputArea = document.getElementById("t4-term-output-area");
+
+  function renderT4() {
+    const isAcp = state.mode === "acp";
+    if (!isAcp) {
+      t4ProcSummary.textContent = "5 个并发会话 = 5 棵独立常驻进程树";
+      t4ProcSummary.className = "badge warn";
+      t4ProcDesc.textContent = "现状下，即使同一个 Agent、同一套供应商认证打开 4 个项目会话，也必须启动 4 个互不共享的常驻 CLI 子进程。";
+      t4ProcList.innerHTML = [1, 2, 3, 4, 5].map((i) => `
+        <div class="proc-node">
+          <div class="proc-node-head">
+            <span>PID ${4120 + i * 17} · 独立 CLI 进程树 #${i}</span>
+            <span class="badge warn">~180 MB RAM</span>
+          </div>
+          <div class="session-pills"><span class="session-pill">仅承载 1 个会话 (project-${i})</span></div>
+        </div>`).join("");
+    } else {
+      t4ProcSummary.textContent = "按 (agentId, envHash) 分桶 · 2 个进程托管 5 个会话";
+      t4ProcSummary.className = "badge ok";
+      t4ProcDesc.textContent = "利用 ACP「单进程多会话」能力复用常驻进程；同时按环境变量与中转商哈希分桶，完整保留 TerminalBuddy 的按会话第三方供应商隔离特性。";
+      t4ProcList.innerHTML = `
+        <div class="proc-node">
+          <div class="proc-node-head">
+            <span>ACP 进程桶 #1 · agy acp (envHash: default-google)</span>
+            <span class="badge ok">1 进程承载 4 会话 · 省内存 65%+</span>
+          </div>
+          <div class="session-pills">
+            <span class="session-pill">session A · D:\\terminal-buddy</span>
+            <span class="session-pill">session B · D:\\android-app</span>
+            <span class="session-pill">session C · D:\\docs-site</span>
+            <span class="session-pill">session D · 定时巡检任务</span>
+          </div>
+        </div>
+        <div class="proc-node">
+          <div class="proc-node-head">
+            <span>ACP 进程桶 #2 · custom-proxy (envHash: third-party-relay)</span>
+            <span class="badge accent">凭据严格隔离</span>
+          </div>
+          <div class="session-pills">
+            <span class="session-pill">session E · 第三方中转 API Key 独立隔离</span>
+          </div>
+        </div>`;
+    }
+
+    const hosted = isAcp && state.t4TermHosted;
+    t4BtnToggleTerm.disabled = !isAcp;
+    t4BtnToggleTerm.textContent = !isAcp ? "现状不支持" : (state.t4TermHosted ? "已开启" : "已关闭");
+    t4BtnToggleTerm.className = hosted ? "btn btn-sm btn-primary" : "btn btn-sm";
+    t4TermHint.textContent = !isAcp
+      ? "现状：原生会话与 PTY 终端完全隔离"
+      : (hosted ? "将通过 TerminalService 创建可见终端标签" : "已关闭托管：命令在 Agent 内部静默运行");
+
+    if (!state.t4CmdRan) {
+      t4TermOutputArea.innerHTML = `<div style="padding:18px;text-align:center;border:1px dashed var(--border);border-radius:6px;color:var(--text-tertiary);font-size:12px;">点击上方「模拟 Agent 执行 cargo test --lib」，对比终端托管开启前后的输出形态</div>`;
+      return;
+    }
+
+    if (!hosted) {
+      t4TermOutputArea.innerHTML = `
+        <div class="msg tool" style="margin:0;">
+          <div class="msg-meta">工具输出气泡（未开启终端托管 / 现状表现）</div>
+          <div>cargo test --lib<br>test result: ok. 428 passed; 0 failed (纯文本截断摘要，无法交互输入或按 CTRL+C 单独接管)</div>
+        </div>`;
+    } else {
+      t4TermOutputArea.innerHTML = `
+        <div class="term-dock">
+          <div class="term-dock-bar">
+            <span><strong>TerminalBuddy PTY #term-94b2</strong> · <code>cargo test --lib</code> · ConPTY</span>
+            <span style="display:flex;gap:6px;">
+              <span class="badge ok">ACP terminal/create 已关联</span>
+              <button type="button" class="btn btn-sm" id="t4-btn-takeover">接管控制</button>
+            </span>
+          </div>
+          <div class="term-dock-body"><span class="ansi-dim">$ cargo test --lib</span>
+<span class="ansi-cyan">   Compiling</span> terminal-buddy v1.9.0 (D:\\terminal-buddy\\terminal-buddy\\src-tauri)
+<span class="ansi-green">    Finished</span> \`test\` profile [unoptimized + debuginfo] target(s) in 4.18s
+<span class="ansi-green">     Running</span> unittests src\\lib.rs (target\\debug\\deps\\terminal_buddy_lib.exe)
+
+running 428 tests
+test services::ai_chat_service::tests::claude_queue_writes_to_same_process ... <span class="ansi-green">ok</span>
+test services::ai_permission_service::tests::sandbox_modes_use_protocol_values ... <span class="ansi-green">ok</span>
+
+test result: <span class="ansi-green">ok</span>. 428 passed; 0 failed; 0 ignored; 0 measured</div>
+        </div>`;
+      const takeover = document.getElementById("t4-btn-takeover");
+      if (takeover) {
+        takeover.addEventListener("click", () => {
+          takeover.textContent = "已切入交互终端标签 ✓";
+          takeover.className = "btn btn-sm btn-success";
+        });
+      }
+    }
+  }
+
+  t4BtnToggleTerm.addEventListener("click", () => {
+    if (state.mode !== "acp") return;
+    state.t4TermHosted = !state.t4TermHosted;
+    renderT4();
+  });
+
+  t4BtnRunCmd.addEventListener("click", () => {
+    state.t4CmdRan = true;
+    renderT4();
+  });
+
+  function renderAll() {
+    renderT1();
+    renderT2();
+    renderT3();
+    renderT4();
+  }
+
+  renderAll();
+})();
+</script>
+</body>
+</html>
