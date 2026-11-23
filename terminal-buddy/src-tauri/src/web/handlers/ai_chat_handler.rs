@@ -84,46 +84,58 @@ pub async fn resume_codex_history(claims: ClaimsFromRequest, Path(id): Path<Stri
         service::resume_codex_history(&claims.0.sub, &id, project_path, input, history).map(Json).map_err(service_error)
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
-// 正文直接返回内存快照；标题由列表与回合收尾刷新，不阻塞恢复对话和实时首帧。
-pub async fn get(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiSession>, ApiError> {
-    blocking(move || service::get(&id, &claims.0.sub)).await
+/// 新手机显式选择精简确认；未携带参数的旧客户端仍收到完整会话。
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionQuery {
+    compact: bool,
+    after_revision: Option<u64>,
 }
-pub async fn send(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<SendAiMessage>) -> Result<Json<SendAiMessageResult>, ApiError> {
+
+// 无更新返回 null；旧客户端不带版本号时仍直接收到完整会话。
+pub async fn get(claims: ClaimsFromRequest, Path(id): Path<String>, Query(query): Query<SessionQuery>) -> Result<Json<Option<AiSession>>, ApiError> {
+    blocking(move || service::get_if_changed(&id, &claims.0.sub, query.after_revision)).await
+}
+pub async fn send(claims: ClaimsFromRequest, Path(id): Path<String>, Query(query): Query<SessionQuery>, Json(input): Json<SendAiMessage>) -> Result<Json<SendAiMessageResult>, ApiError> {
     tokio::task::spawn_blocking(move || {
-        let session = service::get(&id, &claims.0.sub).map_err(service_error)?;
+        let session = service::metadata(&id, &claims.0.sub).map_err(service_error)?;
         super::ensure_project_scope(&session.project_path)?;
-        service::send_result(&id, &claims.0.sub, input).map(Json).map_err(service_error)
+        service::send_result(&id, &claims.0.sub, input, query.compact).map(Json).map_err(service_error)
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
-/// 把指定排队消息立即插话到当前 CLI 进程（worker 已退出时按队首启动新回合）。
-pub async fn flush(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<FlushAiQueue>) -> Result<Json<AiSession>, ApiError> {
+/// 排队插话确认不必再次复制与下载整段正文。
+pub async fn flush(claims: ClaimsFromRequest, Path(id): Path<String>, Query(query): Query<SessionQuery>, Json(input): Json<FlushAiQueue>) -> Result<Json<AiSession>, ApiError> {
     tokio::task::spawn_blocking(move || {
-        let session = service::get(&id, &claims.0.sub).map_err(service_error)?;
+        let session = service::metadata(&id, &claims.0.sub).map_err(service_error)?;
         super::ensure_project_scope(&session.project_path)?;
         service::flush(&id, &claims.0.sub, input.request_id.as_deref()).map_err(service_error)?;
-        service::get(&id, &claims.0.sub).map(Json).map_err(service_error)
+        let snapshot = if query.compact { service::metadata(&id, &claims.0.sub) } else { service::get(&id, &claims.0.sub) };
+        snapshot.map(Json).map_err(service_error)
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
 pub async fn update_pending_input(
     claims: ClaimsFromRequest, Path((id, request_id)): Path<(String, String)>, Json(input): Json<UpdateAiPendingInput>,
 ) -> Result<Json<AiSession>, ApiError> {
     tokio::task::spawn_blocking(move || {
-        let session = service::get(&id, &claims.0.sub).map_err(service_error)?;
+        let session = service::metadata(&id, &claims.0.sub).map_err(service_error)?;
         super::ensure_project_scope(&session.project_path)?;
         service::update_pending_input(&id, &claims.0.sub, &request_id, input.text).map(Json).map_err(service_error)
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
 pub async fn delete_pending_input(
-    claims: ClaimsFromRequest, Path((id, request_id)): Path<(String, String)>,
+    claims: ClaimsFromRequest, Path((id, request_id)): Path<(String, String)>, Query(query): Query<SessionQuery>,
 ) -> Result<Json<AiSession>, ApiError> {
-    blocking(move || service::delete_pending_input(&id, &claims.0.sub, &request_id)).await
+    blocking(move || service::delete_pending_input_response(&id, &claims.0.sub, &request_id, query.compact)).await
 }
-pub async fn stop(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<()>, ApiError> {
-    blocking(move || service::stop(&id, &claims.0.sub)).await
+pub async fn stop(claims: ClaimsFromRequest, Path(id): Path<String>, Query(query): Query<SessionQuery>) -> Result<Json<Option<AiSession>>, ApiError> {
+    blocking(move || {
+        service::stop(&id, &claims.0.sub)?;
+        if query.compact { service::metadata(&id, &claims.0.sub).map(Some) } else { Ok(None) }
+    }).await
 }
-/// 强制结束：立即终止会话进程并清理审批/排队，不等待 CLI 的停止握手。
-pub async fn force_stop(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiSession>, ApiError> {
-    blocking(move || service::force_stop(&id, &claims.0.sub)).await
+/// 强制结束保持旧客户端全文响应，新手机只取终止状态。
+pub async fn force_stop(claims: ClaimsFromRequest, Path(id): Path<String>, Query(query): Query<SessionQuery>) -> Result<Json<AiSession>, ApiError> {
+    blocking(move || service::force_stop_response(&id, &claims.0.sub, query.compact)).await
 }
 
 #[derive(serde::Deserialize)]

@@ -189,6 +189,16 @@ class AiRepository(context: Context) {
         .callTimeout(0, TimeUnit.MILLISECONDS).readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
+    /** 消息提交独立于正文同步，允许图片上传，确认响应限制等待时间。 */
+    private val sendHttp = http.newBuilder().dispatcher(Dispatcher())
+        .writeTimeout(45, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(60, TimeUnit.SECONDS).build()
+
+    /** 停止、插话与队列操作不排在长历史请求或图片上传后面。 */
+    private val controlHttp = http.newBuilder().dispatcher(Dispatcher())
+        .connectTimeout(5, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(12, TimeUnit.SECONDS).build()
+
     /** 独立心跳及时发现后台半断开的连接，不影响正文上传的超时配置。 */
     private val realtime = ai.newBuilder().pingInterval(15, TimeUnit.SECONDS).build()
 
@@ -277,11 +287,17 @@ class AiRepository(context: Context) {
             if (model.id.isNotBlank()) put("model", model.id)
         }))
     /** 后台正文补偿固定使用任务所属账号，且不占用页面请求队列。 */
-    internal suspend fun backgroundSession(id: String, connection: AiConnection): AiSession =
+    internal suspend fun backgroundSession(id: String, connection: AiConnection, revision: Long): AiSession? =
         ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions", id),
-            server = connection.server, token = connection.token, client = notificationHttp))
+            server = connection.server, token = connection.token, client = notificationHttp,
+            query = mapOf("afterRevision" to revision.toString())))
 
     suspend fun session(id: String): AiSession = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions", id)))
+
+    /** 正文已同步时只检查版本，无变化返回 null，避免周期性下载完整历史。 */
+    suspend fun sessionIfChanged(id: String, revision: Long): AiSession? =
+        ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions", id),
+            query = mapOf("afterRevision" to revision.toString())))
 
     suspend fun create(project: AiProject, provider: AiProvider, model: String, resumeSessionId: String? = null): AiSession =
         ApiJson.decodeFromJsonElement(
@@ -333,7 +349,7 @@ class AiRepository(context: Context) {
                         }
                     }
                 })
-            })
+            }, client = sendHttp, query = mapOf("compact" to "true"))
         )
 
     /** 兼容新服务端的轻量确认与旧服务端返回的完整会话。 */
@@ -343,29 +359,34 @@ class AiRepository(context: Context) {
             id = objectValue.text("id"),
             requestId = objectValue.text("requestId"),
             revision = objectValue.number("revision")?.toLong() ?: 0,
+            status = objectValue.text("status").takeIf(String::isNotBlank),
         )
     }
 
-    /** 「原生插话」排队消息：把该消息直接交给运行中的 CLI 进程，返回最新会话。 */
+    /** 「原生插话」排队消息：交给当前 CLI，返回状态和队列元数据。 */
     suspend fun flush(id: String, requestId: String?): AiSession =
         ApiJson.decodeFromJsonElement(
             request("POST", listOf("ai", "sessions", id, "flush"), jsonBody {
                 if (!requestId.isNullOrBlank()) put("requestId", requestId)
-            })
+            }, client = controlHttp, query = mapOf("compact" to "true"))
         )
 
     suspend fun deletePendingInput(id: String, requestId: String): AiSession =
         ApiJson.decodeFromJsonElement(
-            request("DELETE", listOf("ai", "sessions", id, "pending", requestId))
+            request("DELETE", listOf("ai", "sessions", id, "pending", requestId),
+                client = controlHttp, query = mapOf("compact" to "true"))
         )
 
-    suspend fun stop(id: String) {
-        request("POST", listOf("ai", "sessions", id, "stop"))
-    }
+    /** 新服务端返回状态确认；兼容旧服务端的 null 响应。 */
+    suspend fun stop(id: String): AiSession? = ApiJson.decodeFromJsonElement(
+        request("POST", listOf("ai", "sessions", id, "stop"),
+            client = controlHttp, query = mapOf("compact" to "true")),
+    )
 
-    /** 强制结束：服务端立即摘掉旧 worker 并返回已经落盘的终止快照。 */
+    /** 强制结束：服务端摘掉旧 worker，返回已落盘的终止状态元数据。 */
     suspend fun forceStop(id: String): AiSession =
-        ApiJson.decodeFromJsonElement(request("POST", listOf("ai", "sessions", id, "force-stop")))
+        ApiJson.decodeFromJsonElement(request("POST", listOf("ai", "sessions", id, "force-stop"),
+            client = controlHttp, query = mapOf("compact" to "true")))
 
     suspend fun delete(id: String) {
         request("DELETE", listOf("ai", "sessions", id))

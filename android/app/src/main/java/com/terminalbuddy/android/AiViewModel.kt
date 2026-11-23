@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
@@ -16,6 +17,7 @@ import com.terminalbuddy.android.notifications.AiNotificationTarget
 import com.terminalbuddy.android.notifications.ServerNotificationTarget
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.selects.select
 import kotlinx.serialization.json.*
 import java.util.UUID
 
@@ -164,6 +166,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val sessionId: String, val message: AiMessage, val draft: String, val queued: Boolean,
         /** 发送失败/取消时放回输入框上方的图片。 */
         val attachments: List<AiDraftImage> = emptyList(),
+        /** HTTP 与实时流共用同一确认，任一路收到回执即可完成本次发送。 */
+        val accepted: CompletableDeferred<Unit> = CompletableDeferred(),
     ) {
         val requestId get() = message.id.removePrefix("local-")
         fun display(session: AiSession): AiSession = if (queued) {
@@ -172,6 +176,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     }
     /** 未确认消息按发送时的任务状态展示在队列或正文，实时快照不会覆盖占位。 */
     private var outgoing: OutgoingMessage? = null
+    /** 控制状态与正文分开记录版本，防止迟到的缓存帧把停止状态覆盖回运行中。 */
+    private var controlRevision: Pair<String, Long>? = null
+
+    private fun controlRevisionFor(id: String): Long = controlRevision?.takeIf { it.first == id }?.second ?: 0L
 
     private val connectivity = requireNotNull(application.getSystemService(ConnectivityManager::class.java))
     private var defaultNetwork = connectivity.activeNetwork
@@ -411,6 +419,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     /** 清空当前连接的内存状态和在途任务，各账号的磁盘数据仍按身份隔离。 */
     private fun resetConnection() {
         generation++
+        controlRevision = null
         cancelHistoryJobs()
         stopRealtime(); refreshJob?.cancel(); refreshJob = null; selectJob?.cancel(); cancelSend(); actionJob?.cancel()
         repository.sessionCache.invalidate()
@@ -1022,6 +1031,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeSession() {
         generation++
+        controlRevision = null
         selectJob?.cancel(); cancelSend(); stopRealtime(); repository.lastSession = ""
         pending = null
         mutable.update {
@@ -1143,13 +1153,17 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 发送确认后按 requestId 替换本地占位，避免等待完整历史回包。 */
-    private fun confirmedUserMessage(sessionId: String, requestId: String) {
+    private fun confirmedUserMessage(sessionId: String, requestId: String, result: AiSendResult?) {
         val message = outgoing?.takeIf { it.sessionId == sessionId && it.requestId == requestId } ?: return
         outgoing = null
+        message.accepted.complete(Unit)
+        val receipt = result?.takeIf { it.revision >= controlRevisionFor(sessionId) }
+        receipt?.let { controlRevision = sessionId to it.revision }
         mutable.update { current ->
             val selected = current.selected
             if (selected == null || selected.id != sessionId) current
             else current.copy(selected = selected.copy(
+                status = receipt?.takeIf { it.revision >= selected.revision }?.status ?: selected.status,
                 messages = selected.messages.map { item ->
                     if (item.id == message.message.id) item.copy(id = requestId) else item
                 },
@@ -1244,29 +1258,39 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 // 真实会话 ID 就绪后启动实时订阅和轮询，首次发送也能持续接收回复。
                 repository.accounts.activeId?.let { taskNotifications.expectTask(it, target) }
                 startRealtime()
-                // 回复进行中：排队模式等当前回合任务完成后由服务端续发；插话模式直接交给当前 CLI 进程。
-                // 发送只负责“服务端已接纳”：服务端确认最多等 60 秒。长文本/图片仍可完整上传，
-                // 但不会再因一次半开连接把发送按钮永远锁在转圈状态。
+                // 实时确认比 HTTP 回包先到时，立即完成发送并取消多余下载。
                 val result = withTimeout(60_000) {
-                    repository.send(
-                        target.id, text, request.second, ui.sendSteer,
-                        attachments.map { AiSendImage(it.data, it.mediaType, it.name) },
-                    )
+                    coroutineScope {
+                        val submission = async {
+                            repository.send(
+                                target.id, text, request.second, ui.sendSteer,
+                                attachments.map { AiSendImage(it.data, it.mediaType, it.name) },
+                            )
+                        }
+                        try {
+                            select<AiSendResult?> {
+                                message.accepted.onAwait { null }
+                                submission.onAwait { it }
+                            }
+                        } finally {
+                            submission.cancel()
+                        }
+                    }
                 }
                 if (epoch != generation || mutable.value.selected?.id != target.id) return@launch
                 requests.remove(target.id)
-                // 服务端已确认该 requestId；本地占位无需再等完整快照回来。
-                // 旧服务端返回完整会话时，后续实时帧会按版本合并。
-                confirmedUserMessage(target.id, request.second)
-                mutable.update { current ->
-                    val selected = current.selected
-                    if (selected == null || selected.id != target.id) current
-                    else current.copy(selected = selected.copy(revision = maxOf(selected.revision, result.revision)))
+                confirmedUserMessage(target.id, request.second, result)
+                // 确认只证明消息已接纳，不能推进正文版本，否则补拉会误以为正文已经同步。
+            } catch (e: TimeoutCancellationException) {
+                if (epoch == generation && !message.accepted.isCompleted) {
+                    clearOutgoing(restoreDraft = true)
+                    notificationAccountId?.let { taskNotifications.forgetSession(it, notificationSessionId) }
+                    failure(ApiException(408, "发送确认超时，消息可能已送达；可重试，系统会按请求标识去重"))
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (epoch == generation) {
+                if (epoch == generation && !message.accepted.isCompleted) {
                     clearOutgoing(restoreDraft = true)
                     // 发送失败时撤掉刚登记的「运行中」通知基线。
                     notificationAccountId?.let { taskNotifications.forgetSession(it, notificationSessionId) }
@@ -1280,13 +1304,13 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 插话排队消息：服务端把该消息直接交给运行中的 CLI 进程，不中断当前任务。 */
     fun sendQueuedNow(requestId: String) {
-        action { repository.flush(it.id, requestId) }
+        action { receiveMetadata(repository.flush(it.id, requestId)) }
     }
 
     fun deleteQueuedMessage(requestId: String) {
         // 当前发送就绪后可删除；占位 ID 只存在于本地，提交时会被服务端拒绝，因此直接忽略。
         if (requestId.startsWith("local-")) return
-        action { repository.deletePendingInput(it.id, requestId) }
+        action { receiveMetadata(repository.deletePendingInput(it.id, requestId)) }
     }
 
     /** 发送方式是全局设置，立即生效并持久化，不影响服务端已排队的消息。 */
@@ -1313,7 +1337,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                         withTimeoutOrNull(3_000) { repository.session(session.id) }?.let(::receive)
                     }
                 } else if (epoch == generation) {
-                    receive(snapshot)
+                    receiveMetadata(snapshot)
                     // 终止结果不是执行故障：清掉任何旧错误，只保留状态文案。
                     mutable.update {
                         if (it.selected?.id == snapshot.id) it.copy(error = null) else it
@@ -1337,15 +1361,14 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(working = true, error = null, selected = it.selected?.copy(status = "stopping")) }
         actionJob = viewModelScope.launch {
             try {
-                repository.stop(session.id)
-                if (epoch == generation) {
-                    withTimeoutOrNull(3_000) { repository.session(session.id) }?.let(::receive)
-                }
+                val snapshot = repository.stop(session.id)
+                if (epoch == generation && snapshot != null) receiveMetadata(snapshot)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 if (epoch == generation) {
-                    mutable.update { it.copy(selected = it.selected?.takeIf { item -> item.id == session.id }?.copy(status = session.status) ?: it.selected) }
+                    mutable.update { it.copy(selected = it.selected?.takeIf { item -> item.id == session.id && item.status == "stopping" && item.revision <= session.revision }
+                            ?.copy(status = session.status) ?: it.selected) }
                     failure(e)
                 }
             } finally {
@@ -1468,7 +1491,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 中断 / 确认这类动作完成后主动拉一次完整会话，走与 WebSocket 相同的合并逻辑。 */
+    /** 队列操作采用状态回执，正文交给实时流补齐，不在动作结束后等待整段历史。 */
     private fun action(block: suspend (AiSession) -> Unit) {
         val session = mutable.value.selected ?: return
         if (actionJob?.isActive == true) return
@@ -1477,11 +1500,6 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(working = true, error = null) }
             try {
                 block(session)
-                if (epoch == generation) {
-                    // 停止、插话等动作已由服务端实时推送最终状态；这里只在 3 秒内补拉一次，
-                    // 避免长会话在动作完成后又被完整 GET 拖住，让按钮长时间显示“处理中”。
-                    withTimeoutOrNull(3_000) { repository.session(session.id) }?.let(::receive)
-                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -1492,10 +1510,40 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** 控制回执只更新状态与队列，保留正文和正文版本，后续实时帧仍能补齐内容。 */
+    private fun receiveMetadata(session: AiSession) {
+        val selected = mutable.value.selected ?: return
+        if (selected.id != session.id || session.revision < maxOf(selected.revision, controlRevisionFor(session.id))) return
+        controlRevision = session.id to session.revision
+        // 兼容旧服务端忽略 compact 参数并返回全文。
+        if (session.messages.isNotEmpty()) {
+            receive(session)
+            return
+        }
+        val message = outgoing?.takeIf { it.sessionId == session.id }
+        val accepted = message != null && session.pendingInputs.any { it.requestId == message.requestId }
+        if (accepted) {
+            message?.accepted?.complete(Unit)
+            outgoing = null
+            requests.remove(session.id)
+        }
+        mutable.update { current ->
+            val previous = current.selected
+            if (previous == null || previous.id != session.id || session.revision < previous.revision) current
+            else {
+                val messages = if (accepted && message != null) previous.messages.filterNot { it.id == message.message.id }
+                    else previous.messages
+                var snapshot = session.copy(messages = messages, revision = previous.revision)
+                if (message != null && !accepted && message.queued) snapshot = message.display(snapshot)
+                current.copy(selected = snapshot, error = null)
+            }
+        }
+    }
+
     /** Revision 单调递增：旧快照不会覆盖新状态；列表项按更新时间重排且不携带完整历史。 */
     private fun receive(session: AiSession) {
         val selected = mutable.value.selected ?: return
-        if (selected.id != session.id || session.revision < selected.revision) return
+        if (selected.id != session.id || session.revision < maxOf(selected.revision, controlRevisionFor(session.id))) return
         // `/` 清单随 CLI 启动刷新：按 Agent 缓存一份，新会话在 init 到达前也能补全。
         session.slashCatalog?.let { catalog ->
             repository.saveSlashCatalog(session.provider, catalog)
@@ -1513,6 +1561,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 session.pendingInputs.any { it.requestId == message.requestId }
         )
         if (accepted) {
+            message?.accepted?.complete(Unit)
             outgoing = null
             requests.remove(session.id)
         }
@@ -1582,6 +1631,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val id = mutable.value.selected?.id ?: return
         if (!visible || !store.loggedIn || mutable.value.authenticating || streamJob?.isActive == true) return
         val epoch = generation
+        var lastFrameAt = 0L
         val cache = repository.sessionCache
         cache.scope()?.let { cacheScope ->
             // 从后台恢复时先用已经持续同步的正文，网络连接随后静默追上。
@@ -1600,6 +1650,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     repository.observe(id).collect { snapshot ->
                         if (epoch == generation) {
                             retries = 0
+                            lastFrameAt = SystemClock.elapsedRealtime()
                             mutable.update { it.copy(connected = true, reconnecting = false, loadingSession = false) }
                             receive(snapshot)
                         }
@@ -1627,16 +1678,19 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 retries = (retries + 1).coerceAtMost(4)
             }
         }
-        // WS 被代理拦截时仍能同步：连上时 15 秒补一次，断开时 3 秒一次。
+        // 实时正文活跃时不补拉；静默或断线后检查版本，有更新才下载全文。
         pollingJob = viewModelScope.launch {
             var refreshNow = refreshImmediately
             while (isActive && epoch == generation) {
                 if (!refreshNow) delay(if (mutable.value.connected) 15_000 else 3_000)
+                val forceRefresh = refreshNow
                 refreshNow = false
+                if (!forceRefresh && mutable.value.connected && lastFrameAt > 0 &&
+                    SystemClock.elapsedRealtime() - lastFrameAt < 20_000) continue
                 try {
-                    val snapshot = repository.session(id)
+                    val snapshot = repository.sessionIfChanged(id, mutable.value.selected?.revision ?: 0L)
                     if (epoch == generation) {
-                        receive(snapshot)
+                        snapshot?.let(::receive)
                         mutable.update { it.copy(reconnecting = false, loadingSession = false, error = null) }
                     }
                 } catch (e: CancellationException) {

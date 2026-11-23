@@ -91,6 +91,7 @@ data class AiSendResult(
     val id: String = "",
     val requestId: String = "",
     val revision: Long = 0,
+    val status: String? = null,
 )
 
 @Serializable

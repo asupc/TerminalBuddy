@@ -101,7 +101,7 @@ internal class AiSessionBodySync(private val repository: AiRepository, private v
             while (isActive && !finished.isCompleted) {
                 if (lastFrameAt == 0L || SystemClock.elapsedRealtime() - lastFrameAt >= 15_000) {
                     try {
-                        val session = withTimeoutOrNull(25_000) { repository.backgroundSession(target.id, target.connection) }
+                        val session = withTimeoutOrNull(25_000) { repository.backgroundSession(target.id, target.connection, revisions[target] ?: 0L) }
                         if (session != null) accept(session)
                     } catch (e: CancellationException) {
                         throw e

@@ -314,8 +314,8 @@ pub struct SendAiMessage {
     pub images: Vec<SendAiImage>,
 }
 
-/// 发送确认：正文通过 WS 与 GET 同步。为兼容旧客户端，首层保留完整会话字段，
-/// 新客户端只读取 `requestId` / `revision`，不会再解析冗长历史。
+/// 发送确认：精简模式仅携带会话元数据与请求标识，正文通过 WS 与 GET 同步。
+/// 未选择精简模式的旧客户端仍收到完整会话。
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendAiMessageResult {
