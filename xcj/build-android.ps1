@@ -8,15 +8,19 @@
       检测 JDK 17+ → 解析/自动补齐 Android SDK（默认 %USERPROFILE%\.android-sdk）
       → versionName 末段 +1、versionCode +1（失败自动回退）
       → gradlew :app:assembleRelease → apksigner 校验
-      → dist\ 归档并生成 .sha256 → 可选移动到 DEPLOY_DIR
+      → dist\ 归档并生成 .sha256 → 移动到部署目录（默认 \\192.168.1.71\code）
       → 清理 Gradle / Kotlin JVM。
 
     与 Linux 版的差异：Windows 没有 apt，Android SDK 缺失时自动下载 cmdline-tools
-    到用户目录（约 1-2 GB）；DEPLOY_DIR 未设置时产物保留在 dist\（不像 Linux 版
-    默认移动到 /mnt/fnos/code）。
+    到用户目录（约 1-2 GB）。构建成功后默认把 APK 与 .sha256 移动到共享目录
+    \\192.168.1.71\code（对应 Linux 版的 /mnt/fnos/code）；该目录不可达时降级为
+    保留在 dist\ 并给出警告。
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File xcj\build-android.ps1 --clean-cache
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File xcj\build-android.ps1 --deploy-dir D:\apk
 #>
 
 Set-StrictMode -Version Latest
@@ -31,6 +35,10 @@ $CmdlineToolsVersion = 13114758
 $CompileSdk = 36
 $BuildTools = '35.0.0'
 $CleanCache = $false
+# 构建成功后产物移动的目标目录：命令行 --deploy-dir > 环境变量 DEPLOY_DIR > 默认共享目录
+$DefaultDeployDir = '\\192.168.1.71\code'
+$DeployDir = if ($env:DEPLOY_DIR) { $env:DEPLOY_DIR } else { $DefaultDeployDir }
+$NoDeploy = $false
 
 function Write-Step {
     param([string]$Message)
@@ -49,31 +57,48 @@ function Write-WarnNote {
 
 function Show-Usage {
     Write-Host @'
-用法：xcj\build-android.ps1 [--clean-cache]
+用法：xcj\build-android.ps1 [--clean-cache] [--deploy-dir <目录>] [--no-deploy]
 
-  --clean-cache  清空项目内 Gradle 构建缓存（android\.gradle 与 android\app\build）
-  -h, --help     显示本帮助
+  --clean-cache       清空项目内 Gradle 构建缓存（android\.gradle 与 android\app\build）
+  --deploy-dir <目录> 构建成功后把 APK 与 .sha256 移动到该目录（也支持 --deploy-dir=<目录>）
+  --no-deploy         不移动产物，保留在 dist\
+  -h, --help          显示本帮助
 
 说明：每次构建自动 versionName 末段 +1 / versionCode +1，
       成功后写入 android\app\build.gradle.kts（构建失败自动回退）。
 
 环境变量：
   ANDROID_HOME / ANDROID_SDK_ROOT  Android SDK 目录，默认 %USERPROFILE%\.android-sdk
-  DEPLOY_DIR                       构建产物移动目标目录；未设置或为空时保留在 dist\
+  DEPLOY_DIR                       构建产物移动目标目录；默认 \\192.168.1.71\code
+                                   （命令行 --deploy-dir 优先于此变量）
+
+产物默认移动到共享目录 \\192.168.1.71\code；该目录不可达或写入失败时，
+产物保留在 dist\ 并给出警告，不影响构建结果。
 '@
 }
 
-foreach ($arg in $args) {
-    switch ($arg) {
-        '--clean-cache' { $CleanCache = $true }
-        '-h' { Show-Usage; exit 0 }
-        '--help' { Show-Usage; exit 0 }
-        default {
-            Write-Host "错误：未知参数：$arg" -ForegroundColor Red
+for ($i = 0; $i -lt $args.Count; $i++) {
+    $arg = [string]$args[$i]
+    if ($arg -eq '--clean-cache') { $CleanCache = $true; continue }
+    if ($arg -eq '-h' -or $arg -eq '--help') { Show-Usage; exit 0 }
+    if ($arg -eq '--no-deploy') { $NoDeploy = $true; continue }
+    if ($arg -eq '--deploy-dir') {
+        if ($i + 1 -ge $args.Count) {
+            Write-Host '错误：--deploy-dir 缺少目录参数' -ForegroundColor Red
             Show-Usage
             exit 1
         }
+        $i++
+        $DeployDir = [string]$args[$i]
+        continue
     }
+    if ($arg -like '--deploy-dir=*') {
+        $DeployDir = $arg.Substring('--deploy-dir='.Length)
+        continue
+    }
+    Write-Host "错误：未知参数：$arg" -ForegroundColor Red
+    Show-Usage
+    exit 1
 }
 
 # ---------------------------------------------------------------------------
@@ -499,21 +524,38 @@ function Invoke-Main {
         }
     }
 
-    # DEPLOY_DIR 明确设置（非空）时才移动产物；Windows 本机默认保留在 dist\
-    if ($env:DEPLOY_DIR) {
-        $deployDir = [IO.Path]::GetFullPath($env:DEPLOY_DIR)
+    # 构建成功后默认移动产物到共享目录（Linux 版对应 /mnt/fnos/code）。
+    # 目标不可达或写入失败时只警告，产物保留在 dist\，不影响构建结果。
+    if ($NoDeploy) {
+        Write-Note "已指定 --no-deploy，产物保留在 $OutputDir"
+    }
+    elseif ($DeployDir) {
+        $deployDir = $DeployDir.Trim()
+        if ($deployDir -match '^[A-Za-z]:' -or $deployDir -match '^\\\\') {
+            $deployDir = [IO.Path]::GetFullPath($deployDir)
+        }
+        $moved = $false
         try {
-            New-Item -ItemType Directory -Path $deployDir -Force -ErrorAction Stop | Out-Null
-            Move-Item -LiteralPath @($target, "$target.sha256") -Destination $deployDir -Force -ErrorAction Stop
+            if (!(Test-Path -LiteralPath $deployDir -PathType Container)) {
+                New-Item -ItemType Directory -Path $deployDir -Force -ErrorAction Stop | Out-Null
+            }
+            foreach ($item in @($target, "$target.sha256")) {
+                Move-Item -LiteralPath $item -Destination $deployDir -Force -ErrorAction Stop
+            }
             $finalTarget = Join-Path $deployDir $targetName
+            $moved = $true
             Write-Step "已移动产物到 $deployDir"
         }
         catch {
             Write-WarnNote "移动到 $deployDir 失败（$($_.Exception.Message)），产物保留在 $OutputDir"
         }
+        if (!$moved -and !(Test-Path -LiteralPath $target -PathType Leaf)) {
+            # 极少数情况下 APK 已过去、.sha256 失败，避免最后一行报出无效路径
+            Write-WarnNote "本地产物 $target 已不在 $OutputDir，请确认上述目标目录内容是否完整"
+        }
     }
     else {
-        Write-Note "DEPLOY_DIR 未设置，产物保留在 $OutputDir"
+        Write-Note "未指定部署目录，产物保留在 $OutputDir"
     }
 
     Write-Note "产物：$finalTarget"
