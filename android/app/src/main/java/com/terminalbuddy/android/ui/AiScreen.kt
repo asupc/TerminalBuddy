@@ -202,13 +202,20 @@ fun AiScreen(
         }
     } else {
         val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-        Column(Modifier.fillMaxSize().imePadding()) {
+        val tabletLandscape = isTabletLandscape()
+        val locateUnread: () -> Unit = {
+            if (ui.sessions.any { it.id in ui.unviewedIds }) {
+                unreadSessionRequest++
+                tab = AiHomeTab.Sessions
+            }
+        }
+        val content: @Composable ColumnScope.() -> Unit = {
             if (tab != AiHomeTab.Sessions) {
                 PageHeader(tab.title, reconnecting = ui.reconnecting, subtitle = tab.subtitle, connecting = ui.initialLoading)
                 ui.error?.let { AiError(it, vm::clearError) }
             }
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
-                Box(Modifier.widthIn(max = 680.dp).fillMaxSize()) {
+                Box(Modifier.widthIn(max = if (tabletLandscape) 1200.dp else 680.dp).fillMaxSize()) {
                     tabState.SaveableStateProvider("home:${ui.activeAccountId}:${tab.name}") {
                         when (tab) {
                             AiHomeTab.QuickStart -> AiHomeWorkspace(ui, vm, sessions = {
@@ -238,14 +245,17 @@ fun AiScreen(
                     }
                 }
             }
-            if (!keyboardVisible) AiBottomNavigation(tab, ui.unviewedIds.size,
-                select = { tab = it },
-                locateUnread = {
-                    if (ui.sessions.any { it.id in ui.unviewedIds }) {
-                        unreadSessionRequest++
-                        tab = AiHomeTab.Sessions
-                    }
-                })
+            if (!tabletLandscape && !keyboardVisible) {
+                AiBottomNavigation(tab, ui.unviewedIds.size, select = { tab = it }, locateUnread = locateUnread)
+            }
+        }
+        if (tabletLandscape) {
+            Row(Modifier.fillMaxSize().imePadding()) {
+                AiNavigationRail(tab, ui.unviewedIds.size, select = { tab = it }, locateUnread = locateUnread)
+                Column(Modifier.weight(1f).fillMaxHeight()) { content() }
+            }
+        } else {
+            Column(Modifier.fillMaxSize().imePadding()) { content() }
         }
     }
     if (terminalUi.dialogOpen && terminalVm.isCurrentAccount()) ServerProjectProfilesDialog(terminalUi, terminalVm)

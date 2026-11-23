@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -46,8 +47,8 @@ internal fun AiProfileScreen(
     var confirmLogout by remember(ui.activeAccountId) { mutableStateOf(false) }
     val enabled = !ui.working && !ui.authenticating
     val version = appVersion()
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    val tabletLandscape = isTabletLandscape()
+    val identityItems: LazyListScope.() -> Unit = {
         item(key = "identity") {
             AiCard(shape = RoundedCornerShape(24.dp)) {
                 Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically,
@@ -84,6 +85,8 @@ internal fun AiProfileScreen(
                 }
             }
         }
+    }
+    val accountItems: LazyListScope.() -> Unit = {
         item(key = "accounts-service") {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 AiSectionTitle("账号与服务")
@@ -109,6 +112,34 @@ internal fun AiProfileScreen(
         item(key = "version") {
             Text("Terminal Buddy · 版本 $version", Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted, textAlign = TextAlign.Center)
+        }
+    }
+    if (tabletLandscape) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Row(
+                Modifier.widthIn(max = 960.dp).fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                LazyColumn(
+                    Modifier.weight(1f).fillMaxHeight(),
+                    contentPadding = PaddingValues(start = 20.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                ) { identityItems() }
+                LazyColumn(
+                    Modifier.weight(1f).fillMaxHeight(),
+                    contentPadding = PaddingValues(end = 20.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                ) { accountItems() }
+            }
+        }
+    } else {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            identityItems()
+            accountItems()
         }
     }
     if (confirmLogout) AlertDialog(

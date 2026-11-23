@@ -1,9 +1,11 @@
 package com.terminalbuddy.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -14,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,6 +47,7 @@ internal fun TerminalAgentSessionScreen(
     openDecision: (String) -> Unit,
 ) {
     val session = agentUi.selected
+    val tabletLandscape = isTabletLandscape()
     var activeTab by rememberSaveable(session?.terminalId.orEmpty()) {
         mutableStateOf(AgentSessionTab.Chat)
     }
@@ -96,14 +100,18 @@ internal fun TerminalAgentSessionScreen(
                     )
                     AiReconnectingIndicator(agentUi.reconnecting)
                 }
-                IconButton({
-                    activeTab = if (activeTab == AgentSessionTab.Chat) AgentSessionTab.Terminal else AgentSessionTab.Chat
-                }) {
-                    Icon(
-                        if (activeTab == AgentSessionTab.Chat) Icons.Outlined.Terminal else Icons.Outlined.ChatBubbleOutline,
-                        if (activeTab == AgentSessionTab.Chat) "打开终端" else "返回对话",
-                        Modifier.size(20.dp), tint = TbColors.TextMuted,
-                    )
+                if (tabletLandscape) {
+                    AgentTabSwitch(activeTab) { activeTab = it }
+                } else {
+                    IconButton({
+                        activeTab = if (activeTab == AgentSessionTab.Chat) AgentSessionTab.Terminal else AgentSessionTab.Chat
+                    }) {
+                        Icon(
+                            if (activeTab == AgentSessionTab.Chat) Icons.Outlined.Terminal else Icons.Outlined.ChatBubbleOutline,
+                            if (activeTab == AgentSessionTab.Chat) "打开终端" else "返回对话",
+                            Modifier.size(20.dp), tint = TbColors.TextMuted,
+                        )
+                    }
                 }
                 IconButton({ menu = true }) {
                     Icon(Icons.Outlined.MoreHoriz, "对话操作", Modifier.size(20.dp), tint = TbColors.TextMuted)
@@ -169,6 +177,42 @@ internal fun TerminalAgentSessionScreen(
                     }
                     AiInfoField("消息数量", "${agentUi.total} 条")
                     if (agentUi.queuedReplies.isNotEmpty()) AiInfoField("待发消息", "${agentUi.queuedReplies.size} 条")
+                }
+            }
+        }
+    }
+}
+
+/** 横屏平板用两段式页签替代单图标切换，明确当前所在的对话 / 终端。 */
+@Composable
+private fun AgentTabSwitch(active: AgentSessionTab, select: (AgentSessionTab) -> Unit) {
+    Row(
+        Modifier.background(TbColors.ButtonTrack, RoundedCornerShape(12.dp)).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        AgentSessionTab.entries.forEach { tab ->
+            val selected = tab == active
+            Surface(
+                onClick = { select(tab) },
+                color = if (selected) TbColors.Surface else Color.Transparent,
+                shape = RoundedCornerShape(9.dp),
+                border = if (selected) BorderStroke(1.dp, TbColors.Border) else null,
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        if (tab == AgentSessionTab.Chat) Icons.Outlined.ChatBubbleOutline else Icons.Outlined.Terminal,
+                        null, Modifier.size(16.dp),
+                        tint = if (selected) TbColors.Accent else TbColors.TextMuted,
+                    )
+                    Text(
+                        if (tab == AgentSessionTab.Chat) "对话" else "终端",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (selected) TbColors.Text else TbColors.TextSoft,
+                    )
                 }
             }
         }

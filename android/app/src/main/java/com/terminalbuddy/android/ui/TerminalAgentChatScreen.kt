@@ -45,6 +45,7 @@ internal fun TerminalAgentChatScreen(
     openTerminal: () -> Unit,
 ) {
     val session = ui.selected
+    val tabletLandscape = isTabletLandscape()
     val entries = remember(ui.messages) { groupAgentChatEntries(ui.messages) }
     val showingMessages = session != null && !ui.closed && !ui.starting && session.mirror.available
     val conversationId = "${session?.terminalId}:${session?.sessionId}:${session?.revision}"
@@ -165,10 +166,10 @@ internal fun TerminalAgentChatScreen(
         } else {
             BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
                 LazyColumn(
-                    Modifier.widthIn(max = 760.dp).fillMaxSize().align(Alignment.TopCenter)
-                        .nestedScroll(scroll.gestures),
+                    (if (tabletLandscape) Modifier.fillMaxSize() else Modifier.widthIn(max = 760.dp).fillMaxSize())
+                        .align(Alignment.TopCenter).nestedScroll(scroll.gestures),
                     state = scroll.list,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    contentPadding = PaddingValues(horizontal = if (tabletLandscape) 24.dp else 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (ui.loadingMessages && ui.messages.isEmpty()) item(key = "loading") {
@@ -358,9 +359,16 @@ private fun AgentComposer(
     openTerminal: () -> Unit,
     send: () -> Unit,
 ) {
+    val tabletLandscape = isTabletLandscape()
     Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-            Column(Modifier.widthIn(max = 760.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(
+            Modifier.fillMaxWidth().padding(horizontal = if (tabletLandscape) 24.dp else 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                (if (tabletLandscape) Modifier else Modifier.widthIn(max = 760.dp)).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 ui.sendError?.let { AiError(it, vm::clearSendError) }
                 if (session.pendingDecisionCount > 0 && session.pendingDecisionId != null) {
                     Button(

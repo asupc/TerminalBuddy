@@ -6,9 +6,11 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -136,128 +138,161 @@ internal fun AiSimpleHome(
                 agentVm.refresh()
             },
         ) {
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            item(key = "composer") {
-                SimpleComposer(ui, vm, terminalUi, terminalVm, onStart = {
-                    val project = ui.launchProject
-                    val provider = ui.launchProvider
-                    val model = ui.launchModel
-                    if (project != null && provider != null && model != null && ui.canCreate) {
-                        // 安卓端创建会话固定走原生会话，不跟随电脑端「新会话形态」设置。
-                        vm.create()
-                    }
-                })
-            }
-            item(key = "tabs") {
-                SimpleTabs(
-                    selected = tab,
-                    openedCount = openedCount,
-                    historyCount = ui.historySessions.size.takeIf {
-                        ui.historyProjectPath == ui.projectPath && ui.historyAgents == historyAgents
-                    },
-                    select = { tab = it },
-                )
-            }
-            when (tab) {
-                SimpleHomeTab.Opened -> {
-                    // 实时会话同步失败不提示：VM 内已按退避自动重试，这里最多保留已拿到的 Agent / 终端。
-                    currentAgentUi.closeError?.let { error -> item(key = "agent-close-error") {
-                        Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(12.dp)) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Text(
-                                    error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                                    color = TbColors.Danger, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                )
-                                TextButton(agentVm::clearCloseError) { Text("知道了") }
-                            }
-                        }
-                    } }
-                    if (!openedEmpty) {
-                        items(agentSessions, key = { "agent-${it.terminalId}" }) { session ->
-                            SimpleAgentSessionRow(
-                                session,
-                                closing = currentAgentUi.closingTerminalId == session.terminalId,
-                                open = { openAgent(session) },
-                                requestClose = { closeTarget = session },
-                            )
-                        }
-                        items(openedNative, key = { "native-${it.id}" }) { session ->
-                            AiRecentSessionRow(
-                                ui, session, { vm.open(session.id) }, { delete(session) },
-                            )
-                        }
-                        items(openTerminals, key = { "terminal-${it.id}" }) { terminal ->
-                            SimpleTerminalRow(
-                                terminal,
-                                profile = terminalUi.profiles.find { it.id == terminal.profileId },
-                                open = { terminalVm.open(terminal) },
-                            )
-                        }
-                        item(key = "opened-foot") {
-                            Text("只显示当前已打开的会话，点击继续；长按终端 Agent 可关闭。",
-                                Modifier.fillMaxWidth().padding(top = 4.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TbColors.TextMuted)
-                        }
-                    }
-                    when {
-                        // 列表为空时按加载进度显示提示；任一侧有数据就直接平铺。
-                        openedEmpty && (agentPending || terminalPending || ui.initialLoading) ->
-                            item(key = "opened-loading") { SimpleLoading("正在同步已打开的会话…") }
-                        openedEmpty -> item(key = "opened-empty") {
-                            AiEmptyState(Icons.Outlined.ChatBubbleOutline, "还没有打开的会话",
-                                "选择项目与模型开始对话，或从历史会话中恢复。")
-                        }
-                    }
+            val tabletLandscape = isTabletLandscape()
+            val startSession: () -> Unit = {
+                val project = ui.launchProject
+                val provider = ui.launchProvider
+                val model = ui.launchModel
+                if (project != null && provider != null && model != null && ui.canCreate) {
+                    // 安卓端创建会话固定走原生会话，不跟随电脑端「新会话形态」设置。
+                    vm.create()
                 }
-                SimpleHomeTab.History -> {
-                    val project = ui.launchProject
-                    val historyReady = ui.historyProjectPath == project?.path &&
-                        ui.historyAgents == historyAgents && !ui.historyLoading
-                    when {
-                        project == null -> item(key = "history-no-project") {
-                            AiEmptyState(Icons.Outlined.FolderOpen, "还没有选择工作项目",
-                                "先在上方选择一个项目，历史会话会按项目自动筛选。")
-                        }
-                        historyAgents.isEmpty() -> item(key = "history-no-agent") {
-                            AiEmptyState(Icons.Outlined.SmartToy, "当前项目还没有可用助手",
-                                "请先在服务端为该项目启用助手并配置模型。")
-                        }
-                        !historyReady && ui.historySessions.isEmpty() -> item(key = "history-loading") {
-                            SimpleLoading("正在读取历史会话…")
-                        }
-                        ui.historySessions.isEmpty() -> item(key = "history-empty") {
-                            AiEmptyState(Icons.Outlined.History, "该项目暂无历史会话",
-                                "在电脑或服务端用该项目启用的助手对话后，会出现在这里。")
-                        }
-                        else -> {
-                            items(ui.historySessions, key = { "history-${it.session.sessionId}" }) { entry ->
-                                // 正在电脑/服务端终端里运行的会话直接接管（实时镜像，不另起进程），其余保持恢复历史。
-                                val live = findLiveAgentSession(entry.agent, entry.session.sessionId, currentAgentUi.sessions)
-                                SimpleHistoryRow(entry.agent, entry.session, live, live == null && !ui.working) {
-                                    if (live != null) openAgent(live) else vm.resumeHistory(entry)
+            }
+            val listContent: LazyListScope.() -> Unit = {
+                item(key = "tabs") {
+                    SimpleTabs(
+                        selected = tab,
+                        openedCount = openedCount,
+                        historyCount = ui.historySessions.size.takeIf {
+                            ui.historyProjectPath == ui.projectPath && ui.historyAgents == historyAgents
+                        },
+                        select = { tab = it },
+                    )
+                }
+                when (tab) {
+                    SimpleHomeTab.Opened -> {
+                        // 实时会话同步失败不提示：VM 内已按退避自动重试，这里最多保留已拿到的 Agent / 终端。
+                        currentAgentUi.closeError?.let { error -> item(key = "agent-close-error") {
+                            Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(12.dp)) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(
+                                        error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                                        color = TbColors.Danger, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                    )
+                                    TextButton(agentVm::clearCloseError) { Text("知道了") }
                                 }
                             }
-                            item(key = "history-foot") {
-                                Text("共 ${ui.historySessions.size} 段历史会话 · 仅显示当前项目",
+                        } }
+                        if (!openedEmpty) {
+                            items(agentSessions, key = { "agent-${it.terminalId}" }) { session ->
+                                SimpleAgentSessionRow(
+                                    session,
+                                    closing = currentAgentUi.closingTerminalId == session.terminalId,
+                                    open = { openAgent(session) },
+                                    requestClose = { closeTarget = session },
+                                )
+                            }
+                            items(openedNative, key = { "native-${it.id}" }) { session ->
+                                AiRecentSessionRow(
+                                    ui, session, { vm.open(session.id) }, { delete(session) },
+                                )
+                            }
+                            items(openTerminals, key = { "terminal-${it.id}" }) { terminal ->
+                                SimpleTerminalRow(
+                                    terminal,
+                                    profile = terminalUi.profiles.find { it.id == terminal.profileId },
+                                    open = { terminalVm.open(terminal) },
+                                )
+                            }
+                            item(key = "opened-foot") {
+                                Text("只显示当前已打开的会话，点击继续；长按终端 Agent 可关闭。",
                                     Modifier.fillMaxWidth().padding(top = 4.dp),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = TbColors.TextMuted, textAlign = TextAlign.Center)
+                                    color = TbColors.TextMuted)
+                            }
+                        }
+                        when {
+                            // 列表为空时按加载进度显示提示；任一侧有数据就直接平铺。
+                            openedEmpty && (agentPending || terminalPending || ui.initialLoading) ->
+                                item(key = "opened-loading") { SimpleLoading("正在同步已打开的会话…") }
+                            openedEmpty -> item(key = "opened-empty") {
+                                AiEmptyState(Icons.Outlined.ChatBubbleOutline, "还没有打开的会话",
+                                    "选择项目与模型开始对话，或从历史会话中恢复。")
+                            }
+                        }
+                    }
+                    SimpleHomeTab.History -> {
+                        val project = ui.launchProject
+                        val historyReady = ui.historyProjectPath == project?.path &&
+                            ui.historyAgents == historyAgents && !ui.historyLoading
+                        when {
+                            project == null -> item(key = "history-no-project") {
+                                AiEmptyState(Icons.Outlined.FolderOpen, "还没有选择工作项目",
+                                    "先在上方选择一个项目，历史会话会按项目自动筛选。")
+                            }
+                            historyAgents.isEmpty() -> item(key = "history-no-agent") {
+                                AiEmptyState(Icons.Outlined.SmartToy, "当前项目还没有可用助手",
+                                    "请先在服务端为该项目启用助手并配置模型。")
+                            }
+                            !historyReady && ui.historySessions.isEmpty() -> item(key = "history-loading") {
+                                SimpleLoading("正在读取历史会话…")
+                            }
+                            ui.historySessions.isEmpty() -> item(key = "history-empty") {
+                                AiEmptyState(Icons.Outlined.History, "该项目暂无历史会话",
+                                    "在电脑或服务端用该项目启用的助手对话后，会出现在这里。")
+                            }
+                            else -> {
+                                items(ui.historySessions, key = { "history-${it.session.sessionId}" }) { entry ->
+                                    // 正在电脑/服务端终端里运行的会话直接接管（实时镜像，不另起进程），其余保持恢复历史。
+                                    val live = findLiveAgentSession(entry.agent, entry.session.sessionId, currentAgentUi.sessions)
+                                    SimpleHistoryRow(entry.agent, entry.session, live, live == null && !ui.working) {
+                                        if (live != null) openAgent(live) else vm.resumeHistory(entry)
+                                    }
+                                }
+                                item(key = "history-foot") {
+                                    Text("共 ${ui.historySessions.size} 段历史会话 · 仅显示当前项目",
+                                        Modifier.fillMaxWidth().padding(top = 4.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = TbColors.TextMuted, textAlign = TextAlign.Center)
+                                }
                             }
                         }
                     }
                 }
             }
-        }
+            if (tabletLandscape) {
+                BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    val composerWidth = minOf(384.dp, maxWidth * .42f)
+                    Row(Modifier.widthIn(max = 1200.dp).fillMaxSize()) {
+                        Column(
+                            Modifier.width(composerWidth).fillMaxHeight()
+                                .verticalScroll(rememberScrollState())
+                                .padding(start = 20.dp, top = 2.dp, bottom = 28.dp),
+                        ) {
+                            SimpleComposer(ui, vm, terminalUi, terminalVm, onStart = startSession)
+                            Spacer(Modifier.height(14.dp))
+                            Text(
+                                "已打开的会话在右侧，点击继续；长按终端 Agent 可关闭。",
+                                style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+                            )
+                        }
+                        Box(
+                            Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                                .width(1.dp).fillMaxHeight().background(TbColors.Border)
+                        )
+                        LazyColumn(
+                            Modifier.weight(1f).fillMaxHeight(),
+                            contentPadding = PaddingValues(end = 20.dp, top = 2.dp, bottom = 28.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                        ) { listContent() }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    item(key = "composer") { SimpleComposer(ui, vm, terminalUi, terminalVm, onStart = startSession) }
+                    listContent()
+                }
+            }
         }
     }
+
     val target = closeTarget
     if (switchingServer) {
         AiSheet("切换服务端", { switchingServer = false }) {
@@ -353,10 +388,11 @@ internal fun AiSimpleHome(
 /** 品牌 + 页面名，右侧依次为切换服务端与「我的」入口。 */
 @Composable
 private fun AiSimpleHeader(ui: AiUiState, profile: () -> Unit, switchServer: () -> Unit) {
+    val tabletLandscape = isTabletLandscape()
     Box(Modifier.fillMaxWidth().statusBarsPadding(), contentAlignment = Alignment.TopCenter) {
         Row(
-            Modifier.widthIn(max = 680.dp).fillMaxWidth()
-                .padding(start = 18.dp, end = 8.dp, top = 10.dp, bottom = 8.dp),
+            Modifier.widthIn(max = if (tabletLandscape) 1200.dp else 680.dp).fillMaxWidth()
+                .padding(start = if (tabletLandscape) 20.dp else 18.dp, end = 8.dp, top = 10.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {

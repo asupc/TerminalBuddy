@@ -201,6 +201,7 @@ private fun AiConversation(
     usageDetails: () -> Unit,
 ) {
     val session = ui.selected ?: return
+    val tabletLandscape = isTabletLandscape()
     var usageExpanded by rememberSaveable(session.id) { mutableStateOf(true) }
     val approvals = session.approvals.filterNot { it.id in ui.answeringApprovalIds }
     val activeApproval = approvals.firstOrNull()
@@ -231,8 +232,10 @@ private fun AiConversation(
         Column(Modifier.fillMaxSize()) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(
-                    Modifier.widthIn(max = 760.dp).fillMaxSize().align(Alignment.TopCenter).nestedScroll(scroll.gestures),
-                    state = scroll.list, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    (if (tabletLandscape) Modifier.fillMaxSize() else Modifier.widthIn(max = 760.dp).fillMaxSize())
+                        .align(Alignment.TopCenter).nestedScroll(scroll.gestures),
+                    state = scroll.list,
+                    contentPadding = PaddingValues(horizontal = if (tabletLandscape) 24.dp else 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     // 流式内容使用实际布局位置，逐字显示与底部跟随负责平滑过渡。
@@ -289,8 +292,9 @@ private fun AiConversation(
                 // 决策覆盖在消息区底部，不随消息滚动也不挤占正文布局。
                 val approvalMaxHeight = (maxHeight * .8f).coerceAtMost(400.dp)
                 Column(
-                    Modifier.align(Alignment.BottomCenter).widthIn(max = 760.dp).fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    Modifier.align(Alignment.BottomCenter)
+                        .then(if (tabletLandscape) Modifier.fillMaxWidth() else Modifier.widthIn(max = 760.dp).fillMaxWidth())
+                        .padding(horizontal = if (tabletLandscape) 24.dp else 10.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     activeApproval?.let {
@@ -309,10 +313,13 @@ private fun AiConversation(
                 )
             }
             AiQueuedMessages(ui, session, vm::sendQueuedNow, vm::deleteQueuedMessage)
-            Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.fillMaxWidth().padding(horizontal = if (tabletLandscape) 24.dp else 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
                 AiUsageCard(session, modelLabel, effortLabel, usageDetails,
                     expanded = usageExpanded, onExpandedChange = { usageExpanded = it },
-                    modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth())
+                    modifier = if (tabletLandscape) Modifier.fillMaxWidth() else Modifier.widthIn(max = 760.dp).fillMaxWidth())
             }
             AiComposer(ui, session, vm, { scroll.following = true; vm.send() }, vm::stop, vm::draft)
         }
@@ -328,9 +335,13 @@ private fun AiQueuedMessages(
     if (session.pendingInputs.isEmpty()) return
     // 中断进行中或动作在途时禁用，避免与停止请求竞争；等待中的排队仍可查看。
     val enabled = !ui.working && !ui.loadingSession && session.status != "stopping"
-    Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+    val tabletLandscape = isTabletLandscape()
+    Box(
+        Modifier.fillMaxWidth().padding(horizontal = if (tabletLandscape) 24.dp else 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         Column(
-            Modifier.widthIn(max = 760.dp).fillMaxWidth().heightIn(max = 140.dp)
+            (if (tabletLandscape) Modifier else Modifier.widthIn(max = 760.dp)).fillMaxWidth().heightIn(max = 140.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -422,9 +433,13 @@ private fun AiComposer(
 @Composable
 private fun AiSlashSuggestions(items: List<AiSlashItem>, onPick: (String) -> Unit) {
     if (items.isEmpty()) return
-    Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+    val tabletLandscape = isTabletLandscape()
+    Box(
+        Modifier.fillMaxWidth().padding(horizontal = if (tabletLandscape) 24.dp else 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         Surface(
-            Modifier.widthIn(max = 760.dp).fillMaxWidth(), color = TbColors.CanvasSoft,
+            (if (tabletLandscape) Modifier else Modifier.widthIn(max = 760.dp)).fillMaxWidth(), color = TbColors.CanvasSoft,
             border = BorderStroke(1.dp, TbColors.Border), shape = RoundedCornerShape(12.dp),
         ) {
             androidx.compose.foundation.lazy.LazyRow(
@@ -471,12 +486,16 @@ internal fun AiMessageComposer(
     attachments: List<AiDraftImage> = emptyList(),
     onPickImages: (() -> Unit)? = null, onRemoveImage: (String) -> Unit = {},
 ) {
+    val tabletLandscape = isTabletLandscape()
     Surface(color = TbColors.Surface) {
         Box(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+            Modifier.fillMaxWidth().padding(horizontal = if (tabletLandscape) 24.dp else 10.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Column(Modifier.widthIn(max = 760.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(
+                (if (tabletLandscape) Modifier else Modifier.widthIn(max = 760.dp)).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 AiSlashSuggestions(slashItems, onPickSlash)
                 // 与 ZCode 一致的附件区：选择后的图片缩略图排在输入框上方，可逐张移除。
                 if (attachments.isNotEmpty()) {
@@ -610,6 +629,7 @@ internal fun AiMessageBubble(
             }
         }
     } else {
+        val tabletLandscape = isTabletLandscape()
         val textStyle = MaterialTheme.typography.bodyMedium.copy(
             fontSize = 14.sp, lineHeight = 20.sp,
             lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
@@ -617,10 +637,12 @@ internal fun AiMessageBubble(
         // 头像和实际首行共用对齐线，Markdown 留白、标题字号和字体缩放均参与排版。
         Row(animated, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             AiAvatar(provider, Modifier.alignBy { it.measuredHeight / 2 })
+            // 横屏满宽时只放宽消息区，正文仍限制单条宽度，避免一行铺满整块屏幕。
+            val body = if (tabletLandscape) Modifier.weight(1f, fill = false).widthIn(max = 680.dp) else Modifier.weight(1f)
             if (message.role == "assistant") {
-                AiMarkdownContent(message, textStyle, Modifier.weight(1f).alignBy(AiMessageFirstLineCenter))
+                AiMarkdownContent(message, textStyle, body.alignBy(AiMessageFirstLineCenter))
             } else {
-                SelectionContainer(Modifier.weight(1f).alignBy(AiMessageFirstLineCenter).aiMessageFirstLine(textStyle)) {
+                SelectionContainer(body.alignBy(AiMessageFirstLineCenter).aiMessageFirstLine(textStyle)) {
                     Text(message.text, style = textStyle)
                 }
             }
@@ -634,8 +656,10 @@ internal fun AiToolGroup(messages: List<AiAnimatedMessage>, modifier: Modifier, 
     var expanded by rememberSaveable(messages.first().id) { mutableStateOf(false) }
     val latest = messages.last()
     val hasHistory = messages.size > 1
+    val tabletLandscape = isTabletLandscape()
     Column(
         modifier.fillMaxWidth().padding(start = 38.dp)
+            .then(if (tabletLandscape) Modifier.widthIn(max = 680.dp) else Modifier)
             .animateContentSize(tween(160, easing = LinearOutSlowInEasing)),
     ) {
         Row(

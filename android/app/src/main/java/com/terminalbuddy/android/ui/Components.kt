@@ -71,10 +71,15 @@ fun PageHeader(
     action: @Composable RowScope.() -> Unit = {},
 ) {
     val compact = LocalConfiguration.current.screenHeightDp < 480
+    val tabletLandscape = isTabletLandscape()
     Box(Modifier.fillMaxWidth().statusBarsPadding(), contentAlignment = Alignment.TopCenter) {
         Row(
-            Modifier.widthIn(max = 680.dp).fillMaxWidth()
-                .padding(start = 24.dp, end = 16.dp, top = if (compact) 8.dp else 24.dp, bottom = if (compact) 8.dp else 20.dp),
+            Modifier.widthIn(max = if (tabletLandscape) 1200.dp else 680.dp).fillMaxWidth()
+                .padding(
+                    start = 24.dp, end = 16.dp,
+                    top = when { compact -> 8.dp; tabletLandscape -> 16.dp; else -> 24.dp },
+                    bottom = when { compact -> 8.dp; tabletLandscape -> 12.dp; else -> 20.dp },
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {

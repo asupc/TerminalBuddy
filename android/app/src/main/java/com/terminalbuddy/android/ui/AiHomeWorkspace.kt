@@ -15,36 +15,62 @@ import com.terminalbuddy.android.AiLaunchModel
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 
-/** 快速开始聚焦创建会话，近期会话作为次级入口。 */
+/** 快速开始聚焦创建会话，近期会话作为次级入口。横屏平板把两部分拆成左右两列。 */
 @Composable
 internal fun AiHomeWorkspace(ui: AiUiState, vm: AiViewModel, sessions: () -> Unit, more: () -> Unit) {
+    if (isTabletLandscape()) {
+        Row(
+            Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            LazyColumn(
+                Modifier.weight(.46f).fillMaxHeight(),
+                contentPadding = PaddingValues(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                item(key = "launch") { AiQuickStart(ui, vm, more) }
+            }
+            LazyColumn(
+                Modifier.weight(.54f).fillMaxHeight(),
+                contentPadding = PaddingValues(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(13.dp),
+            ) {
+                item(key = "recent") { AiWorkspaceRecent(ui, vm, sessions) }
+            }
+        }
+    } else {
+        LazyColumn(
+            Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            item(key = "launch") { AiQuickStart(ui, vm, more) }
+            item(key = "recent") { AiWorkspaceRecent(ui, vm, sessions) }
+        }
+    }
+}
+
+/** 最近任务：竖屏作为快速开始下方的次级入口，横屏独占右列。 */
+@Composable
+private fun AiWorkspaceRecent(ui: AiUiState, vm: AiViewModel, sessions: () -> Unit) {
     val recent = ui.recentSessions
-    LazyColumn(
-        Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
-        item(key = "launch") { AiQuickStart(ui, vm, more) }
-        // 标题与卡片间距在上次减三分之一（20 → 13）的基础上再减半（→ 6.5）；卡片之间减三分之一（20 → 13）。
-        item(key = "recent") {
-            Column(verticalArrangement = Arrangement.spacedBy(6.5.dp)) {
-                AiSectionTitle("最近任务") {
-                    TextButton(sessions) {
-                        Text("查看全部")
-                        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp))
-                    }
-                }
-                if (recent.isEmpty()) {
-                    AiCard(shape = RoundedCornerShape(20.dp)) {
-                        AiEmptyState(Icons.Outlined.ChatBubbleOutline,
-                            if (ui.initialLoading) "正在同步会话" else "第一段对话，从这里开始",
-                            if (ui.initialLoading) "准备好后，你的近期会话会显示在这里。" else "选择项目与模型，开启你的新想法。")
-                    }
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                        recent.forEach { session ->
-                            AiSessionCard(ui, session, open = { vm.open(session.id) }, compact = true)
-                        }
-                    }
+    // 标题与卡片间距在上次减三分之一（20 → 13）的基础上再减半（→ 6.5）；卡片之间减三分之一（20 → 13）。
+    Column(verticalArrangement = Arrangement.spacedBy(6.5.dp)) {
+        AiSectionTitle("最近任务") {
+            TextButton(sessions) {
+                Text("查看全部")
+                Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp))
+            }
+        }
+        if (recent.isEmpty()) {
+            AiCard(shape = RoundedCornerShape(20.dp)) {
+                AiEmptyState(Icons.Outlined.ChatBubbleOutline,
+                    if (ui.initialLoading) "正在同步会话" else "第一段对话，从这里开始",
+                    if (ui.initialLoading) "准备好后，你的近期会话会显示在这里。" else "选择项目与模型，开启你的新想法。")
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
+                recent.forEach { session ->
+                    AiSessionCard(ui, session, open = { vm.open(session.id) }, compact = true)
                 }
             }
         }

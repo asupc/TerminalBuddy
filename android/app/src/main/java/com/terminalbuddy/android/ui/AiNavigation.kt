@@ -1,6 +1,7 @@
 package com.terminalbuddy.android.ui
 
 import android.os.SystemClock
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
@@ -14,8 +15,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.res.painterResource
+import com.terminalbuddy.android.R
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.Role
@@ -79,6 +83,50 @@ internal fun AiBottomNavigation(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 横屏平板：一级入口由底部导航改为左侧导航栏。
+ * 选中态、未读角标与「再次点击已选中的会话页定位未读」保持一致。
+ */
+@Composable
+internal fun AiNavigationRail(
+    selected: AiHomeTab, unread: Int, select: (AiHomeTab) -> Unit, locateUnread: () -> Unit,
+) {
+    NavigationRail(
+        modifier = Modifier.fillMaxHeight().width(94.dp).statusBarsPadding(),
+        containerColor = TbColors.Surface,
+        header = {
+            Image(
+                painterResource(R.drawable.terminal_buddy_logo), null,
+                Modifier.padding(top = 14.dp, bottom = 10.dp).size(36.dp).clip(RoundedCornerShape(11.dp)),
+            )
+        },
+    ) {
+        AiHomeTab.entries.forEach { tab ->
+            NavigationRailItem(
+                selected = selected == tab,
+                onClick = {
+                    if (tab == AiHomeTab.Sessions && selected == tab) locateUnread() else select(tab)
+                },
+                icon = {
+                    BadgedBox(badge = {
+                        if (tab == AiHomeTab.Sessions && unread > 0) {
+                            Badge(containerColor = TbColors.Accent, contentColor = TbColors.AccentInk) {
+                                Text(if (unread > 99) "99+" else unread.toString())
+                            }
+                        }
+                    }) { Icon(tab.icon, null, Modifier.size(23.dp)) }
+                },
+                label = { Text(tab.title, maxLines = 1) },
+                colors = NavigationRailItemDefaults.colors(
+                    selectedIconColor = TbColors.Text, selectedTextColor = TbColors.Text,
+                    unselectedIconColor = TbColors.TextMuted, unselectedTextColor = TbColors.TextMuted,
+                    indicatorColor = TbColors.SurfaceHover,
+                ),
+            )
         }
     }
 }
