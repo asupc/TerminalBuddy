@@ -212,7 +212,8 @@ fi
 # 先占用固定的更新任务名，防止两次更新并发；此时不停止旧服务。
 # 沿用旧镜像中的 bash/curl/docker，不依赖临时下载额外的更新工具镜像。
 docker create --name "${UPDATER}" --network none --user 0 --workdir /tmp \
-  --volumes-from "${OLD_ID}" --restart=no --stop-timeout 300 \
+  --volumes-from "${OLD_ID}" --volume /var/run/docker.sock:/var/run/docker.sock \
+  --restart=no --stop-timeout 300 \
   --label "terminal-buddy.update.target=${CONTAINER}" \
   --env HOME=/tmp --env "CONTAINER=${CONTAINER}" --env "OLD_ID=${OLD_ID}" \
   --env "OLD_IMAGE_ID=${OLD_IMAGE_ID}" --env "IMAGE=${IMAGE}" \
@@ -227,7 +228,9 @@ docker create --name "${UPDATER}" --network none --user 0 --workdir /tmp \
 WORKER_STARTED=0
 BUILD_LOG=''
 cleanup() {
-  [ -z "${BUILD_LOG}" ] || rm -f -- "${BUILD_LOG}"
+  if [ -n "${BUILD_LOG}" ] && [ -f "${BUILD_LOG}" ]; then
+    log "本次完整构建日志保留于：${BUILD_LOG}"
+  fi
   if [ "${WORKER_STARTED}" = 0 ]; then
     docker rm "${UPDATER}" >/dev/null 2>&1 || true
   fi
@@ -239,12 +242,15 @@ trap 'exit 129' HUP
 docker cp "${WORKER_SCRIPT}" "${UPDATER}:/tmp/tb-update-worker.sh"
 
 # 保留完整构建日志，网页终端断开后仍可从持久目录手动查看。
-BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/terminal-buddy-build.XXXXXX")"
+BUILD_LOG_DIR="${TB_UPDATE_LOG_DIR:-${SOURCE_DIR}/.runtime-data/update-logs}"
+mkdir -p "${BUILD_LOG_DIR}"
+BUILD_LOG="${BUILD_LOG_DIR}/build-${RUN_ID}.log"
+log "完整构建日志：${BUILD_LOG}"
 if ! {
   log "使用当前源码构建：${SOURCE_DIR}（原服务保持运行）"
   DOCKER_BUILDKIT=1 docker build --progress=plain --file "${SOURCE_DIR}/Dockerfile" --tag "${CANDIDATE_IMAGE}" "${SOURCE_DIR}"
 } 2>&1 | tee "${BUILD_LOG}"; then
-  fail "镜像构建失败，原容器、原镜像标签及数据均未切换"
+  fail "镜像构建失败，原容器、原镜像标签及数据均未切换；日志：${BUILD_LOG}"
 fi
 # 构建可能很久：切换前再次确认目标还是同一个运行中的容器。
 [ "$(docker inspect --format '{{.Id}}' "${CONTAINER}")" = "${OLD_ID}" ] \
@@ -286,7 +292,6 @@ fi
 } | tee -a "${BUILD_LOG}"
 # worker 启动时将构建日志写入持久目录，再继续追加切换和回退日志。
 docker cp "${BUILD_LOG}" "${UPDATER}:/tmp/tb-update-build.log"
-rm -f -- "${BUILD_LOG}"
 BUILD_LOG=''
 # 先解除本进程的清理职责，避免 start 成功的一瞬间终端被关闭而误删更新任务。
 WORKER_STARTED=1
