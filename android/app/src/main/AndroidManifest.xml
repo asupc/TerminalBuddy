@@ -10,8 +10,16 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 显式声明大屏 / 可调整尺寸支持，避免厂商平板以「兼容模式」把应用装进居中竖屏窗口。 -->
+    <supports-screens
+        android:smallScreens="true"
+        android:normalScreens="true"
+        android:largeScreens="true"
+        android:xlargeScreens="true"
+        android:anyDensity="true" />
     <application
         android:name=".TerminalBuddyApplication"
+        android:resizeableActivity="true"
         android:allowBackup="false"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"

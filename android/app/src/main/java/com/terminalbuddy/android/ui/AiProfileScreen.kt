@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -36,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.terminalbuddy.android.AiUiState
+import kotlin.math.roundToInt
 
 /** 所有个人设置集中在这里，主题选择沿用 Activity 中的持久化状态。 */
 @Composable
@@ -407,6 +409,13 @@ private fun AiSettingsRow(icon: ImageVector, title: String, subtitle: String, en
 @Composable
 internal fun AiServiceInfoScreen(ui: AiUiState, back: () -> Unit, connect: () -> Unit) {
     val version = appVersion()
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val screenSummary = "${configuration.screenWidthDp} × ${configuration.screenHeightDp} dp · 最小宽 ${configuration.smallestScreenWidthDp} dp"
+    val screenSpec = displayDiagonalInches(context)
+        ?.let { "${(it * 10).roundToInt() / 10f} 英寸 · ${configuration.densityDpi} dpi" }
+        ?: "${configuration.densityDpi} dpi"
+    val tabletLandscape = isTabletLandscape()
     Column(Modifier.fillMaxSize().navigationBarsPadding()) {
         AiSubpageHeader("服务信息", back)
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -456,6 +465,9 @@ internal fun AiServiceInfoScreen(ui: AiUiState, back: () -> Unit, connect: () ->
                             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                                 AiInfoRow("应用名称", "Terminal Buddy")
                                 AiInfoRow("当前版本", version)
+                                AiInfoRow("屏幕", screenSummary)
+                                AiInfoRow("屏幕规格", screenSpec)
+                                AiInfoRow("平板布局", if (tabletLandscape) "已启用（横屏）" else "未启用")
                                 AiInfoRow("凭证存储", "设备加密保存")
                             }
                         }
