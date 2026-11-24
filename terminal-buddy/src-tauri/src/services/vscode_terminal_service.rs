@@ -35,6 +35,9 @@ struct LaunchConfig<'a> {
 
 pub struct VsCodeTerminalProcess {
     child: Child,
+    /// 子进程树生命周期：Windows 下由带 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object 持有，
+    /// 必须随 `VsCodeTerminalProcess` 存活，避免 `spawn` 返回时提前 Drop 立刻杀死终端进程树。
+    tree: super::process_tree::ProcessTree,
     /// stdin 独立加锁并共享：终端输入写可能因插件进程不读 stdin 而无限阻塞，
     /// 必须能在 instances 全局锁外（经克隆的 Arc）执行（审查 H-2）。
     stdin: std::sync::Arc<Mutex<ChildStdin>>,
@@ -152,6 +155,7 @@ impl VsCodeTerminalProcess {
         Ok((
             Self {
                 child,
+                tree,
                 stdin: std::sync::Arc::new(Mutex::new(stdin)),
                 shell_pid,
             },
@@ -207,9 +211,7 @@ impl VsCodeTerminalProcess {
 
     pub fn kill(&mut self) -> Result<(), String> {
         if self.try_write_frame(FRAME_KILL, &[]).is_err() {
-            self.child
-                .kill()
-                .map_err(|error| format!("关闭 VS Code 终端插件失败: {}", error))?;
+            self.tree.terminate(&mut self.child);
         }
         Ok(())
     }
@@ -228,9 +230,9 @@ impl VsCodeTerminalProcess {
         if let Ok(Some(status)) = self.child.try_wait() {
             return status.code().map(|code| code as u32);
         }
-        // 发 KILL 帧只是礼貌通知；拿不到 stdin 锁就直接杀进程。
+        // 发 KILL 帧只是礼貌通知；拿不到 stdin 锁就直接终止整棵进程树。
         let _ = self.try_write_frame(FRAME_KILL, &[]);
-        let _ = self.child.kill();
+        self.tree.terminate(&mut self.child);
         self.child
             .wait()
             .ok()
@@ -653,8 +655,46 @@ fn normalize_path_for_child_process(path: &Path) -> PathBuf {
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::normalize_path_for_child_process;
+    use super::{normalize_path_for_child_process, VsCodeTerminalProcess};
+    use crate::services::process_tree::ProcessTree;
+    use std::os::windows::process::CommandExt;
     use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    fn spawn_dummy_vscode_process() -> VsCodeTerminalProcess {
+        let mut child = Command::new("cmd.exe")
+            .args(["/D", "/C", "more"])
+            .creation_flags(0x08000000)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn dummy cmd process");
+        let tree = ProcessTree::attach(&child);
+        let stdin = child.stdin.take().expect("dummy process stdin");
+        let shell_pid = child.id();
+        VsCodeTerminalProcess {
+            child,
+            tree,
+            stdin: Arc::new(Mutex::new(stdin)),
+            shell_pid,
+        }
+    }
+
+    #[test]
+    fn process_tree_stays_alive_after_returning_vscode_process() {
+        let mut process = spawn_dummy_vscode_process();
+        thread::sleep(Duration::from_millis(50));
+        assert!(
+            process.is_running(),
+            "VsCodeTerminalProcess 返回后子进程树不应被 Job Object 提前终止"
+        );
+        process.close();
+        assert!(!process.is_running());
+    }
 
     #[test]
     fn normalizes_verbatim_drive_path_for_node() {
