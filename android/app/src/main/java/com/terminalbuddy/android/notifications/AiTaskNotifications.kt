@@ -27,8 +27,11 @@ import com.terminalbuddy.android.MainActivity
 import com.terminalbuddy.android.R
 import com.terminalbuddy.android.data.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
@@ -94,6 +97,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     // 最近的任务结果留在本机（内存 + 磁盘），点击完成通知后即使进程重启也能打开详情。
     private val mutableServerResults = MutableStateFlow(restoreServerResults())
     internal val serverResults: StateFlow<List<ServerResultNotice>> = mutableServerResults.asStateFlow()
+    private val mutableTerminalListChanged = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    internal val terminalListChanged: SharedFlow<String> = mutableTerminalListChanged.asSharedFlow()
     private val seenServerNotifications = LinkedHashSet<String>()
     private var backgroundStartedAt: Long? = null
     private var serviceStartWatchdog: Job? = null
@@ -228,8 +233,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             if (old != null && session.revision < old.revision) continue
             if (old != null && session.revision == old.revision && old.submittedAt != 0L) {
                 // 发送明确未生效时释放预先建立的运行基线，不凭空发出完成提醒。
-                if (old.submittedAt != 0L && !session.running && session.revision == old.revision &&
-                    System.currentTimeMillis() - old.submittedAt > 120_000) {
+                if (!session.running && System.currentTimeMillis() - old.submittedAt > 120_000) {
                     account[session.id] = Snapshot(session.revision, session.status, session.approvals.map { it.id }.toSet(),
                         resultRevision = session.resultRevision)
                     changed = true
@@ -342,6 +346,9 @@ class AiTaskNotifications(private val context: Context, private val repository: 
                 rememberServerResult(accountId, event)
                 showServerResultNotification(event)
                 trimSeenServerNotifications()
+            }
+            event.kind == "terminals_changed" -> {
+                mutableTerminalListChanged.tryEmit(accountId)
             }
         }
     }

@@ -448,7 +448,7 @@ class AiRepository(context: Context) {
             },
         )
         awaitClose { socket.cancel() }
-    }.buffer(Channel.CONFLATED)
+    }.buffer(Channel.BUFFERED)
 
     /** 服务端通知断线时的决策补偿；服务端较旧时返回 404，由调用方忽略。 */
     internal suspend fun serverDecisions(connection: AiConnection): List<ServerNotificationEvent> =

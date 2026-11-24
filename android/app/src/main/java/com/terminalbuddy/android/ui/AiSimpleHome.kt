@@ -44,10 +44,12 @@ import com.terminalbuddy.android.data.AiSession
 import com.terminalbuddy.android.data.ServerProfile
 import com.terminalbuddy.android.data.ServerTerminal
 import com.terminalbuddy.android.data.TerminalAgentSession
-import com.terminalbuddy.android.data.findLiveAgentSession
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+private val SIMPLE_ACTIVITY_DATE_FORMATTER = DateTimeFormatter.ofPattern("MM-dd").withZone(ZoneId.systemDefault())
+private val SIMPLE_HISTORY_TIME_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault())
 
 private enum class SimpleHomeTab(val title: String) {
     Opened("已打开"), History("历史会话"),
@@ -100,13 +102,23 @@ internal fun AiSimpleHome(
     val agentSessions = remember(currentAgentUi.sessions) {
         currentAgentUi.sessions.sortedByDescending { it.lastActivityAt ?: it.phaseAt ?: 0L }
     }
+    val liveAgentByKey = remember(currentAgentUi.sessions) {
+        buildMap {
+            for (item in currentAgentUi.sessions) {
+                val sid = item.sessionId
+                if (item.phase != "ended" && !sid.isNullOrBlank()) {
+                    putIfAbsent(item.provider to sid, item)
+                }
+            }
+        }
+    }
     // 已绑定 Agent 的终端不再重复列出：进入 Agent 会话页后可切到「终端」页签。
     val openTerminals = remember(terminalUi.terminals, agentSessions) {
         val agentTerminalIds = agentSessions.mapTo(HashSet()) { it.terminalId }
         terminalUi.terminals.filterNot { it.id in agentTerminalIds }
     }
     // 原生会话以服务端为准：电脑端打开着的 + 手机本次运行打开过的，不再读本机持久记录。
-    val openedNative = ui.openedSessions
+    val openedNative = remember(ui.sessions, ui.openedSessionIds) { ui.openedSessions }
     val openedEmpty = agentSessions.isEmpty() && openTerminals.isEmpty() && openedNative.isEmpty()
     // 两侧都成功加载后才展示计数；任一侧失败时按已拿到的数据展示，不阻塞另一侧。
     val agentPending = currentAgentUi.listError == null && !currentAgentUi.listLoaded
@@ -117,16 +129,14 @@ internal fun AiSimpleHome(
     val historyAgents = ui.availableAgents
     LaunchedEffect(tab, ui.projectPath, ui.connectionRevision, historyAgents) {
         if (tab == SimpleHomeTab.History) vm.loadHistoryForSelection()
-        // 已打开 Tab 依赖实时 Agent 列表，历史会话也用它做「电脑运行中」匹配。
-        agentVm.refresh()
     }
     Column(Modifier.fillMaxSize()) {
         AiSimpleHeader(ui, profile) { switchingServer = true }
         ui.error?.let { AiError(it, vm::clearError) }
         // 下拉刷新：三路列表一起补拉；转圈只跟随 Agent 列表的 loading（主数据源）。
         var pullRefreshing by remember { mutableStateOf(false) }
-        LaunchedEffect(currentAgentUi.listLoading) {
-            if (!currentAgentUi.listLoading) pullRefreshing = false
+        LaunchedEffect(pullRefreshing, currentAgentUi.listLoading) {
+            if (pullRefreshing && !currentAgentUi.listLoading) pullRefreshing = false
         }
         PullToRefreshBox(
             modifier = Modifier.fillMaxSize(),
@@ -237,7 +247,7 @@ internal fun AiSimpleHome(
                             else -> {
                                 items(ui.historySessions, key = { "history-${it.session.sessionId}" }) { entry ->
                                     // 正在电脑/服务端终端里运行的会话直接接管（实时镜像，不另起进程），其余保持恢复历史。
-                                    val live = findLiveAgentSession(entry.agent, entry.session.sessionId, currentAgentUi.sessions)
+                                    val live = liveAgentByKey[entry.agent to entry.session.sessionId]
                                     SimpleHistoryRow(entry.agent, entry.session, live, live == null && !ui.working) {
                                         if (live != null) openAgent(live) else vm.resumeHistory(entry)
                                     }
@@ -440,6 +450,10 @@ private fun SimpleComposer(
             it.canLaunch && (it.projectName == project.name || it.projectName == project.path)
         }
     }
+    val projectChoices = remember(ui.projects) {
+        ui.projects.distinctBy { it.path }.map { AiChoice(it.path, it.name, it.path) }
+    }
+    val modelChoiceItems = remember(ui.availableModels) { modelChoices(ui.availableModels) }
     AiCard(shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -450,7 +464,7 @@ private fun SimpleComposer(
                 }
             }
             AiChoiceField("工作项目", Icons.Outlined.FolderOpen, ui.projectPath, "选择一个项目",
-                ui.projects.distinctBy { it.path }.map { AiChoice(it.path, it.name, it.path) }, enabled, vm::selectProject,
+                projectChoices, enabled, vm::selectProject,
                 compact = true, inlineLabel = true)
             if (project != null && projectProfiles.isNotEmpty()) {
                 SimpleProjectCommands(projectProfiles, terminalUi, terminalVm)
@@ -460,12 +474,11 @@ private fun SimpleComposer(
                     ui.availableAgents, vm::selectAgent)
             }
             AiChoiceField("使用模型", Icons.Outlined.Tune, ui.launchModelKey, "选择模型",
-                modelChoices(ui.availableModels), enabled, vm::selectModel, compact = true, inlineLabel = true)
+                modelChoiceItems, enabled, vm::selectModel, compact = true, inlineLabel = true)
             val hint = when {
                 ui.initialLoading -> "正在同步项目和模型…"
                 ui.projects.isEmpty() -> "请先在服务端登记项目。"
                 ui.availableAgents.isEmpty() -> "该项目尚未配置可用助手，请在服务端配置模型。"
-                agents.isEmpty() -> "项目启用的助手尚未在服务端安装，请先在服务端 Agent 管理中安装。"
                 ui.availableModels.isEmpty() -> "当前助手暂无可用模型，请在服务端配置。"
                 else -> null
             }
@@ -792,7 +805,7 @@ private fun activityTime(timestamp: Long): String {
         minutes == 0L -> "刚刚"
         minutes < 60 -> "${minutes} 分钟前"
         minutes < 24 * 60 -> "${minutes / 60} 小时前"
-        else -> SimpleDateFormat("MM-dd", Locale.CHINA).format(Date(timestamp))
+        else -> SIMPLE_ACTIVITY_DATE_FORMATTER.format(Instant.ofEpochMilli(timestamp))
     }
 }
 
@@ -810,5 +823,5 @@ private fun SimpleLoading(text: String) {
 
 private fun historyTime(timestamp: Long): String? {
     if (timestamp <= 0) return null
-    return SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(timestamp))
+    return SIMPLE_HISTORY_TIME_FORMATTER.format(Instant.ofEpochMilli(timestamp))
 }

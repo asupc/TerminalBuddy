@@ -227,7 +227,6 @@ private fun AiConversation(
     val assistantOutput = latestMessage?.let { it.role == "assistant" && it.text.isNotBlank() } == true
     val showReplyIndicator = !ui.loadingSession && session.running &&
         (session.status == "approval" || session.status == "background" || session.status == "stopping" || (!assistantOutput && !renderedAssistantOutput && !revealing))
-    val elapsedSeconds = rememberAiReplyElapsedSeconds(session, replying)
     Box(modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxSize()) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -247,6 +246,7 @@ private fun AiConversation(
                         }
                     }
                     if (showReplyIndicator) item(key = "ai-status") {
+                        val elapsedSeconds = rememberAiReplyElapsedSeconds(session, replying)
                         val statusLabel = when (session.status) { "approval" -> "等待确认"; "background" -> "后台任务执行中"; "stopping" -> "正在中断"; "forceStopped" -> "已强制结束"; else -> "思考中" }
                         AiReplyIndicator(
                             session.providerLabel,
@@ -504,8 +504,9 @@ internal fun AiMessageComposer(
                         modifier = Modifier.semantics { contentDescription = "待发送图片" },
                     ) {
                         items(attachments, key = { it.id }) { image ->
+                            val previewSource = remember(image.id, image.mediaType, image.data) { image.dataUrl }
                             Box(Modifier.size(64.dp)) {
-                                AiImageThumb(image.dataUrl, Modifier.fillMaxSize())
+                                AiImageThumb(previewSource, Modifier.fillMaxSize())
                                 IconButton(
                                     { onRemoveImage(image.id) },
                                     modifier = Modifier.align(Alignment.TopEnd).size(24.dp),
@@ -755,16 +756,35 @@ private fun AiAvatar(provider: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** 思考面板折叠态展示的最新一句：优先最后一个完整句子，其次最后一个非空行。 */
+private val THINKING_PREFIX_REGEX = Regex("^[#>*\\-\\s]+")
+private val THINKING_SPACE_REGEX = Regex("\\s+")
+
+private fun cleanThinkingLine(value: String): String =
+    value.replace(THINKING_PREFIX_REGEX, "").replace(THINKING_SPACE_REGEX, " ").trim()
+
+/** 思考面板折叠态展示的最新一句：从末尾反向扫描至多两条非空句，避免每帧全量 Regex。 */
 internal fun aiThinkingPeek(text: String): String {
     val trimmed = text.trimEnd()
     if (trimmed.isBlank()) return ""
-    val clean = { value: String -> value.replace(Regex("^[#>*\\-\\s]+"), "").replace(Regex("\\s+"), " ").trim() }
-    val lines = trimmed.lineSequence().map(clean).filter(String::isNotBlank).toList()
-    if (lines.isEmpty()) return clean(trimmed)
-    val last = lines.last()
-    // 最后一行太短（比如只有「1.」）时回退到上一行，避免闪出一个残句。
-    return if (last.length >= 4 || lines.size == 1) last else lines[lines.size - 2]
+    var latest: String? = null
+    var previous: String? = null
+    var end = trimmed.length
+    while (end > 0) {
+        val nl = trimmed.lastIndexOf('\n', end - 1)
+        val raw = trimmed.substring(nl + 1, end)
+        val cleaned = cleanThinkingLine(raw)
+        if (cleaned.isNotEmpty()) {
+            if (latest == null) {
+                latest = cleaned
+                if (latest.length >= 4) return latest
+            } else {
+                previous = cleaned
+                break
+            }
+        }
+        end = if (nl < 0) 0 else nl
+    }
+    return previous ?: latest ?: cleanThinkingLine(trimmed)
 }
 
 @Composable

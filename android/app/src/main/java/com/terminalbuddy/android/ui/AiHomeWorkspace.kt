@@ -118,7 +118,6 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel, more: () -> Unit) {
                 ui.initialLoading -> "正在同步项目和模型…"
                 ui.projects.isEmpty() -> "请先在服务端登记项目。"
                 ui.availableAgents.isEmpty() -> "该项目尚未配置可用助手，请在服务端配置模型。"
-                agents.isEmpty() -> "项目启用的助手尚未在服务端安装，请先在服务端 Agent 管理中安装。"
                 ui.availableModels.isEmpty() -> "当前助手暂无可用模型，请在服务端配置。"
                 else -> null
             }

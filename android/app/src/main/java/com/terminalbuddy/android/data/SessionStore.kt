@@ -33,9 +33,7 @@ class SessionStore(
         val ciphertext = cipher.doFinal(token.toByteArray(Charsets.UTF_8))
         val encoded = Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(ciphertext, Base64.NO_WRAP)
         val normalized = ServerAddress.normalize(server)
-        check(preferences.edit().putString("server", normalized).putString("username", username).putString("token", encoded).commit()) {
-            "无法保存登录信息"
-        }
+        preferences.edit().putString("server", normalized).putString("username", username).putString("token", encoded).apply()
         this.server = normalized
         this.username = username
         this.token = token

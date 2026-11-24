@@ -26,10 +26,12 @@ data class AiChatImage(
 @Serializable
 data class AiSendImage(val data: String, val mediaType: String, val name: String)
 
-/** 输入框上方待发送的图片：dataUrl 用于即时预览，data 是交给服务端的 base64。 */
+/** 输入框上方待发送的图片：data 是交给服务端的 base64，dataUrl 按需拼接避免双份大字符串常驻内存。 */
 data class AiDraftImage(
-    val id: String, val dataUrl: String, val data: String, val mediaType: String, val name: String,
-)
+    val id: String, val data: String, val mediaType: String, val name: String,
+) {
+    val dataUrl: String get() = "data:$mediaType;base64,$data"
+}
 
 @Serializable
 data class AiApproval(val id: String, val method: String, val details: JsonObject = JsonObject(emptyMap()))

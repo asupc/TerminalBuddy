@@ -16,6 +16,7 @@ import java.util.concurrent.Executors
 
 /** AI 正文的内存 + SQLite 缓存；只接收服务端完整快照，不保存本地发送占位消息。 */
 class AiSessionCache(context: Context, private val store: SessionStore) {
+    @ConsistentCopyVisibility
     data class Scope internal constructor(
         val server: String, val username: String, internal val version: Long, internal val accountVersion: Long,
     )

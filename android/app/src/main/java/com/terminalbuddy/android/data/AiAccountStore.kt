@@ -42,12 +42,12 @@ class AiAccountStore(context: Context, private val active: SessionStore) {
     }
 
     val accounts: List<AiAccount>
-        get() = records.map { AiAccount(it.id, it.server, it.username, session(it).loggedIn, it.name) }
+        @Synchronized get() = records.map { AiAccount(it.id, it.server, it.username, session(it).loggedIn, it.name) }
 
     val activeId: String?
-        get() = if (active.loggedIn) records.find { it.server == active.server && it.username == active.username }?.id else null
+        @Synchronized get() = if (active.loggedIn) records.find { it.server == active.server && it.username == active.username }?.id else null
 
-    internal fun save(connection: AiConnection) {
+    @Synchronized internal fun save(connection: AiConnection) {
         val existing = records.find { it.server == connection.server && it.username == connection.username }
         // 未填写名称时保留原备注名：init 的自动迁移与重新登录都不携带 name。
         val name = if (existing != null) mergeAccountName(existing.name, connection.name) else connection.name.trim()
@@ -59,25 +59,25 @@ class AiAccountStore(context: Context, private val active: SessionStore) {
         else if (record != existing) persist(records.map { if (it.id == record.id) record else it })
     }
 
-    internal fun connection(id: String): AiConnection? {
+    @Synchronized internal fun connection(id: String): AiConnection? {
         val record = records.find { it.id == id } ?: return null
         val saved = session(record)
         return if (saved.loggedIn) AiConnection(record.server, record.username, saved.token, record.name) else null
     }
 
-    fun invalidate(id: String) {
+    @Synchronized fun invalidate(id: String) {
         records.find { it.id == id }?.let { session(it).clear() }
     }
 
     /** 修改已保存服务端的备注名；留空表示清除，列表回退显示登录账号。 */
-    fun rename(id: String, name: String) {
+    @Synchronized fun rename(id: String, name: String) {
         val trimmed = name.trim()
         val record = records.find { it.id == id } ?: return
         if (record.name == trimmed) return
         persist(records.map { if (it.id == id) it.copy(name = trimmed) else it })
     }
 
-    fun remove(id: String) {
+    @Synchronized fun remove(id: String) {
         val record = records.find { it.id == id } ?: return
         persist(records.filterNot { it.id == id })
         session(record).clear()
@@ -86,7 +86,7 @@ class AiAccountStore(context: Context, private val active: SessionStore) {
     }
 
     private fun persist(value: List<Record>) {
-        check(preferences.edit().putString("accounts", ApiJson.encodeToString(value)).commit()) { "无法保存 AI 账号列表" }
+        preferences.edit().putString("accounts", ApiJson.encodeToString(value)).apply()
         records = value
     }
 

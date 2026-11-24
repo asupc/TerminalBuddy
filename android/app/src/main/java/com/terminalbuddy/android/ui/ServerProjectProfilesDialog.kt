@@ -48,10 +48,11 @@ internal fun ServerProjectProfilesDialog(ui: ServerTerminalUiState, vm: ServerTe
             if (ui.loaded && ui.projects.isEmpty()) item {
                 Text("服务端暂无项目配置", Modifier.padding(12.dp), color = TbColors.TextMuted)
             }
-            ui.projects.forEach { project ->
+            ui.projects.forEachIndexed { index, project ->
                 val profiles = ui.profiles.filter { it.projectName == project.name }
-                val expanded = expandedProject == project.name
-                item(key = "project:${project.name}") {
+                val projectKey = "$index:${project.path}:${project.name}"
+                val expanded = expandedProject == projectKey
+                item(key = "project:$projectKey") {
                     val rotation by animateFloatAsState(
                         if (expanded) 90f else 0f,
                         animationSpec = tween(240, easing = FastOutSlowInEasing), label = "配置项目展开箭头",
@@ -61,7 +62,7 @@ internal fun ServerProjectProfilesDialog(ui: ServerTerminalUiState, vm: ServerTe
                         stateDescription = if (expanded) "已展开" else "已折叠"
                     }) {
                         Surface(onClick = {
-                            expandedProject = if (expandedProject == project.name) null else project.name
+                            expandedProject = if (expandedProject == projectKey) null else projectKey
                         }, color = TbColors.SurfaceHover, shape = RoundedCornerShape(10.dp)) {
                             Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {

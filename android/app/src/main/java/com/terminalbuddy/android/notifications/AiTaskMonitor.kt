@@ -45,6 +45,7 @@ internal class AiTaskMonitor(
     private val bodies = AiSessionBodySync(repository, scope)
     private val refresh = Channel<Unit>(Channel.CONFLATED)
     private val subscriptions = mutableMapOf<Subscription, Job>()
+    private val retry404Jobs = mutableMapOf<Subscription, Job>()
     private val connected = mutableSetOf<Subscription>()
     private val unsupported = mutableSetOf<Subscription>()
     private val lastReceived = mutableMapOf<Subscription, Long>()
@@ -106,6 +107,8 @@ internal class AiTaskMonitor(
         bodies.reset()
         subscriptions.values.toList().forEach { it.cancel() }
         subscriptions.clear()
+        retry404Jobs.values.toList().forEach { it.cancel() }
+        retry404Jobs.clear()
         connected.clear()
         unsupported.clear()
         lastReceived.clear()
@@ -242,8 +245,10 @@ internal class AiTaskMonitor(
                 if (isUnsupported) {
                     // 旧服务端不提供该接口；记录后不再反复重连，十分钟后或网络切换时重试。
                     unsupported.add(subscription)
-                    scope.launch {
+                    retry404Jobs.remove(subscription)?.cancel()
+                    retry404Jobs[subscription] = scope.launch {
                         delay(600_000)
+                        retry404Jobs.remove(subscription)
                         unsupported.remove(subscription)
                         update()
                     }

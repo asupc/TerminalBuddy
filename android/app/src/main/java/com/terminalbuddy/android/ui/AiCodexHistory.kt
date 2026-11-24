@@ -19,12 +19,14 @@ import androidx.compose.ui.unit.dp
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.data.*
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+private val CODEX_HISTORY_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
 
 private fun historyTime(time: Long): String = if (time <= 0) "时间未知"
-    else SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date(time))
+    else CODEX_HISTORY_TIME_FORMATTER.format(Instant.ofEpochMilli(time))
 
 @Composable
 internal fun AiHistorySessionRow(session: AiHistorySession, open: () -> Unit) {

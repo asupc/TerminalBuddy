@@ -38,7 +38,7 @@ class AppUpdateRepository(context: Context) {
         val normalized = normalizeAddress(address)
         val servers = request("GET", project + "servers", server = normalized)
         require(servers is JsonArray) { "此地址未提供独立更新接口，请先更新葫芦娃后端" }
-        check(preferences.edit().putString("public_server", normalized).commit()) { "无法保存服务地址" }
+        preferences.edit().putString("public_server", normalized).apply()
         server = normalized
     }
 
@@ -46,7 +46,7 @@ class AppUpdateRepository(context: Context) {
         val key = "client:$address"
         preferences.getString(key, null)?.let { return it }
         val id = UUID.randomUUID().toString().replace("-", "")
-        check(preferences.edit().putString(key, id).commit()) { "无法保存更新客户端标识" }
+        preferences.edit().putString(key, id).apply()
         return id
     }
 

@@ -83,7 +83,7 @@ internal fun ServerDecisionHost(
         }
     }
     LaunchedEffect(activeAccountId, open) {
-        if (open && panelAccount != null && activeAccountId != null && panelAccount != activeAccountId) {
+        if (open && panelAccount != null && panelAccount != activeAccountId) {
             open = false
             panelAccount = null
         }

@@ -112,7 +112,9 @@ internal fun ServerTerminalContent(
     }
     Column(modifier) {
         Box(Modifier.fillMaxWidth().weight(1f)) {
-            AndroidView(factory = { host.view }, modifier = Modifier.matchParentSize())
+            key(host) {
+                AndroidView(factory = { host.view }, modifier = Modifier.matchParentSize())
+            }
             if (textMode) Surface(Modifier.matchParentSize(), color = TbColors.Canvas) {
                 SelectionContainer {
                     Box(Modifier.fillMaxSize().verticalScroll(logScroll).horizontalScroll(rememberScrollState()).padding(12.dp)) {

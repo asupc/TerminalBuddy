@@ -424,6 +424,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         stopRealtime(); refreshJob?.cancel(); refreshJob = null; selectJob?.cancel(); cancelSend(); actionJob?.cancel()
         repository.sessionCache.invalidate()
         drafts.clear(); requests.clear(); pending = null
+        slashFallback = null
         viewedRevisions.clear(); viewedBaselineReady = false
     }
 
@@ -778,6 +779,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     /** 按项目并行读取各助手历史；单个助手不可用（如旧服务端不支持）不阻断其他助手。 */
     private fun loadHistory(project: AiProject, agents: List<String>) {
         cliHistoryJob?.cancel()
+        val epoch = generation
         cliHistoryJob = viewModelScope.launch {
             val switched = mutable.value.historyAgents != agents || mutable.value.historyProjectPath != project.path
             mutable.update {
@@ -791,13 +793,18 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 val results = coroutineScope {
                     agents.map { agent ->
                         async {
-                            agent to runCatching {
+                            agent to try {
                                 repository.rescanHistory(agent)
-                                repository.history(agent, project.path)
+                                Result.success(repository.history(agent, project.path))
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Throwable) {
+                                Result.failure(e)
                             }
                         }
                     }.awaitAll()
                 }
+                if (epoch != generation) return@launch
                 val failures = results.mapNotNull { (_, result) -> result.exceptionOrNull() }
                 // 全部助手都失败才向用户报错；部分失败按空结果处理，仍展示其他助手的历史。
                 if (failures.size == agents.size) throw failures.first()
@@ -814,6 +821,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
+                if (epoch != generation) return@launch
                 if (e is ApiException && e.code == 401) failure(e)
                 mutable.update { state ->
                     if (state.historyAgents != agents || state.historyProjectPath != project.path) state
@@ -830,22 +838,24 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         if (ui.working || ui.authenticating || !ui.authenticated) return
         val target = resumeTarget(ui, project, entry.agent, entry.session.model) ?: return
         cliHistoryJob?.cancel()
-        refreshJob?.cancel(); selectJob?.cancel(); cancelSend(); stopRealtime()
+        refreshJob?.cancel(); selectJob?.cancel(); cancelSend(); stopRealtime(); actionJob?.cancel()
         mutable.update { it.copy(working = true, error = null) }
-        viewModelScope.launch {
+        val epoch = generation
+        actionJob = viewModelScope.launch {
             try {
                 // 点按恢复前先刷新历史索引，预填才能带上电脑端最近输出的回合（best-effort，失败沿用现有索引）。
                 val scanFailure = runCatching { repository.rescanHistory(entry.agent) }.exceptionOrNull()
                 if (scanFailure is CancellationException) throw scanFailure
                 val session = repository.create(project, target.provider, target.model.id, entry.session.sessionId)
-                mutable.update { it.copy(working = false) }
+                if (epoch != generation) return@launch
                 // 列表由账号级通知流自行刷新；这里直接进入恢复出的会话。
                 open(session.id)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                mutable.update { it.copy(working = false) }
-                failure(e)
+                if (epoch == generation) failure(e)
+            } finally {
+                if (epoch == generation) mutable.update { it.copy(working = false) }
             }
         }
     }
@@ -1081,6 +1091,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     /** 从系统相册 / 文件选择器添加图片：读取为 base64 并生成即时预览。 */
     fun addImages(uris: List<Uri>) {
         if (uris.isEmpty()) return
+        val epoch = generation
+        val sessionId = mutable.value.selected?.id
         val room = (MAX_ATTACHMENTS - mutable.value.attachments.size).coerceAtLeast(0)
         if (room == 0) {
             mutable.update { it.copy(error = "一次最多发送 $MAX_ATTACHMENTS 张图片") }
@@ -1092,6 +1104,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             val images = withContext(Dispatchers.IO) {
                 selected.mapNotNull { uri -> runCatching { readDraftImage(uri) }.getOrNull() }
             }
+            if (epoch != generation || mutable.value.selected?.id != sessionId) return@launch
             if (images.isEmpty()) {
                 mutable.update { it.copy(error = "图片读取失败，请选择 10MB 以内的 PNG / JPEG / GIF / WebP 图片") }
                 return@launch
@@ -1111,16 +1124,27 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val mediaType = resolver.getType(uri)?.lowercase()
             ?.takeIf { it.startsWith("image/") }
             ?: throw IllegalArgumentException("仅支持图片文件")
-        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: throw IllegalArgumentException("无法读取图片")
-        if (bytes.isEmpty() || bytes.size > MAX_ATTACHMENT_BYTES) throw IllegalArgumentException("图片超过 10MB")
+        val bytes = resolver.openInputStream(uri)?.use { stream ->
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val read = stream.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > MAX_ATTACHMENT_BYTES) throw IllegalArgumentException("图片超过 10MB")
+                out.write(buffer, 0, read)
+            }
+            out.toByteArray()
+        } ?: throw IllegalArgumentException("无法读取图片")
+        if (bytes.isEmpty()) throw IllegalArgumentException("无法读取图片")
         val data = Base64.encodeToString(bytes, Base64.NO_WRAP)
         val name = runCatching {
             resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) cursor.getString(0) else null
             }
         }.getOrNull() ?: "图片"
-        return AiDraftImage(UUID.randomUUID().toString(), "data:$mediaType;base64,$data", data, mediaType, name)
+        return AiDraftImage(UUID.randomUUID().toString(), data, mediaType, name)
     }
 
     /** 服务端图片预览地址：本地 data: URL 直接返回，落盘附件走带 JWT 的只读文件接口。 */
@@ -1531,7 +1555,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             val previous = current.selected
             if (previous == null || previous.id != session.id || session.revision < previous.revision) current
             else {
-                val messages = if (accepted && message != null) previous.messages.filterNot { it.id == message.message.id }
+                val messages = if (accepted) previous.messages.filterNot { it.id == message.message.id }
                     else previous.messages
                 var snapshot = session.copy(messages = messages, revision = previous.revision)
                 if (message != null && !accepted && message.queued) snapshot = message.display(snapshot)
@@ -1544,10 +1568,12 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private fun receive(session: AiSession) {
         val selected = mutable.value.selected ?: return
         if (selected.id != session.id || session.revision < maxOf(selected.revision, controlRevisionFor(session.id))) return
-        // `/` 清单随 CLI 启动刷新：按 Agent 缓存一份，新会话在 init 到达前也能补全。
+        // `/` 清单随 CLI 启动刷新：按 Agent 缓存一份，新会话在 init 到达前也能补全；内容一致时跳过 JSON 序列化与写盘。
         session.slashCatalog?.let { catalog ->
-            repository.saveSlashCatalog(session.provider, catalog)
-            slashFallback = session.provider to catalog
+            if (slashFallback?.first != session.provider || slashFallback?.second != catalog) {
+                repository.saveSlashCatalog(session.provider, catalog)
+                slashFallback = session.provider to catalog
+            }
         }
         // 只缓存服务端原始快照，本地尚未确认的消息仍由 outgoing 单独管理。
         repository.sessionCache.scope()?.let { repository.sessionCache.save(it, session) }
@@ -1561,24 +1587,33 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 session.pendingInputs.any { it.requestId == message.requestId }
         )
         if (accepted) {
-            message?.accepted?.complete(Unit)
+            message.accepted.complete(Unit)
             outgoing = null
             requests.remove(session.id)
         }
         val displayed = if (message != null && !accepted) message.display(session) else session
-        // 只有当前可见会话的有效正文快照才算查看；后台或迟到的响应不能清除提示。
-        if (visible) markViewed(session.id, session.revision)
+        // 只有当前可见会话的有效正文快照才算查看；流式运行中仅更新内存已读位，回合结束再落盘。
+        if (visible) markViewed(session.id, session.revision, persist = !session.running)
+        var recentToPersist: List<AiSession>? = null
         mutable.update { current ->
             val currentSelected = current.selected
             if (currentSelected == null || currentSelected.id != session.id || session.revision < currentSelected.revision) current
-            else current.copy(
-                selected = displayed, loadingSession = false,
-                answeringApprovalIds = current.answeringApprovalIds.intersect(session.approvals.map { it.id }.toSet()),
-                sessions = (listOf(session.copy(messages = emptyList())) + current.sessions.filterNot { it.id == session.id })
-                    .sortedByDescending { it.updatedAt },
-            )
+            else {
+                val updatedSessions = (listOf(session.copy(messages = emptyList())) + current.sessions.filterNot { it.id == session.id })
+                    .sortedByDescending { it.updatedAt }
+                val recent = (updatedSessions + current.recentSessions)
+                    .filterNot { it.id.startsWith("local-") }.distinctBy { it.id }
+                    .sortedByDescending { it.updatedAt }.take(2)
+                if (!session.running) recentToPersist = recent
+                current.copy(
+                    selected = displayed, loadingSession = false,
+                    answeringApprovalIds = current.answeringApprovalIds.intersect(session.approvals.map { it.id }.toSet()),
+                    sessions = updatedSessions,
+                    recentSessions = recent,
+                )
+            }
         }
-        updateRecentSessions()
+        recentToPersist?.let(repository::saveRecentSessions)
     }
 
     /** 首次使用时接纳现有历史；已保存的空表也必须保留，不能重新建立基线。 */
@@ -1607,10 +1642,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         return unviewed
     }
 
-    private fun markViewed(id: String, revision: Long) {
+    private fun markViewed(id: String, revision: Long, persist: Boolean = true) {
         ensureViewedBaseline()
         viewedRevisions[id] = maxOf(viewedRevisions[id] ?: 0, revision)
-        repository.saveViewedRevisions(viewedRevisions)
+        if (persist) repository.saveViewedRevisions(viewedRevisions)
         mutable.update { it.copy(unviewedIds = it.unviewedIds - id) }
     }
 

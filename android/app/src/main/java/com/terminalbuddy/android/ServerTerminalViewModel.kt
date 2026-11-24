@@ -356,11 +356,23 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
                 mutable.update { it.copy(connected = true, status = "终端已连接", terminalError = null) }
                 webSocket.send(jsonBody { put("type", "resize"); put("cols", cols); put("rows", rows) }.toString())
             }
-            override fun onMessage(webSocket: WebSocket, text: String) = dispatch {
-                try {
-                    receive(ApiJson.parseToJsonElement(text).asObject())
-                } catch (_: Exception) {
-                    mutable.update { it.copy(terminalError = "终端消息格式不正确，请更新服务端") }
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                // 在 OkHttp 顺序回调线程完成 JSON 与 replay 解码（保序 FIFO 且不阻塞主线程），再切回主线程更新状态。
+                val parsed = runCatching {
+                    val obj = ApiJson.parseToJsonElement(text).asObject()
+                    val replay = if (obj.text("type") == "replay") {
+                        ApiJson.decodeFromJsonElement<List<ServerTerminalFrame>>(
+                            obj["frames"] ?: JsonArray(emptyList()),
+                        )
+                    } else null
+                    obj to replay
+                }.getOrNull()
+                dispatch {
+                    if (parsed == null) {
+                        mutable.update { it.copy(terminalError = "终端消息格式不正确，请更新服务端") }
+                    } else {
+                        receive(parsed.first, parsed.second)
+                    }
                 }
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -403,7 +415,7 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
         }
     }
 
-    private fun receive(message: JsonObject) {
+    private fun receive(message: JsonObject, decodedReplay: List<ServerTerminalFrame>? = null) {
         when (message.text("type")) {
             "viewport" -> {
                 // 只记录输出网格（供 replay 帧按原网格回放），不转发渲染器：
@@ -413,7 +425,9 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
             }
             "replay" -> {
                 attempts = 0
-                val replay = ApiJson.decodeFromJsonElement<List<ServerTerminalFrame>>(message["frames"] ?: JsonArray(emptyList()))
+                val replay = decodedReplay ?: ApiJson.decodeFromJsonElement<List<ServerTerminalFrame>>(
+                    message["frames"] ?: JsonArray(emptyList()),
+                )
                 clearFrames()
                 replay.forEach(::appendFrame)
                 renderer?.invoke(replayMessage())

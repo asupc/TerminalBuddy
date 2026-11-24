@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.terminalbuddy.android.data.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
@@ -89,6 +90,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         const val REPLY_QUEUE_INTERVAL = 3_200L
     }
     private val aiRepository = (application as TerminalBuddyApplication).aiRepository
+    private val taskNotifications = (application as TerminalBuddyApplication).taskNotifications
     private val store = aiRepository.store
     private val repository = TerminalAgentRepository()
     private val mutable = MutableStateFlow(TerminalAgentUiState())
@@ -123,39 +125,17 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
     /** 在途 refresh 期间又收到变化时补刷一次，避免防重入吞掉最后一次列表变化。 */
     private var refreshAgain = false
 
-    /** 订阅服务端终端列表变化事件；断线按 1s→2s→4s→8s 退避重连，旧服务端（404）静默降级。 */
+    /** 复用通知监控的 `/ws/notifications` 通道接收服务端终端列表变化事件，避免重复建连。 */
     private fun startListSync() {
         notifyJob?.cancel(); notifyJob = null
         val connection = mutable.value.connection ?: return
         val epoch = generation
         notifyJob = viewModelScope.launch {
-            var retries = 0
-            while (isActive && epoch == generation) {
-                val observed = runCatching {
-                    aiRepository.observeServerNotifications(connection).collect { frame ->
-                        // 账号已切换：忽略旧连接的后续帧（bindAccount 会取消本协程）。
-                        if (epoch != generation) return@collect
-                        if (frame is ServerNotificationFrame.Event &&
-                            frame.event.kind == "terminals_changed"
-                        ) {
-                            retries = 0
-                            refresh()
-                            terminalListChangedFlow.tryEmit(Unit)
-                        }
-                    }
-                }
-                if (!isActive || epoch != generation) break
-                // 正常关闭（cancel / 账号切换）不重连；异常才退避重试。
-                if (observed.isFailure) {
-                    // 旧服务端不提供 /ws/notifications（404）：静默降级并长退避
-                    // （M-29），否则每 ≤8s 一次注定失败的握手毫无意义。
-                    if (observed.exceptionOrNull() is com.terminalbuddy.android.data.ApiException &&
-                        (observed.exceptionOrNull() as com.terminalbuddy.android.data.ApiException).code == 404) {
-                        delay(600_000L)
-                        continue
-                    }
-                    delay(1_000L shl retries.coerceAtMost(3))
-                    retries = (retries + 1).coerceAtMost(3)
+            taskNotifications.terminalListChanged.collect { accountId ->
+                if (epoch != generation) return@collect
+                if (aiRepository.accounts.connection(accountId) == connection) {
+                    refresh()
+                    terminalListChangedFlow.tryEmit(Unit)
                 }
             }
         }
@@ -339,27 +319,36 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         if (!mutable.value.starting) drainQueue()
     }
 
-    /** 绑定已出现、队列非空且当前没有在途发送：按顺序发下一条（服务端限流 3 秒）。 */
+    /** 绑定已出现、队列非空且当前没有在途发送：按顺序逐条排空（服务端限流 3 秒）。 */
     private fun drainQueue() {
         val state = mutable.value
         val session = state.selected ?: return
-        if (state.starting || state.sending || replyJob?.isActive == true || !session.canReply) return
-        val text = state.queuedReplies.firstOrNull() ?: return
+        if (state.starting || state.sending || replyJob?.isActive == true || !session.canReply || state.queuedReplies.isEmpty()) return
         val connection = state.connection ?: return
-        mutable.update { it.copy(queuedReplies = it.queuedReplies.drop(1), sending = true, sendError = null) }
-        val requestId = java.util.UUID.randomUUID().toString().replace("-", "")
         val epoch = generation
-        // 采样锚点与手动发送一致：REST 往返期间 append 帧可能先到。
-        val anchorSessionId = session.sessionId
-        val anchorRevision = state.revision
-        val anchorSeq = state.cursor
         replyJob = viewModelScope.launch {
-            inflightReply = session.terminalId to text
+            drainQueuedReplies(connection, session.terminalId, epoch)
+        }
+    }
+
+    private suspend fun drainQueuedReplies(connection: AiConnection, terminalId: String, epoch: Int) {
+        while (currentCoroutineContext().isActive && epoch == generation) {
+            val state = mutable.value
+            val session = state.selected ?: break
+            if (state.starting || session.terminalId != terminalId || !session.canReply) break
+            val text = state.queuedReplies.firstOrNull() ?: break
+            mutable.update { it.copy(queuedReplies = it.queuedReplies.drop(1), sending = true, sendError = null) }
+            val requestId = java.util.UUID.randomUUID().toString().replace("-", "")
+            // 采样锚点与手动发送一致：REST 往返期间 append 帧可能先到。
+            val anchorSessionId = session.sessionId
+            val anchorRevision = state.revision
+            val anchorSeq = state.cursor
+            inflightReply = terminalId to text
             try {
-                repository.reply(connection, session.terminalId, text, requestId)
+                repository.reply(connection, terminalId, text, requestId)
                 // 请求已成功返回：此后取消协程不应再把这条文本当成「在途未发」重放。
                 inflightReply = null
-                if (epoch != generation || mutable.value.selected?.terminalId != session.terminalId) return@launch
+                if (epoch != generation || mutable.value.selected?.terminalId != terminalId) break
                 mutable.update {
                     it.copy(
                         sending = false,
@@ -372,27 +361,25 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
                 matchPendingReply()
                 scheduleConfirmTimeout()
                 // 队列里还有：等限流窗口过去再发下一条。
-                if (mutable.value.queuedReplies.isNotEmpty()) {
-                    delay(REPLY_QUEUE_INTERVAL)
-                    if (epoch == generation) drainQueue()
-                }
+                if (mutable.value.queuedReplies.isEmpty()) break
+                delay(REPLY_QUEUE_INTERVAL)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (epoch == generation && mutable.value.selected?.terminalId == session.terminalId) {
+                if (epoch == generation && mutable.value.selected?.terminalId == terminalId) {
                     if (e is TerminalAgentException && e.code == 429) {
-                        // 限流：放回队首，等 Retry-After 后再试。
+                        // 限流：放回队首，等 Retry-After 后继续在循环内重试。
                         mutable.update {
                             it.copy(sending = false, queuedReplies = listOf(text) + it.queuedReplies)
                         }
                         delay((e.retryAfterSecs ?: 3).coerceAtLeast(1) * 1_000L)
-                        if (epoch == generation) drainQueue()
-                    } else {
-                        mutable.update {
-                            it.copy(sending = false, sendError = replyErrorText(e), draft = it.draft.ifBlank { text })
-                        }
+                        continue
+                    }
+                    mutable.update {
+                        it.copy(sending = false, sendError = replyErrorText(e), draft = it.draft.ifBlank { text })
                     }
                 }
+                break
             } finally {
                 if (inflightReply?.second == text) inflightReply = null
             }
@@ -407,11 +394,13 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         replyJob?.cancel(); replyJob = null
         confirmJob?.cancel(); confirmJob = null
         disconnect()
+        val current = mutable.value
+        val pendingQueue = current.queuedReplies
+        if (pendingQueue.isNotEmpty() && current.selected != null) {
+            val tid = current.selected.terminalId
+            savedQueues[tid] = savedQueues[tid].orEmpty() + pendingQueue
+        }
         mutable.update {
-            val pendingQueue = it.queuedReplies
-            if (pendingQueue.isNotEmpty() && it.selected != null) {
-                savedQueues[it.selected.terminalId] = pendingQueue
-            }
             it.copy(
                 selected = null, messages = emptyList(), revision = 0, cursor = -1, total = 0,
                 loadingMessages = false, messagesError = null, closed = false, closedReason = null,
@@ -509,6 +498,10 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
                 // append 帧可能已先于响应到达（消息已在镜像里）：立即尝试确认一次。
                 matchPendingReply()
                 scheduleConfirmTimeout()
+                if (mutable.value.queuedReplies.isNotEmpty()) {
+                    delay(REPLY_QUEUE_INTERVAL)
+                    drainQueuedReplies(connection, session.terminalId, epoch)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {

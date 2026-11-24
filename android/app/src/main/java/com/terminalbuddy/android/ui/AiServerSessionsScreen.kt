@@ -26,31 +26,27 @@ import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.data.AiHistorySession
 import com.terminalbuddy.android.data.AiProject
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+private val SERVER_SESSION_TIME_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault())
 
 /** 助手按服务端安装状态展示；项目默认收起，展开后按项目懒加载，历史记录由外层惰性列表承载。 */
 @Composable
 internal fun AiServerSessionsScreen(ui: AiUiState, vm: AiViewModel) {
     val agents = listOf("claude", "codex")
     var selectedAgent by rememberSaveable(ui.activeAccountId) { mutableStateOf("claude") }
-    val agent = selectedAgent.takeIf { it in agents } ?: agents.firstOrNull()
+    val agent = selectedAgent.takeIf { it in agents } ?: agents.first()
     var resumingId by remember(ui.activeAccountId) { mutableStateOf<String?>(null) }
     LaunchedEffect(ui.working) { if (!ui.working) resumingId = null }
     var limits by rememberSaveable(ui.activeAccountId, agent) { mutableStateOf(mapOf<String, Int>()) }
     val projects = ui.projects.distinctBy { it.path }
     val listState = rememberSaveable(ui.activeAccountId, agent, saver = LazyListState.Saver) { LazyListState() }
     LaunchedEffect(agent, ui.activeAccountId, ui.connectionRevision) {
-        if (agent != null) vm.reloadExpandedServerHistory(agent)
+        vm.reloadExpandedServerHistory(agent)
     }
     Column(Modifier.fillMaxSize()) {
-        if (agent == null) {
-            AiCard(Modifier.fillMaxWidth().padding(20.dp), shape = RoundedCornerShape(16.dp)) {
-                AiEmptyState(Icons.Outlined.SmartToy, "暂无已安装的智能体", "请先在服务端 Agent 管理中安装助手，再查看历史会话。")
-            }
-            return@Column
-        }
         // 不再显示「服务端历史」标题行，直接从 Claude / Codex 助手切换开始。
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp),
@@ -206,7 +202,7 @@ private fun AiServerHistoryProjectCard(
                 Text(
                     buildList {
                         add("${session.messageCount} 条消息")
-                        if (session.updatedAt > 0) add(SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(session.updatedAt)))
+                        if (session.updatedAt > 0) add(SERVER_SESSION_TIME_FORMATTER.format(Instant.ofEpochMilli(session.updatedAt)))
                         session.model?.takeIf(String::isNotBlank)?.let(::add)
                     }.joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,

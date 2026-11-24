@@ -43,7 +43,6 @@ internal fun TerminalAgentSessionScreen(
     terminalUi: ServerTerminalUiState,
     terminalVm: ServerTerminalViewModel,
     onBack: () -> Unit,
-    onBackFromTerminal: () -> Unit,
     openDecision: (String) -> Unit,
 ) {
     val session = agentUi.selected
@@ -53,9 +52,7 @@ internal fun TerminalAgentSessionScreen(
     }
     var menu by rememberSaveable(session?.terminalId.orEmpty()) { mutableStateOf(false) }
     var information by rememberSaveable(session?.terminalId.orEmpty()) { mutableStateOf(false) }
-    val back: () -> Unit = {
-        if (activeTab == AgentSessionTab.Terminal) onBackFromTerminal() else onBack()
-    }
+    val back: () -> Unit = onBack
 
     // 可见性 = Agent 宿主存在 + 对话页签 + Activity START；三个条件任一失效都立即断开镜像。
     var activityStarted by remember { mutableStateOf(false) }

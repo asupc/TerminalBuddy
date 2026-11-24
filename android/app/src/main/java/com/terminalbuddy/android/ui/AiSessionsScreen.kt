@@ -596,6 +596,8 @@ internal fun AiSessionCard(
     }
 }
 
+private val SESSION_DATE_FORMATTER = java.time.format.DateTimeFormatter.ofPattern("MM-dd").withZone(java.time.ZoneId.systemDefault())
+
 private fun sessionTime(timestamp: Long): String {
     if (timestamp <= 0) return ""
     val minutes = ((System.currentTimeMillis() - timestamp).coerceAtLeast(0) / 60_000)
@@ -603,6 +605,6 @@ private fun sessionTime(timestamp: Long): String {
         minutes == 0L -> "刚刚"
         minutes < 60 -> "${minutes} 分钟前"
         minutes < 24 * 60 -> "${minutes / 60} 小时前"
-        else -> SimpleDateFormat("MM-dd", Locale.CHINA).format(Date(timestamp))
+        else -> SESSION_DATE_FORMATTER.format(java.time.Instant.ofEpochMilli(timestamp))
     }
 }

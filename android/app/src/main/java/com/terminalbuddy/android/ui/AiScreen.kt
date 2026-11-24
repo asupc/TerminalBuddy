@@ -105,9 +105,7 @@ fun AiScreen(
     LaunchedEffect(ui.activeAccountId) {
         val previous = lastAgentAccountId
         lastAgentAccountId = ui.activeAccountId
-        if (previous != null && ui.activeAccountId != null && previous != ui.activeAccountId &&
-            selectedAgentTerminalId != null
-        ) {
+        if (previous != null && previous != ui.activeAccountId && selectedAgentTerminalId != null) {
             if (terminalUi.selected != null) terminalVm.leaveTerminal()
             agentVm.leaveSession()
             selectedAgentTerminalId = null
@@ -185,7 +183,6 @@ fun AiScreen(
             agentUi = agentUi, agentVm = agentVm,
             terminalUi = terminalUi, terminalVm = terminalVm,
             onBack = leaveAgentSession,
-            onBackFromTerminal = leaveAgentSession,
             openDecision = openDecision,
         )
     } else if (ui.authenticated && terminalVm.isCurrentAccount() && terminalUi.selected != null) {
