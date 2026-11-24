@@ -212,10 +212,15 @@ for tool in docker curl tar find rm rmdir mktemp sync; do
 done
 [ "$(docker inspect --format '{{.Id}}' "${CONTAINER}")" = "${OLD_ID}" ] || fail "原容器已改变"
 wait_healthy "${OLD_ID}" || fail "切换前原服务健康检查失败"
-# socket 权限也必须先有可用基线，避免把既有故障带入更新。
-docker exec --user terminalbuddy "${OLD_ID}" docker info --format '{{.ID}}' > "${STATE}/old-engine-id"
-[ "$(cat "${STATE}/old-engine-id")" = "$(docker info --format '{{.ID}}')" ] \
-  || fail "原服务无法连接同一宿主机 Docker Engine"
+# 更新容器显式绑定宿主机的当前 socket：Docker 重建 socket 后，原容器可能仍绑定旧 inode。
+# 以宿主机引擎作为基线，允许本次重建修复旧挂载；新版仍须严格复查用户权限和引擎身份。
+docker info --format '{{.ID}}' > "${STATE}/old-engine-id"
+if OLD_ENGINE_ID="$(docker exec --user terminalbuddy "${OLD_ID}" docker info --format '{{.ID}}' 2>"${STATE}/old-engine-error.log")"; then
+  [ "${OLD_ENGINE_ID}" = "$(cat "${STATE}/old-engine-id")" ] \
+    || fail "原服务连接的 Docker Engine 与宿主机不一致"
+else
+  log "原容器的 Docker 连接不可用，将通过重建刷新 socket 挂载，并在新版中复查"
+fi
 docker inspect "${OLD_ID}" > "${STATE}/original-container.json"
 RESTART_NAME="$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "${OLD_ID}")"
 RESTART_MAX="$(docker inspect --format '{{.HostConfig.RestartPolicy.MaximumRetryCount}}' "${OLD_ID}")"
