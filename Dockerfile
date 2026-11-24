@@ -14,9 +14,9 @@ RUN npm run build:web:desktop
 
 FROM rust:1-bookworm AS backend
 # 构建阶段使用可覆盖的 Cargo 镜像源，避免 crates.io 的 TLS 故障阻断更新。
-ARG CARGO_REGISTRY_INDEX=sparse+https://rsproxy.cn/index/
+ARG CARGO_MIRROR_INDEX=sparse+https://rsproxy.cn/index/
 RUN printf '%s\n' '[source.crates-io]' 'replace-with = "build-mirror"' \
-    '[source.build-mirror]' "registry = \"${CARGO_REGISTRY_INDEX}\"" \
+    '[source.build-mirror]' "registry = \"${CARGO_MIRROR_INDEX}\"" \
     '[net]' 'retry = 5' '[http]' 'multiplexing = false' \
     > /usr/local/cargo/config.toml
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev libssh2-1-dev && rm -rf /var/lib/apt/lists/*
