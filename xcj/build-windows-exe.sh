@@ -8,8 +8,9 @@
 #   ./xcj/build-windows-exe.sh               产出 Windows 单文件 exe
 #   ./xcj/build-windows-exe.sh --clean-cache 清空交叉编译缓存（xwin SDK 与 Windows 目标产物）
 #
-# 产物：先落到仓库根 dist/，构建成功后自动移动到 /mnt/fnos/code/
-#       （TerminalBuddy_<版本>_x64.exe；目标目录不可用时保留在 dist/；不生成 .sha256）
+# 产物：先落到仓库根 dist/TerminalBuddy_x64.exe，构建成功后自动移动到
+#       /mnt/fnos/code/（固定文件名，同名文件直接覆盖；目标目录不可用时
+#       保留在 dist/；不生成 .sha256）
 # 说明：只生成单个 exe，不生成 NSIS 安装包；安装包需在 Windows 上执行
 #       terminal-buddy/build.bat。
 
@@ -146,12 +147,12 @@ if [ ! -f "$BUILT" ]; then
 fi
 
 echo "==> [4/4] 收集产物"
-VERSION="$(node -p "require('$REPO_ROOT/version.json').version")"
-TARGET="$OUTPUT_DIR/TerminalBuddy_${VERSION}_x64.exe"
+# 固定文件名（不含版本号），重复构建时直接覆盖
+TARGET="$OUTPUT_DIR/TerminalBuddy_x64.exe"
 cp -f "$BUILT" "$TARGET"
 
-# 构建成功后把 exe 移动到 /mnt/fnos/code；
-# 目标目录不可用时保留在 dist/，避免构建成果丢失
+# 构建成功后把 exe 移动到 /mnt/fnos/code；目标目录已有同名文件时直接覆盖
+# （mv -f），目标目录不可用时保留在 dist/，避免构建成果丢失
 if [ -z "$DEPLOY_DIR" ]; then
     echo "==> DEPLOY_DIR 为空，跳过移动，产物保留在 $OUTPUT_DIR"
     ls -lh "$TARGET"

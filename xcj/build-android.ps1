@@ -8,7 +8,7 @@
       检测 JDK 17+ → 解析/自动补齐 Android SDK（默认 %USERPROFILE%\.android-sdk）
       → versionName 末段 +1、versionCode +1（失败自动回退）
       → gradlew :app:assembleRelease → apksigner 校验
-      → dist\ 归档 → 移动到部署目录（默认 \\192.168.1.71\code）
+      → dist\TerminalBuddy_android.apk 归档 → 移动到部署目录（默认 \\192.168.1.71\code）
       → 清理 Gradle / Kotlin JVM。
 
     与 Linux 版的差异：Windows 没有 apt，Android SDK 缺失时自动下载 cmdline-tools
@@ -485,7 +485,8 @@ function Invoke-Main {
 
         Write-Step '[5/6] 收集产物'
         New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
-        $targetName = "TerminalBuddy_${newVersion}_android.apk"
+        # 固定文件名（不含版本号），重复构建时直接覆盖
+        $targetName = 'TerminalBuddy_android.apk'
         $target = Join-Path $OutputDir $targetName
         Copy-Item -LiteralPath $apk -Destination $target -Force
         $finalTarget = $target
@@ -533,8 +534,10 @@ function Invoke-Main {
             if (!(Test-Path -LiteralPath $deployDir -PathType Container)) {
                 New-Item -ItemType Directory -Path $deployDir -Force -ErrorAction Stop | Out-Null
             }
-            Move-Item -LiteralPath $target -Destination $deployDir -Force -ErrorAction Stop
-            $finalTarget = Join-Path $deployDir $targetName
+            # 目标目录已有同名文件时直接覆盖
+            $destPath = Join-Path $deployDir $targetName
+            Move-Item -LiteralPath $target -Destination $destPath -Force -ErrorAction Stop
+            $finalTarget = $destPath
             $moved = $true
             Write-Step "已移动产物到 $deployDir"
         }

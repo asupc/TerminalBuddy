@@ -66,7 +66,8 @@
   `xcj/remote-build.sh android --clean-cache` 清理项目缓存。Android 的
   `--clean-cache` 只清 `android/.gradle` 与 `android/app/build`，不会清 `~/.gradle`
   的全局依赖缓存；需要彻底重下依赖时请在构建主机手动处理 `~/.gradle`。
-- **产物位置**：回传的 exe / APK 直接位于 `dist/`，不再生成 `.sha256` 校验文件。
+- **产物位置**：回传的 `dist/TerminalBuddy_x64.exe` / `dist/TerminalBuddy_android.apk`
+  使用固定文件名（重复构建直接覆盖），不再生成 `.sha256` 校验文件。
 - **Windows 构建缺 `lib.exe`**：先确认 `cargo xwin cache xwin` 已完成且
   `XWIN_CACHE_DIR` 指向 `~/.cache/terminal-buddy/xwin`；若仍失败，先把完整日志
   连同 `cargo-xwin --version` 一起保留，再单独排查 SDK 缓存。
