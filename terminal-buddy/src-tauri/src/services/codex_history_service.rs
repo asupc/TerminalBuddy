@@ -83,7 +83,10 @@ fn session_id(path: &Path) -> Option<String> {
         .map(|_| suffix.to_string())
 }
 
-fn collect_files(root: &Path) -> Result<Vec<SessionFile>, String> {
+fn collect_files(
+    root: &Path,
+    existing: &HashMap<String, (String, i64, i64)>,
+) -> Result<Vec<SessionFile>, String> {
     let mut files = Vec::new();
     for (name, archived) in [("sessions", false), ("archived_sessions", true)] {
         let mut dirs = vec![root.join(name)];
@@ -118,9 +121,6 @@ fn collect_files(root: &Path) -> Result<Vec<SessionFile>, String> {
                     continue;
                 }
                 let path = entry.path();
-                let Some(id) = session_id(&path) else {
-                    continue;
-                };
                 let metadata = entry
                     .metadata()
                     .map_err(|error| format!("读取 Codex 会话文件属性失败: {error}"))?;
@@ -130,11 +130,26 @@ fn collect_files(root: &Path) -> Result<Vec<SessionFile>, String> {
                     .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                     .map(|duration| duration.as_millis() as i64)
                     .unwrap_or(0);
+                let size = metadata.len() as i64;
+                let path_str = path.to_string_lossy();
+                let id = match existing.get(path_str.as_ref()) {
+                    Some((saved_id, saved_mtime, saved_size))
+                        if *saved_mtime == mtime && *saved_size == size =>
+                    {
+                        saved_id.clone()
+                    }
+                    _ => {
+                        let Some(id) = session_id(&path) else {
+                            continue;
+                        };
+                        id
+                    }
+                };
                 files.push(SessionFile {
                     id,
                     path,
                     mtime,
-                    size: metadata.len() as i64,
+                    size,
                     archived,
                 });
             }
@@ -225,7 +240,30 @@ fn scan_root(
             .map_err(|error| error.to_string())?;
         transaction.commit().map_err(|error| error.to_string())?;
     }
-    let all_files = collect_files(root)?;
+    let existing = {
+        let mut statement = conn
+            .prepare("SELECT file_path, session_id, file_mtime, file_size FROM codex_sessions")
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    (
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ),
+                ))
+            })
+            .map_err(|error| error.to_string())?;
+        let mut map = HashMap::new();
+        for row in rows {
+            let (path, info) = row.map_err(|error| error.to_string())?;
+            map.insert(path, info);
+        }
+        map
+    };
+    let all_files = collect_files(root, &existing)?;
     // 同一 ID 的备份副本只列一条，优先活动目录，其次取最新文件。
     let mut by_id = HashMap::<String, SessionFile>::new();
     for file in all_files {
@@ -239,17 +277,11 @@ fn scan_root(
     }
     let files: Vec<_> = by_id.into_values().collect();
     let mut outdated = Vec::new();
-    let mut check = conn.prepare("SELECT 1 FROM codex_sessions WHERE session_id = ?1 AND file_path = ?2 AND file_mtime = ?3 AND file_size = ?4")
-        .map_err(|error| error.to_string())?;
     for file in &files {
-        let unchanged = check
-            .query_row(
-                params![file.id, file.path.to_string_lossy(), file.mtime, file.size],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .is_some();
+        let path_str = file.path.to_string_lossy();
+        let unchanged = existing.get(path_str.as_ref()).is_some_and(|(id, mtime, size)| {
+            id == &file.id && *mtime == file.mtime && *size == file.size
+        });
         if !unchanged {
             outdated.push(file);
         }
@@ -660,7 +692,7 @@ fn delete_in(
         .filter(|id| !id.is_empty())
         .collect();
     // 收集相同 ID 的全部 rollout 副本，避免删除后被另一个副本重新索引。
-    let files = collect_files(root)?;
+    let files = collect_files(root, &HashMap::new())?;
     for id in &ids {
         let path = conn
             .query_row(

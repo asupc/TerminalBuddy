@@ -325,6 +325,26 @@ pub(crate) async fn claude_hook(
             return (StatusCode::TOO_MANY_REQUESTS, reject_reason.message()).into_response();
         }
     };
+    struct PendingDecisionGuard<'a> {
+        app: &'a crate::runtime::AppHandle,
+        terminal_id: &'a str,
+        decision_id: &'a str,
+        armed: bool,
+    }
+    impl Drop for PendingDecisionGuard<'_> {
+        fn drop(&mut self) {
+            if self.armed {
+                ClaudeHookService::expire_decision(self.decision_id);
+                settle_decision(self.app, self.terminal_id, self.decision_id, None);
+            }
+        }
+    }
+    let mut guard = PendingDecisionGuard {
+        app: &app,
+        terminal_id,
+        decision_id: &decision_id,
+        armed: true,
+    };
     let event = ClaudeHookDecisionEvent {
         decision_id: decision_id.clone(),
         terminal_id: terminal_id.to_string(),
@@ -335,6 +355,7 @@ pub(crate) async fn claude_hook(
     };
     if native {
         if native_hooks::publish(terminal_id, NativeHookEvent::Decision(event)).is_err() {
+            guard.armed = false;
             ClaudeHookService::expire_decision(&decision_id);
             return (StatusCode::GONE, "Claude 会话已结束").into_response();
         }
@@ -346,6 +367,7 @@ pub(crate) async fn claude_hook(
     // 决策只跟随当前 Hook 请求等待，不使用用户可配置的延迟。
     // 原生会话过期后返回 deny，避免再退回 stdio 产生第二次用户提问。
     let outcome = tokio::time::timeout(ClaudeHookService::http_wait_cap(), receiver).await;
+    guard.armed = false;
     let resolution = match &outcome {
         Ok(Ok(ClaudeHookResolution::Answers(_))) => Some("answered"),
         Ok(Ok(ClaudeHookResolution::ContinueInTerminal)) => Some("continueInTerminal"),

@@ -545,6 +545,7 @@ pub(crate) fn evaluate_can_reply(
 // ───────────────────────── 纯函数：快照 diff 与分页 ─────────────────────────
 
 /// 镜像基线（diff / 分页的输入视图；生产上由 MirrorEntry 提供，测试可直接构造）。
+#[cfg(test)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MirrorBaseline {
     pub messages: Vec<SessionReplayMessage>,
@@ -567,29 +568,41 @@ pub(crate) enum ContentDiff {
 /// 完整消息比较 + 追加判定（§4.3）。
 /// 任何旧 seq 的完整内容变化、同 seq 重复、旧消息消失、total 变小、Codex 去重重排
 /// 都判 Rotated；已截断的基线不再做 append（窗口会滑动）。
+#[cfg(test)]
 pub(crate) fn diff_content(
     old: &MirrorBaseline,
     new_messages: &[SessionReplayMessage],
     new_total: i64,
     new_truncated: bool,
 ) -> ContentDiff {
+    diff_slice(&old.messages, old.total, old.truncated, new_messages, new_total, new_truncated)
+}
+
+pub(crate) fn diff_slice(
+    old_messages: &[SessionReplayMessage],
+    old_total: i64,
+    old_truncated: bool,
+    new_messages: &[SessionReplayMessage],
+    new_total: i64,
+    new_truncated: bool,
+) -> ContentDiff {
     // total 变小（Codex 去重把 event 收编等）一定 rotated。
-    if new_total < old.total {
+    if new_total < old_total {
         return ContentDiff::Rotated;
     }
-    if old.truncated {
+    if old_truncated {
         if !new_truncated {
             // 服务端窗口从截断恢复为完整（文件重写变小）：无法验证前缀，全量重建。
             return ContentDiff::Rotated;
         }
-        if old.messages.as_slice() == new_messages {
+        if old_messages == new_messages {
             return ContentDiff::Unchanged;
         }
         // 窗口滑动：同 revision 发完整尾页，客户端整体采用，不伪造 append。
         return ContentDiff::Mirror;
     }
-    let old_len = old.messages.len();
-    if new_messages.len() >= old_len && old.messages.as_slice() == &new_messages[..old_len] {
+    let old_len = old_messages.len();
+    if new_messages.len() >= old_len && old_messages == &new_messages[..old_len] {
         if new_messages.len() == old_len {
             ContentDiff::Unchanged
         } else {
@@ -615,48 +628,77 @@ pub(crate) struct TailCore {
 
 impl TailCore {
     /// 当前 revision 的完整尾页（快照 / 重建 / 首帧共用）。
-    pub(crate) fn tail(baseline: &MirrorBaseline, revision: u64, limit: usize) -> Self {
+    pub(crate) fn tail_slice(
+        source: &[SessionReplayMessage],
+        total: i64,
+        truncated: bool,
+        revision: u64,
+        limit: usize,
+    ) -> Self {
         let limit = limit.clamp(1, RETAIN_TAIL);
-        let start = baseline.messages.len().saturating_sub(limit);
-        let messages = baseline.messages[start..].to_vec();
+        let start = source.len().saturating_sub(limit);
+        let messages = source[start..].to_vec();
         let cursor = messages.last().map(|message| message.seq).unwrap_or(-1);
         Self {
-            oldest_retained_seq: baseline.messages.first().map(|message| message.seq),
+            oldest_retained_seq: source.first().map(|message| message.seq),
             cursor,
             has_more: false,
             next_cursor: cursor,
             messages,
             revision,
-            total: baseline.total,
-            truncated: baseline.truncated,
+            total,
+            truncated,
         }
     }
 
     /// 增量切片：按 seq 升序取最早的 limit 条 seq > after 的消息。
     /// `reset_required` 为 true 时返回完整尾页（调用方置位）。
+    #[cfg(test)]
     pub(crate) fn incremental(baseline: &MirrorBaseline, revision: u64, after: i64, limit: usize) -> Self {
+        Self::incremental_slice(&baseline.messages, baseline.total, baseline.truncated, revision, after, limit)
+    }
+
+    pub(crate) fn incremental_slice(
+        source: &[SessionReplayMessage],
+        total: i64,
+        truncated: bool,
+        revision: u64,
+        after: i64,
+        limit: usize,
+    ) -> Self {
         let limit = limit.clamp(1, MAX_PAGE_LIMIT);
-        let first = baseline.messages.partition_point(|message| message.seq <= after);
-        let end = (first + limit).min(baseline.messages.len());
-        let messages = baseline.messages[first..end].to_vec();
-        let has_more = end < baseline.messages.len();
+        let first = source.partition_point(|message| message.seq <= after);
+        let end = (first + limit).min(source.len());
+        let messages = source[first..end].to_vec();
+        let has_more = end < source.len();
         let cursor = messages.last().map(|message| message.seq).unwrap_or(after.max(-1));
         Self {
-            oldest_retained_seq: baseline.messages.first().map(|message| message.seq),
+            oldest_retained_seq: source.first().map(|message| message.seq),
             messages,
             revision,
             cursor,
             has_more,
             next_cursor: cursor,
-            total: baseline.total,
-            truncated: baseline.truncated,
+            total,
+            truncated,
         }
     }
 }
 
 /// 判定增量请求是否必须 reset（§4.4）：revision 不同、或截断窗口已越过请求游标。
+#[cfg(test)]
 pub(crate) fn incremental_requires_reset(
     baseline: &MirrorBaseline,
+    revision: u64,
+    after_seq: i64,
+    request_revision: Option<u64>,
+) -> bool {
+    incremental_requires_reset_slice(&baseline.messages, baseline.truncated, revision, after_seq, request_revision)
+}
+
+pub(crate) fn incremental_requires_reset_slice(
+    source: &[SessionReplayMessage],
+    truncated: bool,
     revision: u64,
     after_seq: i64,
     request_revision: Option<u64>,
@@ -664,8 +706,8 @@ pub(crate) fn incremental_requires_reset(
     if request_revision != Some(revision) {
         return true;
     }
-    if baseline.truncated {
-        if let Some(oldest) = baseline.messages.first().map(|message| message.seq) {
+    if truncated {
+        if let Some(oldest) = source.first().map(|message| message.seq) {
             return after_seq < oldest;
         }
     }
@@ -862,12 +904,21 @@ pub(crate) struct ReplyLedger {
 }
 
 impl ReplyLedger {
+    fn is_fresh(entry: &LedgerEntry, now: Instant) -> bool {
+        let ttl = match entry.status {
+            LedgerStatus::Completed => REQUEST_ID_TTL,
+            LedgerStatus::Unknown => REPLY_FAILURE_TTL,
+        };
+        now.saturating_duration_since(entry.at) < ttl
+    }
+
     pub fn check(&self, key: &RequestKey, normalized_text: &str) -> LedgerCheck {
-        match self.entries.get(key) {
+        let now = Instant::now();
+        match self.entries.get(key).filter(|entry| Self::is_fresh(entry, now)) {
             Some(entry) if entry.normalized_text == normalized_text => LedgerCheck::Duplicated,
             Some(_) => LedgerCheck::Mismatch,
             None => LedgerCheck::Fresh,
-            }
+        }
     }
 
     pub fn record(&mut self, key: RequestKey, normalized_text: &str, status: LedgerStatus) {
@@ -883,18 +934,16 @@ impl ReplyLedger {
     }
 
     pub fn status_of(&self, key: &RequestKey) -> Option<LedgerStatus> {
-        self.entries.get(key).map(|entry| entry.status)
+        let now = Instant::now();
+        self.entries
+            .get(key)
+            .filter(|entry| Self::is_fresh(entry, now))
+            .map(|entry| entry.status)
     }
 
     fn prune(&mut self) {
         let now = Instant::now();
-        self.entries.retain(|_, entry| {
-            let ttl = match entry.status {
-                LedgerStatus::Completed => REQUEST_ID_TTL,
-                LedgerStatus::Unknown => REPLY_FAILURE_TTL,
-            };
-            now - entry.at < ttl
-        });
+        self.entries.retain(|_, entry| Self::is_fresh(entry, now));
         if self.entries.len() > REQUEST_ID_CAP {
             let mut keys: Vec<RequestKey> = self.entries.keys().cloned().collect();
             keys.sort_by_key(|key| self.entries[key].at);
@@ -920,7 +969,7 @@ struct MirrorEntry {
     revision: u64,
     available: bool,
     reason: Option<String>,
-    messages: Vec<SessionReplayMessage>,
+    messages: Arc<Vec<SessionReplayMessage>>,
     total: i64,
     truncated: bool,
     file_stamp: Option<(SystemTime, u64)>,
@@ -930,14 +979,6 @@ struct MirrorEntry {
 }
 
 impl MirrorEntry {
-    fn baseline(&self) -> MirrorBaseline {
-        MirrorBaseline {
-            messages: self.messages.clone(),
-            total: self.total,
-            truncated: self.truncated,
-        }
-    }
-
     fn identity(&self) -> (String, String) {
         (self.provider.clone(), self.session_id.clone())
     }
@@ -1243,6 +1284,7 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
         return match read_transcript_stable(&location.path) {
             TranscriptRead::Ok { content, stamp } => {
                 let (messages, total, truncated) = parse_and_retain(&record.provider, &content);
+                let messages = Arc::new(messages);
                 let revision = existing.as_ref().map_or(1, |entry| entry.revision.wrapping_add(1));
                 let entry = MirrorEntry {
                     provider: record.provider.clone(),
@@ -1251,7 +1293,7 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     revision,
                     available: true,
                     reason: None,
-                    messages: messages.clone(),
+                    messages,
                     total,
                     truncated,
                     file_stamp: Some(stamp),
@@ -1259,7 +1301,7 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     last_access: Instant::now(),
                 };
                 let kind: &'static str = if existing.is_some() { "rotated" } else { "mirror" };
-                let core = TailCore::tail(&entry.baseline(), entry.revision, RETAIN_TAIL);
+                let core = TailCore::tail_slice(&entry.messages, entry.total, entry.truncated, entry.revision, RETAIN_TAIL);
                 commit_entry(terminal_id, entry, PollContent::Page { kind, core }, existing.as_ref().map(|old| old.identity()))
             }
             TranscriptRead::TooLarge => commit_unavailable(terminal_id, &record, existing.as_ref(), "transcript_too_large"),
@@ -1314,36 +1356,35 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
         TranscriptRead::Ok { content, stamp } => {
             let (messages, total, truncated) = parse_and_retain(&record.provider, &content);
             let turn_end = if record.provider == "claude" { claude_turn_end(&content) } else { None };
-            let baseline = entry.baseline();
             // 从不可用恢复：revision + 1 全量快照。
             if !entry.available {
-                let mut next = entry.clone();
+                let mut next = entry;
                 next.available = true;
                 next.reason = None;
                 next.path = Some(path);
                 next.file_stamp = Some(stamp);
                 next.turn_end = turn_end;
-                next.messages = messages;
+                next.messages = Arc::new(messages);
                 next.total = total;
                 next.truncated = truncated;
                 next.last_access = Instant::now();
                 next.revision = next.revision.wrapping_add(1);
-                let core = TailCore::tail(&next.baseline(), next.revision, RETAIN_TAIL);
+                let core = TailCore::tail_slice(&next.messages, next.total, next.truncated, next.revision, RETAIN_TAIL);
                 return commit_entry(terminal_id, next, PollContent::Page { kind: "mirror", core }, None);
             }
-            match diff_content(&baseline, &messages, total, truncated) {
+            match diff_slice(&entry.messages, entry.total, entry.truncated, &messages, total, truncated) {
                 ContentDiff::Unchanged => {
                     // 内容未变但文件戳变了（touch/重写同内容）：只更新戳，避免每 tick 重读。
-                    let mut next = entry.clone();
+                    let mut next = entry;
                     next.file_stamp = Some(stamp);
                     next.turn_end = turn_end;
                     next.last_access = Instant::now();
                     commit_entry(terminal_id, next, PollContent::None, None)
                 }
                 ContentDiff::Append => {
-                    let tail: Vec<SessionReplayMessage> = messages[baseline.messages.len()..].to_vec();
-                    let mut next = entry.clone();
-                    next.messages = messages;
+                    let tail: Vec<SessionReplayMessage> = messages[entry.messages.len()..].to_vec();
+                    let mut next = entry;
+                    next.messages = Arc::new(messages);
                     next.total = total;
                     next.truncated = truncated;
                     next.file_stamp = Some(stamp);
@@ -1351,7 +1392,7 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     next.path = Some(path);
                     next.last_access = Instant::now();
                     if tail.len() > MAX_APPEND_MESSAGES {
-                        let core = TailCore::tail(&next.baseline(), next.revision, RETAIN_TAIL);
+                        let core = TailCore::tail_slice(&next.messages, next.total, next.truncated, next.revision, RETAIN_TAIL);
                         commit_entry(terminal_id, next, PollContent::Page { kind: "mirror", core }, None)
                     } else {
                         let revision = next.revision;
@@ -1367,19 +1408,19 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                 }
                 ContentDiff::Mirror => {
                     let mut next = entry;
-                    next.messages = messages;
+                    next.messages = Arc::new(messages);
                     next.total = total;
                     next.truncated = truncated;
                     next.file_stamp = Some(stamp);
                     next.turn_end = turn_end;
                     next.path = Some(path);
                     next.last_access = Instant::now();
-                    let core = TailCore::tail(&next.baseline(), next.revision, RETAIN_TAIL);
+                    let core = TailCore::tail_slice(&next.messages, next.total, next.truncated, next.revision, RETAIN_TAIL);
                     commit_entry(terminal_id, next, PollContent::Page { kind: "mirror", core }, None)
                 }
                 ContentDiff::Rotated => {
                     let mut next = entry;
-                    next.messages = messages;
+                    next.messages = Arc::new(messages);
                     next.total = total;
                     next.truncated = truncated;
                     next.file_stamp = Some(stamp);
@@ -1387,7 +1428,7 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     next.path = Some(path);
                     next.last_access = Instant::now();
                     next.revision = next.revision.wrapping_add(1);
-                    let core = TailCore::tail(&next.baseline(), next.revision, RETAIN_TAIL);
+                    let core = TailCore::tail_slice(&next.messages, next.total, next.truncated, next.revision, RETAIN_TAIL);
                     commit_entry(terminal_id, next, PollContent::Page { kind: "rotated", core }, None)
                 }
             }
@@ -1455,14 +1496,14 @@ fn commit_empty_mirror(
         revision,
         available: true,
         reason: None,
-        messages: Vec::new(),
+        messages: Arc::new(Vec::new()),
         total: 0,
         truncated: false,
         file_stamp: None,
         turn_end: None,
         last_access: Instant::now(),
     };
-    let core = TailCore::tail(&entry.baseline(), entry.revision, RETAIN_TAIL);
+    let core = TailCore::tail_slice(&entry.messages, entry.total, entry.truncated, entry.revision, RETAIN_TAIL);
     commit_entry(terminal_id, entry, PollContent::Page { kind, core }, existing.map(|old| old.identity()))
 }
 
@@ -1491,7 +1532,7 @@ fn commit_unavailable(
         revision,
         available: false,
         reason: Some(reason.to_string()),
-        messages: Vec::new(),
+        messages: Arc::new(Vec::new()),
         total: 0,
         truncated: false,
         file_stamp: None,
@@ -1568,6 +1609,19 @@ fn reconcile_transcript_end(
     };
     for decision in pending {
         super::ClaudeHookService::expire_decision(&decision.decision_id);
+        let _ = app.emit(
+            "claude-hook-decision-expired",
+            serde_json::json!({
+                "decisionId": decision.decision_id,
+                "terminalId": info.id,
+                "occurredAt": occurred_at,
+            }),
+        );
+        crate::services::AppNotificationService::publish_resolved(
+            &info.id,
+            info.profile_name.clone(),
+            &decision.decision_id,
+        );
     }
     let event = crate::services::ClaudeHookTerminalEvent {
         event_id: uuid::Uuid::new_v4().to_string(), terminal_id: info.id.clone(),
@@ -1794,14 +1848,17 @@ pub async fn page_for(
             return Err(RelayError::NotFound("该终端没有正在运行的 Agent".to_string()));
         };
         let current_revision = entry.as_ref().map_or(1, |entry| entry.revision);
-        let baseline = entry.map(|entry| entry.baseline()).unwrap_or_default();
+        let (source, total, truncated): (&[SessionReplayMessage], i64, bool) = match entry.as_ref() {
+            Some(entry) => (&entry.messages, entry.total, entry.truncated),
+            None => (&[], 0, false),
+        };
         let (core, reset_required) = match after_seq {
-            None => (TailCore::tail(&baseline, current_revision, limit), false),
+            None => (TailCore::tail_slice(source, total, truncated, current_revision, limit), false),
             Some(after) => {
-                if incremental_requires_reset(&baseline, current_revision, after, revision) {
-                    (TailCore::tail(&baseline, current_revision, RETAIN_TAIL), true)
+                if incremental_requires_reset_slice(source, truncated, current_revision, after, revision) {
+                    (TailCore::tail_slice(source, total, truncated, current_revision, RETAIN_TAIL), true)
                 } else {
-                    (TailCore::incremental(&baseline, current_revision, after, limit), false)
+                    (TailCore::incremental_slice(source, total, truncated, current_revision, after, limit), false)
                 }
             }
         };
@@ -1866,8 +1923,8 @@ pub async fn subscribe(
         };
         // 先注册租约、再 poll：首帧从最新已提交状态构建，poll 之后提交的任何
         // 内容都会经 deliver 到达本租约，不存在「快照与注册之间」的漏帧窗口。
-        let mut spawn_watcher = false;
         {
+            let mut spawn_watcher = false;
             let mut current = lock_state();
             if !current.watchers.contains_key(terminal_id) {
                 current.watchers.insert(
@@ -1887,6 +1944,10 @@ pub async fn subscribe(
                     },
                 );
             }
+            drop(current);
+            if spawn_watcher {
+                crate::runtime::async_runtime::spawn(run_watcher(app.clone(), terminal_id.clone()));
+            }
         }
         poll_and_deliver(app, terminal_id);
         let Some((session, entry)) = build_session_meta(app, &info, &scan, actor) else {
@@ -1899,8 +1960,11 @@ pub async fn subscribe(
         };
         let initial = if session.mirror.available {
             let revision = entry.as_ref().map_or(1, |entry| entry.revision);
-            let baseline = entry.map(|entry| entry.baseline()).unwrap_or_default();
-            let core = TailCore::tail(&baseline, revision, RETAIN_TAIL);
+            let (source, total, truncated): (&[SessionReplayMessage], i64, bool) = match entry.as_ref() {
+                Some(entry) => (&entry.messages, entry.total, entry.truncated),
+                None => (&[], 0, false),
+            };
+            let core = TailCore::tail_slice(source, total, truncated, revision, RETAIN_TAIL);
             TerminalAgentFrame::content("mirror", terminal_id, session, &core)
         } else {
             TerminalAgentFrame::unavailable(terminal_id, session)
@@ -1908,16 +1972,11 @@ pub async fn subscribe(
         Ok((
             SubscribeOutcome { subscription_id, initial_frame: initial },
             receiver,
-            spawn_watcher,
         ))
     })
     .await
     .map_err(|error| RelayError::Internal(error.to_string()))?;
-    let (outcome, receiver, spawn_watcher) = prepared?;
-    if spawn_watcher {
-        tokio::spawn(run_watcher(app.clone(), terminal_id.clone()));
-    }
-    Ok((outcome, receiver))
+    prepared
 }
 
 /// 释放指定租约；重复释放幂等。
@@ -1967,7 +2026,7 @@ enum ReplyDecision {
     Failed(RelayError),
     WriteFailed,
     /// 文本已写入 PTY，等待停顿后单独写入提交回车。
-    TextWritten,
+    TextWritten { phase: String },
 }
 
 /// 受限回复（§4.6）。校验链顺序固定，任何一步失败都不写 PTY；
@@ -1995,39 +2054,15 @@ pub async fn reply(
     // 临界区不包裹文件扫描（§4.9）。
     let terminal_id_owned = terminal_id.to_string();
     let app_clone = app.clone();
-    let context = crate::runtime::async_runtime::spawn_blocking(move || {
+    let binding = crate::runtime::async_runtime::spawn_blocking(move || {
         let scan = relay_scan(&app_clone);
-        let binding = scan
-            .bindings
+        scan.bindings
             .get(&terminal_id_owned)
             .filter(|record| matches!(record.provider.as_str(), "claude" | "codex"))
-            .map(|record| (record.provider.clone(), record.session_id.clone()));
-        let (phase, phase_at) = binding
-            .as_ref()
-            .and_then(|(provider, session_id)| {
-                lock_state().phases.current(&terminal_id_owned, provider, session_id)
-            })
-            .map(|(phase, at)| (phase, Some(at)))
-            .unwrap_or_else(|| {
-                // 阶段表无记录（Codex / 手动启动 / 服务重启后）按镜像推断；
-                // 镜像身份与绑定不一致（换绑未刷新）时不采信旧镜像。
-                let current = lock_state();
-                let entry = current
-                    .mirrors
-                    .get(&terminal_id_owned)
-                    .filter(|entry| binding.as_ref().is_some_and(|identity| &entry.identity() == identity));
-                inferred_phase(entry)
-            });
-        (
-            binding,
-            pending_decision_ids(&terminal_id_owned),
-            phase,
-            phase_at,
-        )
+            .map(|record| (record.provider.clone(), record.session_id.clone()))
     })
     .await
     .map_err(|error| RelayError::Internal(error.to_string()))?;
-    let (binding, _prefetched_pending, phase, _prefetched_phase_at) = context;
     // 每终端串行临界区：重新授权 → 重读绑定/阶段/决策 → 幂等/文本/限流 → 写 PTY。
     let lock = {
         let mut current = lock_state();
@@ -2041,86 +2076,101 @@ pub async fn reply(
     };
     let normalized = text.trim().to_string();
     // ── 临界区：重新授权 → 重读绑定/阶段/决策 → 幂等/文本/限流 → 写 PTY ──
-    let decide = || -> ReplyDecision {
+    let (write_phase, early_decision) = {
         // 第 1 条（重新授权）：任何一步失败都不写 PTY。
         if let Err(error) = app
             .state::<TerminalService>()
             .authorize(terminal_id, actor, TerminalAction::Input)
         {
-            return ReplyDecision::Failed(access_error(error));
-        }
-        // 第 2–7 条为纯函数判定（可单测）：幂等表与限流快照在锁内读取。
-        // 待决策与阶段同样在锁内重读（审查 M-17）：预取发生在拿锁之前，
-        // attention/待决策窗口期内状态可能已被其他事件改变；绑定来自文件
-        // 扫描，按 §4.9 不在临界区重跑，维持预取值。
-        let (pending, phase, phase_at) = {
-            let current = lock_state();
-            let pending = pending_decision_ids(terminal_id);
-            let (phase, phase_at) = binding
-                .as_ref()
-                .and_then(|(provider, session_id)| current.phases.current(terminal_id, provider, session_id))
-                .map(|(phase, at)| (phase, Some(at)))
-                .unwrap_or_else(|| {
-                    let entry = current
-                        .mirrors
-                        .get(terminal_id)
-                        .filter(|entry| binding.as_ref().is_some_and(|identity| &entry.identity() == identity));
-                    inferred_phase(entry)
-                });
-            (pending, phase, phase_at)
-        };
-        let (mirror_identity, last_success) = {
-            let current = lock_state();
-            (
-                current.mirrors.get(terminal_id).map(|entry| entry.identity()),
-                current.rate.get(terminal_id).copied(),
-            )
-        };
-        let outcome = {
-            let current = lock_state();
-            evaluate_reply_gates(
-                ReplyGateContext {
-                    binding: binding.as_ref(),
-                    mirror_identity: mirror_identity.as_ref(),
-                    pending: &pending,
-                    phase: &phase,
-                    phase_at,
-                    text,
-                    request_id,
-                    terminal_id,
-                    actor_web: actor == TerminalActor::Web,
-                },
-                &current.ledger,
-                last_success,
-            )
-        };
-        match outcome {
-            GateOutcome::Write => {
-                // 先只写文本；回车在临界区外用 REPLY_SUBMIT_DELAY 停顿后单独提交。
-                match app
-                    .state::<TerminalService>()
-                    .write_to_terminal(terminal_id, &reply_payload(text), actor)
-                {
-                    Ok(()) => ReplyDecision::TextWritten,
-                    Err(_) => ReplyDecision::WriteFailed,
-                }
+            (None, Some(ReplyDecision::Failed(access_error(error))))
+        } else {
+            // 第 2–7 条为纯函数判定（可单测）：幂等表与限流快照在锁内读取。
+            // 待决策与阶段同样在锁内重读（审查 M-17）：预取发生在拿锁之前，
+            // attention/待决策窗口期内状态可能已被其他事件改变；绑定来自文件
+            // 扫描，按 §4.9 不在临界区重跑，维持预取值。
+            let (pending, phase, phase_at) = {
+                let current = lock_state();
+                let pending = pending_decision_ids(terminal_id);
+                let (phase, phase_at) = binding
+                    .as_ref()
+                    .and_then(|(provider, session_id)| current.phases.current(terminal_id, provider, session_id))
+                    .map(|(phase, at)| (phase, Some(at)))
+                    .unwrap_or_else(|| {
+                        let entry = current
+                            .mirrors
+                            .get(terminal_id)
+                            .filter(|entry| binding.as_ref().is_some_and(|identity| &entry.identity() == identity));
+                        inferred_phase(entry)
+                    });
+                (pending, phase, phase_at)
+            };
+            let (mirror_identity, last_success) = {
+                let current = lock_state();
+                (
+                    current.mirrors.get(terminal_id).map(|entry| entry.identity()),
+                    current.rate.get(terminal_id).copied(),
+                )
+            };
+            let outcome = {
+                let current = lock_state();
+                evaluate_reply_gates(
+                    ReplyGateContext {
+                        binding: binding.as_ref(),
+                        mirror_identity: mirror_identity.as_ref(),
+                        pending: &pending,
+                        phase: &phase,
+                        phase_at,
+                        text,
+                        request_id,
+                        terminal_id,
+                        actor_web: actor == TerminalActor::Web,
+                    },
+                    &current.ledger,
+                    last_success,
+                )
+            };
+            match outcome {
+                GateOutcome::Write => (Some(phase), None),
+                GateOutcome::Duplicated => (None, Some(ReplyDecision::Accepted { duplicated: true, phase })),
+                GateOutcome::Rejected(error) => (None, Some(ReplyDecision::Failed(error))),
             }
-            GateOutcome::Duplicated => ReplyDecision::Accepted { duplicated: true, phase: phase.clone() },
-            GateOutcome::Rejected(error) => ReplyDecision::Failed(error),
         }
     };
-    let decision = decide();
+    let decision = match (write_phase, early_decision) {
+        (_, Some(decision)) => decision,
+        (Some(phase), None) => {
+            let app_write = app.clone();
+            let tid_write = terminal_id.to_string();
+            let payload = reply_payload(text);
+            match crate::runtime::async_runtime::spawn_blocking(move || {
+                app_write
+                    .state::<TerminalService>()
+                    .write_to_terminal(&tid_write, &payload, actor)
+            })
+            .await
+            {
+                Ok(Ok(())) => ReplyDecision::TextWritten { phase },
+                _ => ReplyDecision::WriteFailed,
+            }
+        }
+        (None, None) => ReplyDecision::WriteFailed,
+    };
     // 文本写成功后，停顿再单独写回车：长文本与 "\r" 同一批到达会被 TUI
     // 当作粘贴整体插入，回车被吞掉，消息停在输入框里不发送。
     let decision = match decision {
-        ReplyDecision::TextWritten => {
+        ReplyDecision::TextWritten { phase } => {
             tokio::time::sleep(REPLY_SUBMIT_DELAY).await;
-            match app
-                .state::<TerminalService>()
-                .write_to_terminal(terminal_id, "\r", actor)
+            let app_write = app.clone();
+            let tid_write = terminal_id.to_string();
+            match crate::runtime::async_runtime::spawn_blocking(move || {
+                app_write
+                    .state::<TerminalService>()
+                    .write_to_terminal(&tid_write, "\r", actor)
+            })
+            .await
             {
-                Ok(()) => ReplyDecision::Accepted { duplicated: false, phase: phase.clone() },
-                Err(_) => ReplyDecision::WriteFailed,
+                Ok(Ok(())) => ReplyDecision::Accepted { duplicated: false, phase },
+                _ => ReplyDecision::WriteFailed,
             }
         }
         other => other,
@@ -2146,7 +2196,7 @@ pub async fn reply(
         }
         ReplyDecision::Failed(error) => Err(error),
         // 上面的提交步骤已把 TextWritten 转换为具体结果；到此说明后续改动破坏了该约定。
-        ReplyDecision::TextWritten => Err(RelayError::Internal("回复状态异常，请重试".to_string())),
+        ReplyDecision::TextWritten { .. } => Err(RelayError::Internal("回复状态异常，请重试".to_string())),
     }
 }
 
@@ -2322,13 +2372,28 @@ pub(crate) async fn submit_task_prompt(
         .authorize(terminal_id, actor, TerminalAction::Input)
         .map_err(access_error)?;
     // 先只写文本；回车在停顿后单独提交，避免被 Ink 输入框当成粘贴内容吞掉。
-    app.state::<TerminalService>()
-        .write_to_terminal(terminal_id, &reply_payload(&text), actor)
-        .map_err(|error| RelayError::Internal(format!("写入任务描述失败：{error}")))?;
+    let app_write = app.clone();
+    let tid_write = terminal_id.to_string();
+    let payload = reply_payload(&text);
+    crate::runtime::async_runtime::spawn_blocking(move || {
+        app_write
+            .state::<TerminalService>()
+            .write_to_terminal(&tid_write, &payload, actor)
+    })
+    .await
+    .map_err(|error| RelayError::Internal(format!("写入任务描述失败：{error}")))?
+    .map_err(|error| RelayError::Internal(format!("写入任务描述失败：{error}")))?;
     tokio::time::sleep(REPLY_SUBMIT_DELAY).await;
-    app.state::<TerminalService>()
-        .write_to_terminal(terminal_id, "\r", actor)
-        .map_err(|error| RelayError::Internal(format!("提交任务描述失败：{error}")))?;
+    let app_enter = app.clone();
+    let tid_enter = terminal_id.to_string();
+    crate::runtime::async_runtime::spawn_blocking(move || {
+        app_enter
+            .state::<TerminalService>()
+            .write_to_terminal(&tid_enter, "\r", actor)
+    })
+    .await
+    .map_err(|error| RelayError::Internal(format!("提交任务描述失败：{error}")))?
+    .map_err(|error| RelayError::Internal(format!("提交任务描述失败：{error}")))?;
     Ok(())
 }
 
@@ -2603,6 +2668,7 @@ fn deliver_poll_result(
                 Some(frame)
             }
         };
+        let has_content_session = content_frame.as_ref().is_some_and(|frame| frame.session.is_some());
         let mut frames = Vec::new();
         if let Some(frame) = content_frame {
             frames.push(frame);
@@ -2615,7 +2681,7 @@ fn deliver_poll_result(
                 .get(terminal_id)
                 .is_some_and(|handle| handle.last_meta.get(&actor) != Some(&session))
         };
-        if meta_changed {
+        if meta_changed && !has_content_session {
             frames.push(TerminalAgentFrame::status(terminal_id, session.clone()));
         }
         {
@@ -2657,6 +2723,7 @@ fn housekeeping() {
     let now = Instant::now();
     current.mirrors.retain(|_, entry| now - entry.last_access < MIRROR_IDLE_EVICT);
     current.phases.prune_expired();
+    current.ledger.prune();
 }
 
 // ───────────────────────── 纯函数：回复闸门链（第 2–7 条，可单测） ─────────────────────────
@@ -3129,7 +3196,7 @@ mod tests {
             revision: 1,
             available: true,
             reason: None,
-            messages,
+            messages: Arc::new(messages),
             total: 0,
             truncated: false,
             file_stamp: None,
@@ -3734,5 +3801,25 @@ mod tests {
         // sidechain 的 turn_duration 忽略
         let sidechain_only = format!("{user_msg}\n{sidechain_turn_duration}\n");
         assert_eq!(claude_turn_end(&sidechain_only), None);
+    }
+
+    #[test]
+    fn reply_ledger_ignores_expired_entries_without_prune() {
+        let mut ledger = ReplyLedger::default();
+        let key = RequestKey {
+            actor_web: false,
+            terminal_id: "term-ttl".to_string(),
+            request_id: "req-12345678".to_string(),
+        };
+        ledger.entries.insert(
+            key.clone(),
+            LedgerEntry {
+                normalized_text: "hello".to_string(),
+                status: LedgerStatus::Unknown,
+                at: Instant::now() - REPLY_FAILURE_TTL - Duration::from_secs(1),
+            },
+        );
+        assert!(matches!(ledger.check(&key, "hello"), LedgerCheck::Fresh));
+        assert!(ledger.status_of(&key).is_none());
     }
 }

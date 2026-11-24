@@ -19,21 +19,31 @@ async fn blocking<T: Send + 'static>(job: impl FnOnce() -> Result<T, String> + S
     tokio::task::spawn_blocking(job).await.map_err(|e| ApiError::Internal(e.to_string()))?.map(Json).map_err(service_error)
 }
 /// 以最具体的已登记项目决定可用 Agent，避免子项目禁用后仍继承父目录的权限。
-fn ensure_agent_project(path: &str, agent: &str) -> Result<String, ApiError> {
-    // scope key 只用于比较；交给 CLI 的必须是去掉 canonicalize 前缀的真实路径。
-    let scope_key = super::ensure_project_scope(path)?;
-    let project_path = super::ensure_project_child_path(path)?;
-    if !std::path::Path::new(&project_path).is_dir() { return Err(ApiError::BadRequest("项目目录不可访问".into())); }
+pub(super) fn ensure_agent_project(path: &str, agent: &str) -> Result<String, ApiError> {
+    let real = super::canonical_path(path)?;
+    let scope_key = super::normalize_scope_key(&real.to_string_lossy());
+    if scope_key.is_empty() {
+        return Err(ApiError::Forbidden("路径不能为空".to_string()));
+    }
+    let project_path = crate::services::PathService::normalize_child_process_path_str(&real.to_string_lossy());
     let projects = crate::commands::profile::get_projects().map_err(ApiError::Internal)?;
     let project = projects.iter().filter_map(|project| {
-        super::canonical_scope_key(&project.path).ok().map(|key| (key, project))
-    }).filter(|(key, _)| scope_key == *key || scope_key.starts_with(&format!("{key}/")))
+        super::canonical_path(&project.path)
+            .ok()
+            .map(|p| (super::normalize_scope_key(&p.to_string_lossy()), project))
+    }).filter(|(key, _)| !key.is_empty() && (scope_key == *key || scope_key.starts_with(&format!("{key}/"))))
         .max_by_key(|(key, _)| key.len());
-    let enabled = project.is_some_and(|(_, project)| match agent {
+    let Some((_, project)) = project else {
+        return Err(ApiError::Forbidden(
+            "该路径不在已登记的项目目录内，请先在项目管理中登记目录".to_string(),
+        ));
+    };
+    if !std::path::Path::new(&project_path).is_dir() { return Err(ApiError::BadRequest("项目目录不可访问".into())); }
+    let enabled = match agent {
         "claude" => project.enabled_agents.claude,
         "codex" => project.enabled_agents.codex,
         _ => false,
-    });
+    };
     if !enabled { return Err(ApiError::Forbidden("该项目未启用所选 Agent，请先在服务端配置并刷新工作台".into())); }
     Ok(project_path)
 }

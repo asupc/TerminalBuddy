@@ -285,7 +285,7 @@ impl PathService {
 
 /// 目标路径是否位于源目录内部（含相等）。目标在源内时自复制会一边复制一边
 /// 给自己喂输入，必须拒绝。
-fn dst_inside_src(src: &Path, dst: &Path) -> bool {
+pub(crate) fn dst_inside_src(src: &Path, dst: &Path) -> bool {
     let mut current = Some(dst);
     while let Some(dir) = current {
         if dir == src {
@@ -325,15 +325,31 @@ impl Visited {
 /// 链接策略：普通文件直接复制内容；目录符号链接 / junction 一律**拒绝**并报错，
 /// 而不是跟随——数据目录迁移面对的是用户自己的配置文件，跟随链接既可能把
 /// 系统目录整个复制进来，也可能顺着指回祖先的 junction 无限递归。
+fn canonicalize_or_ancestor(path: &Path) -> PathBuf {
+    let mut candidate = path.to_path_buf();
+    let mut missing = Vec::new();
+    while !candidate.exists() {
+        let Some(name) = candidate.file_name() else { break };
+        missing.push(name.to_os_string());
+        if !candidate.pop() {
+            return path.to_path_buf();
+        }
+    }
+    let mut resolved = candidate.canonicalize().unwrap_or(candidate);
+    for name in missing.into_iter().rev() {
+        resolved.push(name);
+    }
+    resolved
+}
+
 pub fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
     let src_canonical = src
         .canonicalize()
         .map_err(|e| format!("解析源目录失败: {}", e))?;
-    let dst_canonical = dst
-        .canonicalize()
-        .or_else(|_| Ok(dst.clone()))
-        .map_err(|e: std::io::Error| format!("解析目标目录失败: {}", e))?;
-    if dst_inside_src(&src_canonical, &dst_canonical) {
+    let dst_canonical = canonicalize_or_ancestor(dst);
+    let src_norm = PathService::normalize_child_process_path(&src_canonical);
+    let dst_norm = PathService::normalize_child_process_path(&dst_canonical);
+    if dst_inside_src(&src_norm, &dst_norm) {
         return Err(format!(
             "目标目录「{}」位于源目录「{}」内部，不允许自我复制。",
             dst.display(),

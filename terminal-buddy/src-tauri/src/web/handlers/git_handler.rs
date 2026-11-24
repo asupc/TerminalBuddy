@@ -79,9 +79,11 @@ impl Drop for DesktopGitLease {
         }
     }
 }
-pub(crate) fn reserve_desktop_operation(path: &str, action: &str) -> Result<DesktopGitLease, ApiError> {
-    ensure_repo_root_within_scope(path)?;
-    let repo = ensure_project_scope(path)?;
+pub(crate) async fn reserve_desktop_operation(path: &str, action: &str) -> Result<DesktopGitLease, ApiError> {
+    let path = path.to_string();
+    let repo = tokio::task::spawn_blocking(move || ensure_repo_root_within_scope(&path))
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))??;
     let mut map = operations().lock().map_err(|_| ApiError::Internal("Git 操作锁不可用".to_string()))?;
     if map.get(&repo).is_some_and(|operation| operation.status == "running") {
         return Err(ApiError::Conflict("该仓库有操作正在执行，请稍后重试".to_string()));
@@ -95,23 +97,24 @@ pub(crate) fn reserve_desktop_operation(path: &str, action: &str) -> Result<Desk
 /// 会以回溯出的祖先仓库根为操作根，只校验传入路径会让 `git add -A` 等
 /// 操作越过登记边界提交登记目录之外的变更（审查 H-3），越界返回 403。
 /// 非 Git 仓库不在此报错，交给各 impl 层返回自然错误。
-fn ensure_repo_root_within_scope(repo: &str) -> Result<(), ApiError> {
+fn ensure_repo_root_within_scope(repo: &str) -> Result<String, ApiError> {
     if let Ok(root) = crate::commands::git::require_repo_root(repo) {
-        ensure_project_scope(&root.to_string_lossy())?;
+        return ensure_project_scope(&root.to_string_lossy());
     }
-    Ok(())
+    ensure_project_scope(repo)
 }
 
 /// 启动后台 Git 操作：同仓库忙碌返回 409，任务结束后把输出写回轮询记录。
 /// 接收 String（而非 &str）：闭包要 move 同一份数据进后台任务，避免借用冲突。
-fn start_operation(
+async fn start_operation(
     repo: String,
     action: &'static str,
     task: impl FnOnce() -> Result<String, String> + Send + 'static,
 ) -> Result<(), ApiError> {
-    // 会跑一次 git rev-parse（几十毫秒），Git 变更类操作低频，可接受。
-    ensure_repo_root_within_scope(&repo)?;
-    let key = ensure_project_scope(&repo)?;
+    let repo_for_scope = repo.clone();
+    let key = tokio::task::spawn_blocking(move || ensure_repo_root_within_scope(&repo_for_scope))
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))??;
     {
         let mut ops = operations().lock().unwrap_or_else(|e| e.into_inner());
         if ops
@@ -222,7 +225,10 @@ pub async fn operation(
     _claims: ClaimsFromRequest,
     Query(q): Query<GitRepoQuery>,
 ) -> Result<Json<GitOperationStatus>, ApiError> {
-    let key = ensure_project_scope(&q.repo)?;
+    let repo = q.repo;
+    let key = tokio::task::spawn_blocking(move || ensure_repo_root_within_scope(&repo))
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))??;
     let ops = operations().lock().unwrap_or_else(|e| e.into_inner());
     Ok(Json(ops.get(&key).cloned().unwrap_or(GitOperationStatus {
         action: String::new(),
@@ -242,7 +248,8 @@ pub async fn checkout(
     let branch = req.branch;
     start_operation(repo.clone(), "切换分支", move || {
         git_checkout_branch_impl(repo, branch)
-    })?;
+    })
+    .await?;
     Ok(Json(serde_json::json!({ "started": true })))
 }
 
@@ -256,7 +263,8 @@ pub async fn commit(
     let message = req.message;
     start_operation(repo.clone(), "提交变更", move || {
         git_commit_all_impl(repo, message)
-    })?;
+    })
+    .await?;
     Ok(Json(serde_json::json!({ "started": true })))
 }
 
@@ -266,7 +274,7 @@ pub async fn pull(
     Json(req): Json<GitRepoRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo = req.repo;
-    start_operation(repo.clone(), "拉取", move || git_pull_text_impl(repo))?;
+    start_operation(repo.clone(), "拉取", move || git_pull_text_impl(repo)).await?;
     Ok(Json(serde_json::json!({ "started": true })))
 }
 
@@ -277,6 +285,6 @@ pub async fn push(
     Json(req): Json<GitRepoRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo = req.repo;
-    start_operation(repo.clone(), "推送", move || git_push_text_impl(repo))?;
+    start_operation(repo.clone(), "推送", move || git_push_text_impl(repo)).await?;
     Ok(Json(serde_json::json!({ "started": true })))
 }

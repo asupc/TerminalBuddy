@@ -159,7 +159,7 @@ fn delete_sz(path: &str, name: &str) -> Result<(), String> {
         let result = RegDeleteValueW(hkey, windows::core::PCWSTR(name_wide.as_ptr()));
         let _ = RegCloseKey(hkey);
         // 文件未找到 = 已删除/不存在，视为成功。
-        if result != ERROR_SUCCESS && result.to_hresult().0 != 2 {
+        if result != ERROR_SUCCESS && result != windows::Win32::Foundation::ERROR_FILE_NOT_FOUND {
             return Err(format!("删除注册表值失败: {}", result.to_hresult().0));
         }
     }

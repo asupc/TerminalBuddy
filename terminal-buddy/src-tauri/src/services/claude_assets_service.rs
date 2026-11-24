@@ -114,7 +114,13 @@ fn target_root(scope: &str, project_dir: Option<&str>) -> Result<PathBuf, String
 fn hash_path(path: &Path) -> u64 {
     let mut hasher = DefaultHasher::new();
     fn hash_walk(hasher: &mut DefaultHasher, base: &Path, current: &Path) {
-        if current.is_file() {
+        let Ok(meta) = fs::symlink_metadata(current) else {
+            return;
+        };
+        if meta.file_type().is_symlink() {
+            return;
+        }
+        if meta.is_file() {
             current
                 .strip_prefix(base)
                 .map(|rel| rel.to_string_lossy().hash(hasher))
@@ -122,11 +128,13 @@ fn hash_path(path: &Path) -> u64 {
             if let Ok(content) = fs::read(current) {
                 content.hash(hasher);
             }
-        } else if let Ok(entries) = fs::read_dir(current) {
-            let mut children: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
-            children.sort();
-            for child in children {
-                hash_walk(hasher, base, &child);
+        } else if meta.is_dir() {
+            if let Ok(entries) = fs::read_dir(current) {
+                let mut children: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+                children.sort();
+                for child in children {
+                    hash_walk(hasher, base, &child);
+                }
             }
         }
     }

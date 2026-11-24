@@ -686,7 +686,9 @@ pub fn init_claude_schema(conn: &Connection) -> Result<(), String> {
          );
 
          CREATE INDEX IF NOT EXISTS idx_claude_messages_session
-            ON claude_messages (session_id);",
+            ON claude_messages (session_id);
+         CREATE INDEX IF NOT EXISTS idx_claude_sessions_updated
+            ON claude_sessions (updated_at DESC);",
     )
     .map_err(|error| format!("创建 Claude 历史表失败: {}", error))
 }
@@ -800,18 +802,6 @@ fn collect_session_files(projects_dir: &Path) -> Result<SessionFileList, String>
     Ok(SessionFileList { files, unreadable_dirs, root_missing: false })
 }
 
-fn is_indexed_unchanged(conn: &Connection, file: &SessionFile) -> Result<bool, String> {
-    conn.query_row(
-        "SELECT 1 FROM claude_sessions
-         WHERE session_id = ?1 AND file_mtime = ?2 AND file_size = ?3",
-        params![file.session_id, file.mtime, file.size],
-        |_| Ok(()),
-    )
-    .optional()
-    .map(|value| value.is_some())
-    .map_err(|error| format!("查询 Claude 会话索引失败: {}", error))
-}
-
 /// 逐行 autocommit 在数百 MB 量级、且数据目录常被同步盘接管时是索引耗时的主要来源，
 /// 因此一个会话一个事务。读盘与解析放在事务外，不长时间占着 SQLite 写锁。
 fn index_files(conn: &Connection, files: &[&SessionFile]) -> Result<i64, String> {
@@ -901,8 +891,16 @@ fn prune_missing_sessions(
             .map(|(session_id, _)| session_id)
             .collect()
     };
-    for session_id in &stale {
-        delete_index_rows_keep_meta(conn, session_id)?;
+    if !stale.is_empty() {
+        let transaction = conn
+            .unchecked_transaction()
+            .map_err(|error| format!("开始清理 Claude 历史索引事务失败: {}", error))?;
+        for session_id in &stale {
+            delete_index_rows_keep_meta(&transaction, session_id)?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("提交清理 Claude 历史索引事务失败: {}", error))?;
     }
     Ok(())
 }
@@ -916,9 +914,31 @@ pub fn scan_projects_dir(
 ) -> Result<ClaudeHistoryScanResult, String> {
     let listing = collect_session_files(projects_dir)?;
     let files = listing.files;
+    let indexed = {
+        let mut statement = conn
+            .prepare("SELECT session_id, file_mtime, file_size FROM claude_sessions")
+            .map_err(|error| format!("查询 Claude 会话索引失败: {}", error))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?),
+                ))
+            })
+            .map_err(|error| format!("查询 Claude 会话索引失败: {}", error))?;
+        let mut map = HashMap::new();
+        for row in rows {
+            let (id, stamp) = row.map_err(|error| format!("读取 Claude 会话索引失败: {}", error))?;
+            map.insert(id, stamp);
+        }
+        map
+    };
     let mut outdated: Vec<&SessionFile> = Vec::new();
     for file in &files {
-        if !is_indexed_unchanged(conn, file)? {
+        let unchanged = indexed
+            .get(&file.session_id)
+            .is_some_and(|&(mtime, size)| mtime == file.mtime && size == file.size);
+        if !unchanged {
             outdated.push(file);
         }
     }
@@ -1206,6 +1226,7 @@ fn search_in(
          WHERE m.content LIKE ?1 ESCAPE '\\'
            AND (?3 IS NULL OR {indexed} = {wanted}
                 OR substr({indexed}, 1, length({wanted}) + 1) = {wanted} || '/')
+         ORDER BY s.updated_at DESC, m.seq
          LIMIT ?2",
         indexed = normalized_dir_expr("s.project_dir"),
         wanted = normalized_dir_expr("?3"),

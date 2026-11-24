@@ -31,13 +31,8 @@ impl ProfileService {
         }
     }
 
-    fn read_all_from_disk() -> Vec<Profile> {
-        // 读路径：目录不可用时返回空列表（get_all_profiles 会正常返回空集），
-        // 状态缓存里已记录不可用原因，设置页与启动横幅会展示。
-        let dir = match Self::get_profiles_dir() {
-            Ok(dir) => dir,
-            Err(_) => return Vec::new(),
-        };
+    fn read_all_from_disk() -> Result<Vec<Profile>, String> {
+        let dir = Self::get_profiles_dir()?;
         let mut profiles = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
 
@@ -56,7 +51,7 @@ impl ProfileService {
             }
         }
 
-        profiles
+        Ok(profiles)
     }
 
     fn with_cached_profiles<T>(f: impl FnOnce(&[Profile]) -> T) -> T {
@@ -65,12 +60,16 @@ impl ProfileService {
                 return f(profiles);
             }
         }
-        let profiles = Self::read_all_from_disk();
-        let result = f(&profiles);
-        if let Ok(mut cache) = CACHED_PROFILES.write() {
-            *cache = Some(profiles);
+        match Self::read_all_from_disk() {
+            Ok(profiles) => {
+                let result = f(&profiles);
+                if let Ok(mut cache) = CACHED_PROFILES.write() {
+                    *cache = Some(profiles);
+                }
+                result
+            }
+            Err(_) => f(&[]),
         }
-        result
     }
 
     pub fn get_all_profiles() -> Result<Vec<Profile>, String> {

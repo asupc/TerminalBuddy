@@ -248,6 +248,13 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
     if old_dir == new_dir || same_directory(&old_dir, &new_dir) {
         return Ok(());
     }
+    if let (Ok(old_canonical), Ok(new_canonical)) = (old_dir.canonicalize(), new_dir.canonicalize()) {
+        let old_norm = PathService::normalize_child_process_path(&old_canonical);
+        let new_norm = PathService::normalize_child_process_path(&new_canonical);
+        if crate::services::path_service::dst_inside_src(&old_norm, &new_norm) {
+            return Err("新数据目录不能位于当前数据目录内部".to_string());
+        }
+    }
 
     // 迁移前尽量把 WAL 合并回主库，减少「复制 db 与 wal 不是同一快照」的窗口。
     // 失败不阻断迁移（可能数据库尚未创建）。
@@ -288,6 +295,7 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
     let data_path = Some(new_dir.to_string_lossy().to_string());
     SettingsService::mutate_settings(move |settings| settings.data_path = data_path)?;
     PathService::invalidate_writable_cache();
+    crate::services::ProfileService::invalidate_cache();
 
     Ok(())
 }
@@ -495,6 +503,16 @@ pub fn export_all_data(file_path: String) -> Result<(), String> {
 fn write_json_files(dir: &PathBuf, map: &HashMap<String, Value>) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {}", e))?;
     for (name, value) in map {
+        if name.is_empty()
+            || name.contains(['/', '\\'])
+            || name.chars().any(char::is_control)
+            || !matches!(
+                std::path::Path::new(name).components().collect::<Vec<_>>().as_slice(),
+                [std::path::Component::Normal(_)]
+            )
+        {
+            return Err(format!("备份包含非法文件名: {}", name));
+        }
         let path = dir.join(format!("{}.json", name));
         let content =
             serde_json::to_string_pretty(value).map_err(|e| format!("序列化JSON失败: {}", e))?;
@@ -522,6 +540,8 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
     // 验证可识别的 key
     // Themes is accepted for backward compatibility with older backups, but is no longer restored.
     let valid_keys: &[&str] = &[
+        "version",
+        "exportTime",
         "Profiles",
         "Themes",
         "Workspaces",
@@ -732,5 +752,40 @@ mod tests {
         // 61 个中文（183 字节）应被拒绝
         let chinese_long = "终".repeat(WEB_PAGE_TITLE_MAX_CHARS + 1);
         assert!(normalize_web_page_title(&chinese_long).is_err());
+    }
+
+    #[test]
+    fn write_json_files_rejects_path_traversal_keys() {
+        let dir = std::env::temp_dir().join(format!("tb-settings-write-{}", uuid::Uuid::new_v4()));
+        let mut map = HashMap::new();
+        map.insert("../evil".to_string(), json!({"a": 1}));
+        assert!(write_json_files(&dir, &map).is_err());
+        map.clear();
+        map.insert("..\\evil".to_string(), json!({"a": 1}));
+        assert!(write_json_files(&dir, &map).is_err());
+        map.clear();
+        map.insert("valid-item".to_string(), json!({"a": 1}));
+        assert!(write_json_files(&dir, &map).is_ok());
+        assert!(dir.join("valid-item.json").is_file());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_all_data_accepts_version_and_export_time_metadata() {
+        let dir = std::env::temp_dir().join(format!("tb-settings-import-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let backup = dir.join("backup.json");
+        fs::write(
+            &backup,
+            serde_json::to_vec(&json!({
+                "version": "1.0",
+                "exportTime": "2026-11-24T00:00:00Z",
+                "Themes": {}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(import_all_data(backup.to_string_lossy().into_owned()).is_ok());
+        let _ = fs::remove_dir_all(&dir);
     }
 }

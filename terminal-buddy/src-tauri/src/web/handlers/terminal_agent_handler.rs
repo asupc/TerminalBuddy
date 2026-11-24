@@ -109,16 +109,18 @@ pub async fn socket(
         .await
         .map_err(|error| ApiError::from(error).into_response().status())?;
     let mut receiver = receiver.expect("WS 订阅应有接收端");
-    let subscription_id = outcome.subscription_id;
+    let guard = SubscriptionGuard {
+        terminal_id: terminal_id.clone(),
+        subscription_id: outcome.subscription_id,
+    };
     let initial = outcome.initial_frame;
     let app_state = state.clone();
-    let terminal_id_for_guard = terminal_id.clone();
     Ok(ws.on_upgrade(move |socket| async move {
         // 全局 WS 配额由连接本身持有：升级闭包存活期间占一条，连接结束释放。
         // （若在 handler 层持有，返回升级响应时即被释放，配额合同失效。）
         let _slot = slot;
         // RAII：连接结束（任何路径）释放租约。
-        let _guard = SubscriptionGuard { terminal_id: terminal_id_for_guard, subscription_id };
+        let _guard = guard;
         let (mut sender, mut receiver_socket) = socket.split();
         if let Ok(text) = serde_json::to_string(&initial) {
             if sender.send(Message::Text(text.into())).await.is_err() {
@@ -135,7 +137,6 @@ pub async fn socket(
                 frame = receiver.recv() => {
                     let Some(frame) = frame else { break };
                     let Ok(text) = serde_json::to_string(&frame) else { continue };
-                    deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
                     if sender.send(Message::Text(text.into())).await.is_err() { break; }
                 }
                 _ = ping.tick() => {

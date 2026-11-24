@@ -118,7 +118,11 @@ fn percent_decode(input: &str) -> String {
 
 pub(crate) fn workspace_uri_to_path(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
-    if trimmed.len() < 7 || !trimmed[..7].eq_ignore_ascii_case("file://") {
+    if trimmed
+        .as_bytes()
+        .get(..7)
+        .is_none_or(|prefix| !prefix.eq_ignore_ascii_case(b"file://"))
+    {
         return None;
     }
     let decoded = percent_decode(&trimmed[7..]);
@@ -421,21 +425,35 @@ fn scan_root(
 
     let summaries = read_summary_metadata(root);
     let files = collect_files(root, &summaries)?;
+    let existing = {
+        let mut statement = conn
+            .prepare("SELECT session_id, file_path, file_mtime, file_size FROM antigravity_sessions")
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    (
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ),
+                ))
+            })
+            .map_err(|error| error.to_string())?;
+        let mut map = HashMap::new();
+        for row in rows {
+            let (id, info) = row.map_err(|error| error.to_string())?;
+            map.insert(id, info);
+        }
+        map
+    };
     let mut outdated = Vec::new();
-    let mut check = conn
-        .prepare(
-            "SELECT 1 FROM antigravity_sessions WHERE session_id = ?1 AND file_path = ?2 AND file_mtime = ?3 AND file_size = ?4",
-        )
-        .map_err(|error| error.to_string())?;
     for file in &files {
-        let unchanged = check
-            .query_row(
-                params![file.id, file.path.to_string_lossy(), file.mtime, file.size],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .is_some();
+        let path_str = file.path.to_string_lossy();
+        let unchanged = existing.get(&file.id).is_some_and(|(p, mtime, size)| {
+            p.as_str() == path_str.as_ref() && *mtime == file.mtime && *size == file.size
+        });
         if !unchanged {
             outdated.push(file);
         }
@@ -1176,5 +1194,12 @@ mod tests {
         assert!(trash.exists());
         assert_eq!(fs::read_dir(&trash).unwrap().count(), 1);
         assert!(fixture.0.join("conversation_summaries.db").is_file());
+    }
+
+    #[test]
+    fn workspace_uri_to_path_handles_non_ascii_without_panicking() {
+        assert_eq!(workspace_uri_to_path("中文项目名"), None);
+        assert_eq!(workspace_uri_to_path("普通文本12345"), None);
+        assert!(workspace_uri_to_path("file:///tmp/%E4%B8%AD%E6%96%87").is_some());
     }
 }

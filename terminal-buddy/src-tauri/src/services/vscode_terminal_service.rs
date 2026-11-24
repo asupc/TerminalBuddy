@@ -18,8 +18,8 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 static EMBEDDED_VSCODE_TERMINAL_ZIP: &[u8] =
     include_bytes!("../../resources/vscode-terminal/bundle.zip");
 #[cfg(not(debug_assertions))]
-static EXTRACTED_VSCODE_TERMINAL: OnceLock<Result<PathBuf, String>> = OnceLock::new();
-static COMPATIBLE_NODE: OnceLock<Mutex<Option<Result<(PathBuf, NodeProbeResult), String>>>> = OnceLock::new();
+static EXTRACTED_VSCODE_TERMINAL: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+static COMPATIBLE_NODE: OnceLock<Mutex<Option<(PathBuf, NodeProbeResult)>>> = OnceLock::new();
 #[cfg_attr(not(windows), allow(dead_code))]
 static HOST_EXE_COPY_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -108,6 +108,7 @@ impl VsCodeTerminalProcess {
                 error
             )
         })?;
+        let mut tree = super::process_tree::ProcessTree::attach(&child);
         let stdin = child.stdin.take().ok_or("VS Code 终端插件 stdin 不可用")?;
         let stdout = child
             .stdout
@@ -127,16 +128,16 @@ impl VsCodeTerminalProcess {
         let (stdout, handshake) = match handshake_rx.recv_timeout(HANDSHAKE_TIMEOUT) {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => {
-                let details = terminate_and_collect_plugin_error(&mut child, stderr.take());
+                let details = terminate_and_collect_plugin_error(&mut child, &mut tree, stderr.take());
                 return Err(format!("VS Code 终端插件握手失败: {}{}", error, details));
             }
             Err(_) => {
-                let details = terminate_and_collect_plugin_error(&mut child, stderr.take());
+                let details = terminate_and_collect_plugin_error(&mut child, &mut tree, stderr.take());
                 return Err(format!("VS Code 终端插件握手超时{}", details));
             }
         };
         if &handshake[..4] != b"TBP1" {
-            let details = terminate_and_collect_plugin_error(&mut child, stderr.take());
+            let details = terminate_and_collect_plugin_error(&mut child, &mut tree, stderr.take());
             return Err(format!("VS Code 终端插件协议不匹配{}", details));
         }
         let shell_pid = u32::from_le_bytes(handshake[4..8].try_into().unwrap());
@@ -281,12 +282,24 @@ pub(crate) fn write_vscode_frame(
         .map_err(|error| format!("写入 VS Code 终端插件失败: {}", error))
 }
 
-fn terminate_and_collect_plugin_error(child: &mut Child, stderr: Option<ChildStderr>) -> String {
-    let _ = child.kill();
+fn terminate_and_collect_plugin_error(
+    child: &mut Child,
+    tree: &mut super::process_tree::ProcessTree,
+    stderr: Option<ChildStderr>,
+) -> String {
+    tree.terminate(child);
     let status = child.wait().ok();
     let mut message = String::new();
     if let Some(mut stderr) = stderr {
-        let _ = stderr.read_to_string(&mut message);
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut buf = String::new();
+            let _ = stderr.read_to_string(&mut buf);
+            let _ = tx.send(buf);
+        });
+        if let Ok(collected) = rx.recv_timeout(Duration::from_millis(500)) {
+            message = collected;
+        }
     }
     let message = message.trim();
     match (status.and_then(|value| value.code()), message.is_empty()) {
@@ -327,9 +340,16 @@ fn resolve_plugin_host(_app: &AppHandle) -> Result<PathBuf, String> {
 
 #[cfg(not(debug_assertions))]
 fn extracted_vscode_terminal_dir() -> Result<PathBuf, String> {
-    EXTRACTED_VSCODE_TERMINAL
-        .get_or_init(extract_embedded_vscode_terminal)
-        .clone()
+    let cache = EXTRACTED_VSCODE_TERMINAL.get_or_init(|| Mutex::new(None));
+    if let Some(dir) = cache.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        return Ok(dir.clone());
+    }
+    let dir = extract_embedded_vscode_terminal()?;
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.is_none() {
+        *guard = Some(dir.clone());
+    }
+    Ok(guard.as_ref().expect("extracted dir must be cached").clone())
 }
 
 #[cfg(not(debug_assertions))]
@@ -522,15 +542,15 @@ fn resolve_compatible_node(host_path: &Path) -> Result<(PathBuf, NodeProbeResult
 fn resolve_compatible_node_cached(host_path: &Path) -> Result<(PathBuf, NodeProbeResult), String> {
     let cache = COMPATIBLE_NODE.get_or_init(|| Mutex::new(None));
     if let Some(result) = cache.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-        return result.clone();
+        return Ok(result.clone());
     }
 
-    let result = resolve_compatible_node(host_path);
+    let result = resolve_compatible_node(host_path)?;
     let mut cached = cache.lock().unwrap_or_else(|e| e.into_inner());
     if cached.is_none() {
         *cached = Some(result.clone());
     }
-    cached.as_ref().expect("node probe result must be cached").clone()
+    Ok(cached.as_ref().expect("node probe result must be cached").clone())
 }
 
 fn find_node_candidates() -> Vec<PathBuf> {

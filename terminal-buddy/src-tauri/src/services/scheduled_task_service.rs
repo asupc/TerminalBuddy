@@ -209,6 +209,9 @@ fn append_run(run: &ScheduledRun) {
 
 fn update_run(run: &ScheduledRun) {
     let Ok(_guard) = store_lock().lock() else { return };
+    if load_defs().is_ok_and(|tasks| !tasks.iter().any(|task| task.id == run.task_id)) {
+        return;
+    }
     let mut runs = read_runs_unlocked(&run.task_id);
     match runs.iter_mut().find(|item| item.id == run.id) {
         Some(existing) => *existing = run.clone(),
@@ -509,6 +512,9 @@ pub fn save(app: &AppHandle, input: ScheduledTaskInput) -> Result<ScheduledTaskV
 }
 
 pub fn delete(app: &AppHandle, id: &str) -> Result<()> {
+    if active_run_id(id).is_some() {
+        return Err("定时任务正在执行中，请先停止后再删除".into());
+    }
     let _guard = store_lock().lock().unwrap_or_else(|error| error.into_inner());
     let mut tasks = load_defs()?;
     let Some(index) = tasks.iter().position(|task| task.id == id) else {
@@ -518,6 +524,9 @@ pub fn delete(app: &AppHandle, id: &str) -> Result<()> {
     save_defs(&tasks)?;
     if let Ok(path) = run_path(id) {
         let _ = fs::remove_file(path);
+    }
+    if let Ok(mut last) = last_manual().lock() {
+        last.remove(id);
     }
     drop(_guard);
     emit_changed(app, Some(id.to_string()), "deleted");
@@ -1009,6 +1018,19 @@ async fn run_agent_native(app: AppHandle, task: &ScheduledTask, run: &ScheduledR
     emit_run(&app, task, &live_run);
 
     let session_id = session.id.clone();
+    if stop_requested(&task.id, &run.id) {
+        let _ = release_session(&session_id, &owner).await;
+        return RunOutcome {
+            status: "stopped".into(),
+            message: Some("已手动停止".into()),
+            session_id: Some(session_id),
+            agent: Some(agent),
+            provider_name,
+            model,
+            ..Default::default()
+        };
+    }
+
     let send_owner = owner.clone();
     let send_session = session_id.clone();
     let send_input = SendAiMessage {
@@ -1035,6 +1057,11 @@ async fn run_agent_native(app: AppHandle, task: &ScheduledTask, run: &ScheduledR
     let mut approval_notified = false;
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(POLL_SECONDS)).await;
+        if stop_requested(&task.id, &run.id) {
+            let stop_owner = owner.clone();
+            let stop_session = session_id.clone();
+            let _ = blocking(move || ai_chat_service::stop(&stop_session, &stop_owner)).await;
+        }
         if started.elapsed() > timeout {
             let stop_owner = owner.clone();
             let stop_session = session_id.clone();
@@ -1448,7 +1475,12 @@ async fn run_agent_terminal(app: AppHandle, task: &ScheduledTask, run: &Schedule
 
     // 停止可能发生在终端创建之前；建完立刻补一次检查。
     if stop_requested(&task.id, &run.id) {
-        teardown_terminal(&app, &terminal_id, TerminalCloseReason::ScheduledClose);
+        let teardown_app = app.clone();
+        let teardown_id = terminal_id.clone();
+        let _ = crate::runtime::async_runtime::spawn_blocking(move || {
+            teardown_terminal(&teardown_app, &teardown_id, TerminalCloseReason::ScheduledClose);
+        })
+        .await;
         return RunOutcome {
             status: "stopped".into(),
             message: Some("已手动停止".into()),
@@ -1467,7 +1499,12 @@ async fn run_agent_terminal(app: AppHandle, task: &ScheduledTask, run: &Schedule
     let agent_fallback_at = inject_started + std::time::Duration::from_secs(8);
     loop {
         if stop_requested(&task.id, &run.id) {
-            teardown_terminal(&app, &terminal_id, TerminalCloseReason::ScheduledClose);
+            let teardown_app = app.clone();
+            let teardown_id = terminal_id.clone();
+            let _ = crate::runtime::async_runtime::spawn_blocking(move || {
+                teardown_terminal(&teardown_app, &teardown_id, TerminalCloseReason::ScheduledClose);
+            })
+            .await;
             return RunOutcome {
                 status: "stopped".into(),
                 message: Some("已手动停止".into()),
@@ -1517,12 +1554,34 @@ async fn run_agent_terminal(app: AppHandle, task: &ScheduledTask, run: &Schedule
             // SessionStart / 进程发现只代表会话已建立，输入框与 MCP/技能初始化可能还在跑；
             // 留一段时间再键入，过早写入会落进尚未挂载的输入框。
             tokio::time::sleep(std::time::Duration::from_millis(if agent == "antigravity" { 2_500 } else { 1_500 })).await;
+            if stop_requested(&task.id, &run.id) {
+                let teardown_app = app.clone();
+                let teardown_id = terminal_id.clone();
+                let _ = crate::runtime::async_runtime::spawn_blocking(move || {
+                    teardown_terminal(&teardown_app, &teardown_id, TerminalCloseReason::ScheduledClose);
+                })
+                .await;
+                return RunOutcome {
+                    status: "stopped".into(),
+                    message: Some("已手动停止".into()),
+                    terminal_id: Some(terminal_id),
+                    agent: Some(agent),
+                    provider_name,
+                    model,
+                    ..Default::default()
+                };
+            }
             if let Err(error) =
                 terminal_agent_relay::submit_task_prompt(&app, actor, &terminal_id, &prompt).await
             {
+                let stopped_by_user = stop_requested(&task.id, &run.id);
                 return RunOutcome {
-                    status: "failed".into(),
-                    message: Some(format!("提交任务描述失败：{}", error.message())),
+                    status: if stopped_by_user { "stopped".into() } else { "failed".into() },
+                    message: Some(if stopped_by_user {
+                        "已手动停止".into()
+                    } else {
+                        format!("提交任务描述失败：{}", error.message())
+                    }),
                     terminal_id: Some(terminal_id),
                     agent: Some(agent),
                     provider_name,
@@ -1546,7 +1605,12 @@ async fn run_agent_terminal(app: AppHandle, task: &ScheduledTask, run: &Schedule
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(POLL_SECONDS)).await;
         if started.elapsed() > timeout {
-            teardown_terminal(&app, &terminal_id, TerminalCloseReason::ScheduledClose);
+            let teardown_app = app.clone();
+            let teardown_id = terminal_id.clone();
+            let _ = crate::runtime::async_runtime::spawn_blocking(move || {
+                teardown_terminal(&teardown_app, &teardown_id, TerminalCloseReason::ScheduledClose);
+            })
+            .await;
             return RunOutcome {
                 status: "timeout".into(),
                 message: Some(format!("执行超时（{} 分钟），已停止", task.timeout_minutes)),
@@ -1558,7 +1622,12 @@ async fn run_agent_terminal(app: AppHandle, task: &ScheduledTask, run: &Schedule
             };
         }
         if stop_requested(&task.id, &run.id) {
-            teardown_terminal(&app, &terminal_id, TerminalCloseReason::ScheduledClose);
+            let teardown_app = app.clone();
+            let teardown_id = terminal_id.clone();
+            let _ = crate::runtime::async_runtime::spawn_blocking(move || {
+                teardown_terminal(&teardown_app, &teardown_id, TerminalCloseReason::ScheduledClose);
+            })
+            .await;
             return RunOutcome {
                 status: "stopped".into(),
                 message: Some("已手动停止".into()),

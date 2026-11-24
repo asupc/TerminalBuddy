@@ -650,7 +650,13 @@ pub fn terminal_launch_config(terminal_id: &str) -> Option<TerminalLaunchConfig>
     })
 }
 
+fn temp_map_disk_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 fn register_temp_file(terminal_id: &str, path: &PathBuf) -> Result<(), String> {
+    let _disk_guard = temp_map_disk_lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut map = read_temp_map()?;
     // 同一终端第二条 __TB_CLAUDE_REF__ 启动命令会覆盖映射；旧临时 settings
     // 含明文 key，必须同时删除，否则它会成为孤儿文件永久留在磁盘上。
@@ -1050,22 +1056,26 @@ pub fn inject_managed_hooks(
 /// 删除指定终端的临时 settings 文件与映射条目（幂等，供关闭清理调用）。
 /// 清理路径不阻断终端关闭，映射读写失败仅记录（文件删除仍尽力执行）。
 pub fn cleanup_temp_settings_for_terminal(terminal_id: &str) {
-    let path = temp_file_registry()
-        .lock()
-        .ok()
-        .and_then(|mut registry| registry.remove(terminal_id));
-    let mut candidates: Vec<String> = path.map(|path| path.to_string_lossy().to_string()).into_iter().collect();
-    match read_temp_map() {
-        Ok(mut map) => {
-            if let Some(entry) = map.remove(terminal_id) {
-                candidates.push(entry.path);
+    let candidates = {
+        let _disk_guard = temp_map_disk_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let path = temp_file_registry()
+            .lock()
+            .ok()
+            .and_then(|mut registry| registry.remove(terminal_id));
+        let mut candidates: Vec<String> = path.map(|path| path.to_string_lossy().to_string()).into_iter().collect();
+        match read_temp_map() {
+            Ok(mut map) => {
+                if let Some(entry) = map.remove(terminal_id) {
+                    candidates.push(entry.path);
+                }
+                if let Err(error) = write_temp_map(&map) {
+                    eprintln!("[TerminalBuddy] {}", error);
+                }
             }
-            if let Err(error) = write_temp_map(&map) {
-                eprintln!("[TerminalBuddy] {}", error);
-            }
+            Err(error) => eprintln!("[TerminalBuddy] {}", error),
         }
-        Err(error) => eprintln!("[TerminalBuddy] {}", error),
-    }
+        candidates
+    };
     for candidate in &candidates {
         remove_temp_settings_file(candidate);
     }

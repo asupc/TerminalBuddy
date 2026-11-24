@@ -248,7 +248,12 @@ impl ClaudeHookService {
         expires_at: i64,
         occurred_at: i64,
     ) -> Result<oneshot::Receiver<ClaudeHookResolution>, DecisionRejectReason> {
+        let now = chrono::Utc::now().timestamp_millis();
         let mut current = lock_pending();
+        current.retain(|_, decision| {
+            decision.expires_at > now
+                && decision.response.as_ref().is_some_and(|tx| !tx.is_closed())
+        });
         if current.len() >= MAX_PENDING_DECISIONS {
             Self::note_rejected();
             return Err(DecisionRejectReason::GlobalLimit);
@@ -293,9 +298,13 @@ impl ClaudeHookService {
     }
 
     pub fn list_pending_decisions() -> Vec<ClaudeHookDecisionEvent> {
-        let mut decisions = pending()
-            .lock()
-            .unwrap_or_else(|value| value.into_inner())
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut current = lock_pending();
+        current.retain(|_, decision| {
+            decision.expires_at > now
+                && decision.response.as_ref().is_some_and(|tx| !tx.is_closed())
+        });
+        let mut decisions = current
             .iter()
             .map(|(decision_id, decision)| ClaudeHookDecisionEvent {
                 decision_id: decision_id.clone(),
@@ -504,7 +513,7 @@ mod tests {
                 ],
                 multi_select: false,
             }],
-            123,
+            i64::MAX,
             100,
         )
         .unwrap();
@@ -527,7 +536,7 @@ mod tests {
                 options: vec![],
                 multi_select: false,
             }],
-            123,
+            i64::MAX,
             100,
         )
         .unwrap();
@@ -549,7 +558,7 @@ mod tests {
                 format!("{}:decision-{}", terminal_id, index),
                 terminal_id.clone(),
                 Vec::new(),
-                123,
+                i64::MAX,
                 100,
             ) {
                 Ok(receiver) => receivers.push(receiver),
@@ -561,26 +570,33 @@ mod tests {
                 format!("{}:overflow", terminal_id),
                 terminal_id.clone(),
                 Vec::new(),
-                123,
+                i64::MAX,
                 100,
             ),
             Err(super::DecisionRejectReason::TerminalLimit)
         ));
-        // 释放后可以再次登记
+        // 释放后可以再次登记（即使未显式 expire_decision，closed/expired 也会被清理）
         drop(receivers);
-        for decision in ClaudeHookService::list_pending_decisions() {
-            if decision.terminal_id == terminal_id {
-                ClaudeHookService::expire_decision(&decision.decision_id);
-            }
-        }
         assert!(ClaudeHookService::insert_decision(
             format!("{}:after-release", terminal_id),
-            terminal_id,
+            terminal_id.clone(),
+            Vec::new(),
+            i64::MAX,
+            100,
+        )
+        .is_ok());
+        // 已过期条目同样会在 list/insert 时清理
+        let _kept = ClaudeHookService::insert_decision(
+            format!("{}:expired", terminal_id),
+            terminal_id.clone(),
             Vec::new(),
             123,
             100,
         )
-        .is_ok());
+        .unwrap();
+        assert!(ClaudeHookService::list_pending_decisions()
+            .iter()
+            .all(|decision| decision.terminal_id != terminal_id));
     }
 
     /// unregister_terminal（终端关闭）会立刻释放该 terminal 的挂起 HTTP 请求。

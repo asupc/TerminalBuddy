@@ -60,13 +60,11 @@ impl AppNotificationService {
     /// App 重连时补发仍在等待的决策；完成事件不补发，避免重复提醒。
     pub fn pending_decisions() -> Vec<AppNotificationEvent> {
         let now = chrono::Utc::now().timestamp_millis();
-        let mut decisions = pending()
+        let mut map = pending()
             .lock()
-            .unwrap_or_else(|value| value.into_inner())
-            .values()
-            .filter(|event| event.expires_at.map_or(true, |expires_at| expires_at > now))
-            .cloned()
-            .collect::<Vec<_>>();
+            .unwrap_or_else(|value| value.into_inner());
+        map.retain(|_, event| event.expires_at.map_or(true, |expires_at| expires_at > now));
+        let mut decisions = map.values().cloned().collect::<Vec<_>>();
         decisions.sort_by_key(|event| event.occurred_at);
         decisions
     }
@@ -231,19 +229,22 @@ impl AppNotificationService {
 }
 
 fn publish(event: AppNotificationEvent) {
+    let now = chrono::Utc::now().timestamp_millis();
     if event.kind == "decision" {
         if let Some(decision_id) = event.decision_id.as_ref() {
-            pending()
+            let mut map = pending()
                 .lock()
-                .unwrap_or_else(|value| value.into_inner())
-                .insert(decision_id.clone(), event.clone());
+                .unwrap_or_else(|value| value.into_inner());
+            map.retain(|_, item| item.expires_at.map_or(true, |expires_at| expires_at > now));
+            map.insert(decision_id.clone(), event.clone());
         }
     } else if event.kind == "resolved" {
         if let Some(decision_id) = event.decision_id.as_ref() {
-            pending()
+            let mut map = pending()
                 .lock()
-                .unwrap_or_else(|value| value.into_inner())
-                .remove(decision_id);
+                .unwrap_or_else(|value| value.into_inner());
+            map.retain(|_, item| item.expires_at.map_or(true, |expires_at| expires_at > now));
+            map.remove(decision_id);
         }
     }
     let _ = channel().send(event);

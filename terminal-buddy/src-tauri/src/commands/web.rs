@@ -52,6 +52,7 @@ pub async fn restart_web_server(app: AppHandle) -> Result<String, String> {
     if let Some(tx) = SHUTDOWN_TX.lock().unwrap().take() {
         let _ = tx.send(true);
     }
+    *JWT_SECRET.lock().unwrap() = None;
 
     if !should_run_http_server() {
         return Ok("HTTP 服务已停止".into());

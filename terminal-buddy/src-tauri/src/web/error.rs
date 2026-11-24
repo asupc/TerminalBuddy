@@ -26,6 +26,21 @@ pub enum ApiError {
     Internal(String),
 }
 
+impl ApiError {
+    pub fn message(&self) -> &str {
+        match self {
+            ApiError::Unauthorized(msg)
+            | ApiError::Forbidden(msg)
+            | ApiError::BadRequest(msg)
+            | ApiError::NotFound(msg)
+            | ApiError::TooManyRequests { message: msg, .. }
+            | ApiError::Conflict(msg)
+            | ApiError::ConflictGate { message: msg, .. }
+            | ApiError::Internal(msg) => msg,
+        }
+    }
+}
+
 impl From<crate::services::terminal_agent_relay::RelayError> for ApiError {
     fn from(error: crate::services::terminal_agent_relay::RelayError) -> Self {
         match error {

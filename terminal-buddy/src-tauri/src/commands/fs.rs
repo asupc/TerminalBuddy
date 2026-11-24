@@ -268,7 +268,19 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn delete_path(path: String) -> Result<(), String> {
-    let meta = fs::metadata(&path).map_err(|e| format!("Failed to access: {}", e))?;
+    let meta = fs::symlink_metadata(&path).map_err(|e| format!("Failed to access: {}", e))?;
+    if meta.file_type().is_symlink() {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileTypeExt;
+            if meta.file_type().is_symlink_dir() {
+                fs::remove_dir(&path).map_err(|e| format!("Failed to delete symlink: {}", e))?;
+                return Ok(());
+            }
+        }
+        fs::remove_file(&path).map_err(|e| format!("Failed to delete symlink: {}", e))?;
+        return Ok(());
+    }
     if meta.is_dir() {
         fs::remove_dir_all(&path).map_err(|e| format!("Failed to delete directory: {}", e))?;
     } else {
@@ -350,7 +362,10 @@ pub fn rename_path(path: String, new_name: String) -> Result<(), String> {
     // 与 Linux 上「a / A 是两个文件」的差异（旧实现用 ASCII 折叠，既漏掉
     // Unicode 大小写，又会在 Linux 上误放行覆盖）。
     let same_file = new_path.exists()
-        && std::fs::canonicalize(source).ok() == std::fs::canonicalize(&new_path).ok();
+        && matches!(
+            (std::fs::canonicalize(source), std::fs::canonicalize(&new_path)),
+            (Ok(a), Ok(b)) if a == b
+        );
     if !same_file && new_path.exists() {
         return Err(format!("目标名称「{}」已存在，请换一个名称。", name));
     }

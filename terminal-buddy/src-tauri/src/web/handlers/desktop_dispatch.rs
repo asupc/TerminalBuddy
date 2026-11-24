@@ -1,6 +1,6 @@
 // 显式白名单：仅向已认证的个人服务账号开放下列业务命令。
 use super::{argument, data, result};
-use crate::{commands::TerminalService, runtime::{AppHandle, Manager}, web::error::ApiError};
+use crate::{runtime::{AppHandle, Manager}, web::error::ApiError};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -11,24 +11,14 @@ async fn run<T: Serialize + Send + 'static>(job: impl FnOnce() -> Result<T, Stri
     data(value.map_err(ApiError::BadRequest)?)
 }
 
+async fn run_api<T: Serialize + Send + 'static>(job: impl FnOnce() -> Result<T, ApiError> + Send + 'static) -> Result<Value, ApiError> {
+    let value = crate::runtime::async_runtime::spawn_blocking(job).await
+        .map_err(|e| ApiError::Internal(e.to_string()))??;
+    data(value)
+}
+
 pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -> Result<Value, ApiError> {
     match command {
-        // 远程桌面工作区复用浏览器业务端口；窗口控制、剪贴板等本机能力不走这里。
-        // 权限必须显式按 Web 身份判定，不能复用桌面命令里的 Pc 分支。
-        "report_session_directory" => {
-            let terminal_id: String = argument(&args, "id")?;
-            let directory: String = argument(&args, "directory")?;
-            let terminal_service = app.state::<TerminalService>();
-            terminal_service.set_session_directory(&app, &terminal_id, &directory, crate::models::TerminalActor::Web)
-                .map_err(ApiError::BadRequest).and_then(|_| data(()))
-        }
-        "update_terminal_display_name" => {
-            let terminal_id: String = argument(&args, "id")?;
-            let display_name: String = argument(&args, "displayName")?;
-            app.state::<TerminalService>()
-                .update_terminal_display_name(&terminal_id, &display_name, crate::models::TerminalActor::Web)
-                .map_err(ApiError::BadRequest).and_then(|_| data(()))
-        }
         // 原生 AI 会话：owner 取登录账号，项目范围在创建与发送时把关。
         "ai_session_list" => {
             let owner = owner.to_string();
@@ -41,23 +31,25 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
         "ai_session_create" => {
             let owner = owner.to_string();
             let mut input: crate::models::ai_chat::CreateAiSession = argument(&args, "input")?;
-            // 恢复历史时项目以历史会话所在目录为准，与 REST 创建路径一致。
-            if input.resume_session_id.as_deref().is_some_and(|id| !id.trim().is_empty()) {
-                let page = crate::services::ai_chat_service::replay_page(&input.provider,
-                    input.resume_session_id.as_deref().unwrap_or(""), 0, 1).map_err(ApiError::BadRequest)?;
-                input.project_path = page.project_dir;
-            }
-            // scope 校验后返回真实路径（不是比较用的 key），否则 CLI 会回落 C:\Windows。
-            input.project_path = crate::web::handlers::ensure_project_child_path(&input.project_path)?;
-            run(move || crate::services::ai_chat_service::create(&owner, input)).await
+            run_api(move || {
+                // 恢复历史时项目以历史会话所在目录为准，与 REST 创建路径一致。
+                if input.resume_session_id.as_deref().is_some_and(|id| !id.trim().is_empty()) {
+                    let page = crate::services::ai_chat_service::replay_page(&input.provider,
+                        input.resume_session_id.as_deref().unwrap_or(""), 0, 1).map_err(ApiError::BadRequest)?;
+                    input.project_path = page.project_dir;
+                }
+                input.project_path = super::super::ai_chat_handler::ensure_agent_project(&input.project_path, &input.provider)?;
+                crate::services::ai_chat_service::create(&owner, input).map_err(ApiError::BadRequest)
+            }).await
         }
         "ai_session_send" => {
             let (owner, id) = (owner.to_string(), argument::<String>(&args, "id")?);
             let input: crate::models::ai_chat::SendAiMessage = argument(&args, "input")?;
-            let session_owner = owner.clone(); let session_id = id.clone();
-            crate::web::handlers::ensure_project_scope(&crate::services::ai_chat_service::get(&session_id, &session_owner)
-                .map_err(ApiError::BadRequest)?.project_path)?;
-            run(move || crate::services::ai_chat_service::send(&id, &owner, input)).await
+            run_api(move || {
+                let session = crate::services::ai_chat_service::metadata(&id, &owner).map_err(ApiError::BadRequest)?;
+                crate::web::handlers::ensure_project_scope(&session.project_path)?;
+                crate::services::ai_chat_service::send(&id, &owner, input).map_err(ApiError::BadRequest)
+            }).await
         }
         "ai_session_stop" => {
             let (owner, id) = (owner.to_string(), argument::<String>(&args, "id")?);
@@ -84,7 +76,11 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
         "ai_session_pending_update" => {
             let (owner, id, request_id, text) = (owner.to_string(), argument::<String>(&args, "id")?,
                 argument::<String>(&args, "requestId")?, argument::<String>(&args, "text")?);
-            run(move || crate::services::ai_chat_service::update_pending_input(&id, &owner, &request_id, text)).await
+            run_api(move || {
+                let session = crate::services::ai_chat_service::metadata(&id, &owner).map_err(ApiError::BadRequest)?;
+                crate::web::handlers::ensure_project_scope(&session.project_path)?;
+                crate::services::ai_chat_service::update_pending_input(&id, &owner, &request_id, text).map_err(ApiError::BadRequest)
+            }).await
         }
         "ai_session_pending_delete" => {
             let (owner, id, request_id) = (owner.to_string(), argument::<String>(&args, "id")?,
@@ -94,10 +90,11 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
         "ai_session_flush" => {
             let (owner, id) = (owner.to_string(), argument::<String>(&args, "id")?);
             let request_id: Option<String> = serde_json::from_value(args.get("requestId").cloned().unwrap_or(Value::Null)).unwrap_or(None);
-            let session_owner = owner.clone(); let session_id = id.clone();
-            crate::web::handlers::ensure_project_scope(&crate::services::ai_chat_service::get(&session_id, &session_owner)
-                .map_err(ApiError::BadRequest)?.project_path)?;
-            run(move || crate::services::ai_chat_service::flush(&id, &owner, request_id.as_deref())).await
+            run_api(move || {
+                let session = crate::services::ai_chat_service::metadata(&id, &owner).map_err(ApiError::BadRequest)?;
+                crate::web::handlers::ensure_project_scope(&session.project_path)?;
+                crate::services::ai_chat_service::flush(&id, &owner, request_id.as_deref()).map_err(ApiError::BadRequest)
+            }).await
         }
         "ai_catalog" => run(crate::services::ai_catalog_service::catalog).await,
         // 定时任务：桌面端与浏览器共用同一服务层，项目范围在保存时校验。
@@ -146,18 +143,24 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
                 argument::<String>(&args, "sessionId")?);
             let provider_id = args.get("providerId").and_then(Value::as_str).map(str::to_string);
             let model = args.get("model").and_then(Value::as_str).map(str::to_string);
-            run(move || match agent.as_str() {
-                "claude" => crate::services::ai_chat_service::create(&owner, crate::models::ai_chat::CreateAiSession {
-                    provider: "claude".into(), provider_id, project_path: String::new(), model,
-                    resume_session_id: Some(session_id),
-                }),
-                "codex" => {
-                    let history = crate::services::codex_history_service::get_replay(&session_id, 0, usize::MAX)?;
-                    let project_dir = history.project_dir.clone();
-                    crate::services::ai_chat_service::resume_codex_history(&owner, &session_id, project_dir,
-                        crate::models::ai_chat::ResumeCodexHistory { provider_id, model }, history)
+            run_api(move || match agent.as_str() {
+                "claude" => {
+                    let page = crate::services::ai_chat_service::replay_page("claude", &session_id, 0, 1)
+                        .map_err(ApiError::BadRequest)?;
+                    let project_path = super::super::ai_chat_handler::ensure_agent_project(&page.project_dir, "claude")?;
+                    crate::services::ai_chat_service::create(&owner, crate::models::ai_chat::CreateAiSession {
+                        provider: "claude".into(), provider_id, project_path, model,
+                        resume_session_id: Some(session_id),
+                    }).map_err(ApiError::BadRequest)
                 }
-                _ => Err("未知 Agent，请选择 Claude 或 Codex".into()),
+                "codex" => {
+                    let history = crate::services::codex_history_service::get_replay(&session_id, 0, usize::MAX)
+                        .map_err(ApiError::BadRequest)?;
+                    let project_dir = super::super::ai_chat_handler::ensure_agent_project(&history.project_dir, "codex")?;
+                    crate::services::ai_chat_service::resume_codex_history(&owner, &session_id, project_dir,
+                        crate::models::ai_chat::ResumeCodexHistory { provider_id, model }, history).map_err(ApiError::BadRequest)
+                }
+                _ => Err(ApiError::BadRequest("未知 Agent，请选择 Claude 或 Codex".into())),
             }).await
         }
         "list_claude_assets" => result(crate::commands::claude_assets::list_claude_assets(argument(&args, "projectDir")?).await),

@@ -48,7 +48,7 @@ pub(crate) fn ensure_project_scope(path: &str) -> Result<String, ApiError> {
     }
 }
 
-fn normalize_scope_key(path: &str) -> String {
+pub(super) fn normalize_scope_key(path: &str) -> String {
     let normalized = path.trim()
         .replace('\\', "/")
         .trim_end_matches('/').to_string();
@@ -60,7 +60,7 @@ fn canonical_scope_key(path: &str) -> Result<String, ApiError> {
 }
 
 /// 规范化后的真实绝对路径（仍可能带 canonicalize 的 `\\?\` 前缀）。
-fn canonical_path(path: &str) -> Result<PathBuf, ApiError> {
+pub(super) fn canonical_path(path: &str) -> Result<PathBuf, ApiError> {
     let mut candidate = PathBuf::from(path.trim());
     if !candidate.is_absolute() { return Err(ApiError::Forbidden("必须使用服务器绝对路径".to_string())); }
     let mut missing = Vec::new();
@@ -72,17 +72,6 @@ fn canonical_path(path: &str) -> Result<PathBuf, ApiError> {
     let mut real = candidate.canonicalize().map_err(|e| ApiError::BadRequest(e.to_string()))?;
     for name in missing.into_iter().rev() { real.push(name); }
     Ok(real)
-}
-
-/// 校验项目范围并返回可直接交给 Git / CLI / PTY 的真实路径。
-///
-/// 不能把 [`ensure_project_scope`] 的返回值直接当文件路径使用：它是用于比较的
-/// key（Windows 下转小写正斜杠，canonicalize 还可能带 `\\?\` 前缀）。Claude CLI
-/// 经 cmd.exe 启动时会把这种路径当成 UNC 并回落到 `C:\Windows`。
-pub(crate) fn ensure_project_child_path(path: &str) -> Result<String, ApiError> {
-    ensure_project_scope(path)?;
-    let real = canonical_path(path)?;
-    Ok(crate::services::PathService::normalize_child_process_path_str(&real.to_string_lossy()))
 }
 
 pub mod ai_chat_handler;

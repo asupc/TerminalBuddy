@@ -48,19 +48,27 @@ fn scoped_file(path: &str) -> Result<(), ApiError> {
 /// （审查 M-2 / N-3：`/`、`C:\` 会被尾斜杠折叠，`/home`、`C:\Users` 等
 /// 才是真实入口，因此按规范化路径判定而非封禁字面量）。
 fn is_overbroad_project_path(raw: &str) -> bool {
-    let normalized = raw.replace('\\', "/").to_lowercase();
+    let stripped = PathService::normalize_child_process_path_str(raw);
+    let normalized = stripped.replace('\\', "/").to_lowercase();
     let trimmed = normalized.trim().trim_end_matches('/');
     let parts: Vec<&str> = trimmed.split('/').filter(|part| !part.is_empty()).collect();
     // 文件系统根 / Windows 盘根（"c:"）与 UNC 根（"//server"）
     if parts.is_empty() {
         return true;
     }
-    if parts[0].len() == 2 && parts[0].ends_with(':') && parts[0].as_bytes()[0].is_ascii_alphabetic() && parts.len() == 1 {
-        return true;
-    }
-    if parts[0].len() == 2 && parts[0].ends_with(':') && parts[0].as_bytes()[0].is_ascii_alphabetic()
-        && parts.len() >= 2 && matches!(parts[1], "users" | "windows" | "program files" | "programdata") {
-        return true; // c:/users、c:/windows、c:/program files 等系统前缀根
+    if parts[0].len() == 2 && parts[0].ends_with(':') && parts[0].as_bytes()[0].is_ascii_alphabetic() {
+        if parts.len() == 1 {
+            return true;
+        }
+        if parts[1] == "users" && parts.len() <= 3 {
+            return true;
+        }
+        if matches!(
+            parts[1],
+            "windows" | "program files" | "program files (x86)" | "programdata"
+        ) {
+            return true;
+        }
     }
     if parts.len() == 1 && matches!(parts[0], "etc" | "usr" | "var" | "bin" | "sbin" | "lib" | "lib64"
         | "boot" | "dev" | "proc" | "sys" | "tmp" | "root" | "home" | "users" | "mnt" | "media"
@@ -71,12 +79,16 @@ fn is_overbroad_project_path(raw: &str) -> bool {
     if parts.len() == 2 && (parts[0] == "home" || parts[0] == "users") {
         return true;
     }
-    // 本进程的 HOME（Linux 服务器模式）
-    if let Ok(home) = std::env::var("HOME") {
-        let home_norm = home.replace('\\', "/").to_lowercase();
-        let home_norm = home_norm.trim().trim_end_matches('/');
-        if !home_norm.is_empty() && trimmed == home_norm {
-            return true;
+    // 本进程的 HOME / USERPROFILE
+    for env_key in ["HOME", "USERPROFILE"] {
+        if let Ok(home) = std::env::var(env_key) {
+            let home_norm = PathService::normalize_child_process_path_str(&home)
+                .replace('\\', "/")
+                .to_lowercase();
+            let home_norm = home_norm.trim().trim_end_matches('/');
+            if !home_norm.is_empty() && trimmed == home_norm {
+                return true;
+            }
         }
     }
     false
@@ -260,7 +272,12 @@ pub async fn invoke(State(state): State<AppState>, claims: ClaimsFromRequest, he
     // 请求方设备类型用于创建终端时记录 creator，供来源标识与接管提示使用。
     // 完整界面（电脑浏览器）通常为 Desktop；手机直接访问 /api 时按 UA 判定。
     let client_kind = client_kind_from_headers(&headers);
-    check_arguments(&command, &args, &state.app_handle)?;
+    let check_cmd = command.clone();
+    let check_args = args.clone();
+    let check_app = state.app_handle.clone();
+    tokio::task::spawn_blocking(move || check_arguments(&check_cmd, &check_args, &check_app))
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))??;
     let git_mutation = matches!(command.as_str(), "git_pull" | "git_push_with_options" | "git_checkout_branch" | "git_commit_paths");
     let long_operation = git_mutation || matches!(
         command.as_str(),
@@ -273,7 +290,7 @@ pub async fn invoke(State(state): State<AppState>, claims: ClaimsFromRequest, he
         let lease = if git_mutation {
             let path = args.get("path").or_else(|| args.get("options").and_then(|v| v.get("path"))).and_then(Value::as_str)
                 .ok_or_else(|| ApiError::BadRequest("缺少仓库路径".to_string()))?;
-            Some(super::git_handler::reserve_desktop_operation(path, &command)?)
+            Some(super::git_handler::reserve_desktop_operation(path, &command).await?)
         } else { None };
         let job = Arc::new(Job { created: std::time::Instant::now(), outcome: Mutex::new(None) });
         let id = uuid::Uuid::new_v4().to_string();
@@ -284,7 +301,9 @@ pub async fn invoke(State(state): State<AppState>, claims: ClaimsFromRequest, he
             map.insert(id.clone(), job.clone());
         }
         tokio::spawn(async move {
-            let outcome = execute(&command, args, client_kind, state.app_handle, owner).await.map_err(|error| format!("{:?}", error));
+            let outcome = execute(&command, args, client_kind, state.app_handle, owner)
+                .await
+                .map_err(|error| error.message().to_string());
             if let Some(lease) = lease { lease.finish(&outcome); }
             if let Ok(mut slot) = job.outcome.lock() { *slot = Some(outcome); }
         });
@@ -336,7 +355,14 @@ async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, ap
             result(app.state::<TerminalService>().peek_terminal_output(&id, TerminalActor::Web))?
         }
         "write_to_terminal" => {
-            result(app.state::<TerminalService>().write_to_terminal(&argument::<String>(&args,"id")?, &argument::<String>(&args,"data")?, TerminalActor::Web))?
+            let id: String = argument(&args, "id")?;
+            let payload: String = argument(&args, "data")?;
+            let outcome = crate::runtime::async_runtime::spawn_blocking(move || {
+                app.state::<TerminalService>().write_to_terminal(&id, &payload, TerminalActor::Web)
+            })
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            result(outcome)?
         }
         "resize_terminal" => {
             result(app.state::<TerminalService>().resize_terminal(&argument::<String>(&args,"id")?, argument(&args,"rows")?, argument(&args,"cols")?, false, TerminalActor::Web))?
@@ -379,11 +405,20 @@ pub async fn upload(State(_state): State<AppState>, _claims: ClaimsFromRequest, 
 pub async fn file(State(state): State<AppState>, Query(query): Query<HashMap<String,String>>) -> Result<Response, ApiError> {
     verify_token(query.get("token").ok_or_else(|| ApiError::Unauthorized("请先登录".to_string()))?, &state.jwt_secret).map_err(|_| ApiError::Unauthorized("登录已过期".to_string()))?;
     let path = query.get("path").ok_or_else(|| ApiError::BadRequest("缺少路径".to_string()))?;
-    let bytes = tokio::fs::read(path).await.map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let file = tokio::fs::File::open(path).await.map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let meta = file.metadata().await.map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    if !meta.is_file() {
+        return Err(ApiError::BadRequest("仅支持读取普通文件".to_string()));
+    }
     let mime = match PathBuf::from(path).extension().and_then(|v| v.to_str()).unwrap_or("").to_lowercase().as_str() {
         "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "gif" => "image/gif", "webp" => "image/webp", _ => "application/octet-stream",
     };
-    Ok(([("content-type", mime), ("x-content-type-options", "nosniff")], bytes).into_response())
+    let mut response = Response::new(Body::from_stream(tokio_util::io::ReaderStream::new(file)));
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(meta.len()));
+    headers.insert(header::HeaderName::from_static("x-content-type-options"), HeaderValue::from_static("nosniff"));
+    Ok(response)
 }
 
 /// 浏览器端下载：文件直接流式输出，目录先打包成 ZIP 再流式输出。
@@ -601,5 +636,15 @@ mod download_tests {
         assert_eq!(content, "hello");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn overbroad_project_path_handles_windows_verbatim_and_users_depth() {
+        assert!(is_overbroad_project_path(r"\\?\C:\"));
+        assert!(is_overbroad_project_path(r"\\?\C:\Windows"));
+        assert!(is_overbroad_project_path(r"\\?\C:\Users"));
+        assert!(is_overbroad_project_path(r"\\?\C:\Users\alice"));
+        assert!(!is_overbroad_project_path(r"\\?\C:\Users\alice\projects\app"));
+        assert!(!is_overbroad_project_path("/srv/projects/app"));
     }
 }

@@ -5,10 +5,14 @@ use std::path::PathBuf;
 pub struct ClientDataService;
 
 impl ClientDataService {
-    fn get_client_data_dir() -> PathBuf {
-        let dir = PathService::get_data_dir().join("ClientData");
-        fs::create_dir_all(&dir).ok();
-        dir
+    fn read_client_data_dir() -> PathBuf {
+        PathService::get_data_dir().join("ClientData")
+    }
+
+    fn require_client_data_dir() -> Result<PathBuf, String> {
+        let dir = PathService::require_data_dir()?.join("ClientData");
+        fs::create_dir_all(&dir).map_err(|e| format!("创建 ClientData 目录失败: {}", e))?;
+        Ok(dir)
     }
 
     pub fn read(key: &str) -> Result<Option<String>, String> {
@@ -16,7 +20,7 @@ impl ClientDataService {
         if key == "command_history" {
             return DatabaseService::read_command_history();
         }
-        let path = Self::get_client_data_dir().join(format!("{}.json", key));
+        let path = Self::read_client_data_dir().join(format!("{}.json", key));
         if !path.exists() {
             return Ok(None);
         }
@@ -26,17 +30,15 @@ impl ClientDataService {
 
     pub fn write(key: &str, content: &str) -> Result<(), String> {
         Self::validate_key(key)?;
-        // Validate JSON
-        serde_json::from_str::<serde_json::Value>(content)
+        // Validate JSON once
+        let parsed: serde_json::Value = serde_json::from_str(content)
             .map_err(|e| format!("无效的JSON: {}", e))?;
-        let pretty = serde_json::to_string_pretty(
-            &serde_json::from_str::<serde_json::Value>(content).unwrap(),
-        )
-        .map_err(|e| format!("格式化JSON失败: {}", e))?;
+        let pretty = serde_json::to_string_pretty(&parsed)
+            .map_err(|e| format!("格式化JSON失败: {}", e))?;
         if key == "command_history" {
             return DatabaseService::save_command_history(&pretty);
         }
-        let path = Self::get_client_data_dir().join(format!("{}.json", key));
+        let path = Self::require_client_data_dir()?.join(format!("{}.json", key));
         super::atomic_file::atomic_write(&path, pretty.as_bytes())
             .map_err(|e| format!("写入文件失败: {}", e))?;
         Ok(())

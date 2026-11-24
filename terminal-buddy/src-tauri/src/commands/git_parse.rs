@@ -84,13 +84,11 @@ fn validate_ref_name(field_label: &str, value: &str) -> Result<(), String> {
 pub(crate) fn local_branch_ref(branch: &str) -> Result<String, String> {
     let branch = branch.trim();
     validate_ref_name("本地分支名", branch)?;
-    let full = if branch.starts_with("refs/") {
+    Ok(if branch.starts_with("refs/") {
         branch.to_string()
     } else {
         format!("refs/heads/{}", branch)
-    };
-    ensure_not_option_like("本地分支引用", &full)?;
-    Ok(full)
+    })
 }
 
 /// `<remote>` + `<remote_branch>` → 远端跟踪 ref `refs/remotes/<remote>/<branch>`。
@@ -103,9 +101,7 @@ pub(crate) fn remote_tracking_ref(remote: &str, remote_branch: &str) -> Result<S
         .unwrap_or_else(|| remote_branch.trim())
         .trim_matches('/');
     validate_ref_name("远端分支名", branch)?;
-    let full = format!("refs/remotes/{}/{}", remote, branch);
-    ensure_not_option_like("远端跟踪引用", &full)?;
-    Ok(full)
+    Ok(format!("refs/remotes/{}/{}", remote, branch))
 }
 
 /// `git for-each-ref` 用的远端 ref 前缀。
@@ -125,9 +121,7 @@ pub(crate) fn push_refspec(local_branch: &str, remote_branch: &str) -> Result<St
     } else {
         format!("refs/heads/{}", remote)
     };
-    let refspec = format!("{}:{}", local, remote_full);
-    ensure_not_option_like("推送 refspec", &refspec)?;
-    Ok(refspec)
+    Ok(format!("{}:{}", local, remote_full))
 }
 
 /// 前端传入的 revision（提交哈希、`HEAD`、空树哈希等）。不能像分支名那样按 ref 语法
@@ -552,7 +546,7 @@ pub(crate) fn status_label(x: char, y: char, untracked: bool) -> String {
     "已更改".to_string()
 }
 
-pub(crate) fn numstat_map(root: &Path) -> HashSet<(String, u32, u32)> {
+pub(crate) fn numstat_map(root: &Path) -> std::collections::HashMap<String, (u32, u32)> {
     run_git(root, &["diff", "--numstat", "HEAD", "--"])
         .unwrap_or_default()
         .lines()
@@ -561,17 +555,13 @@ pub(crate) fn numstat_map(root: &Path) -> HashSet<(String, u32, u32)> {
             let additions = parts.next()?.parse().ok().unwrap_or(0);
             let deletions = parts.next()?.parse().ok().unwrap_or(0);
             let path = parts.next()?.to_string();
-            Some((path, additions, deletions))
+            Some((path, (additions, deletions)))
         })
         .collect()
 }
 
-pub(crate) fn lookup_numstat(stats: &HashSet<(String, u32, u32)>, path: &str) -> (u32, u32) {
-    stats
-        .iter()
-        .find(|(stat_path, _, _)| stat_path == path)
-        .map(|(_, additions, deletions)| (*additions, *deletions))
-        .unwrap_or((0, 0))
+pub(crate) fn lookup_numstat(stats: &std::collections::HashMap<String, (u32, u32)>, path: &str) -> (u32, u32) {
+    stats.get(path).copied().unwrap_or((0, 0))
 }
 
 pub(crate) fn normalize_history_revision(revision: Option<String>) -> String {
@@ -624,13 +614,35 @@ pub(crate) fn parse_history_numstats(output: &str) -> Vec<GitHistoryNumstat> {
         .collect()
 }
 
+fn expand_numstat_rename(stat_path: &str) -> Option<(String, String)> {
+    if let (Some(open), Some(close)) = (stat_path.find('{'), stat_path.find('}')) {
+        if open < close {
+            let inner = &stat_path[open + 1..close];
+            if let Some((old_part, new_part)) = inner.split_once(" => ") {
+                let prefix = &stat_path[..open];
+                let suffix = &stat_path[close + 1..];
+                let normalize_join = |mid: &str| {
+                    let joined = format!("{prefix}{mid}{suffix}");
+                    joined.replace("//", "/").trim_matches('/').to_string()
+                };
+                return Some((normalize_join(old_part), normalize_join(new_part)));
+            }
+        }
+    }
+    stat_path
+        .split_once(" => ")
+        .map(|(old_part, new_part)| (old_part.to_string(), new_part.to_string()))
+}
+
 fn history_numstat_matches(stat_path: &str, path: &str, old_path: Option<&str>) -> bool {
-    stat_path == path
-        || old_path.is_some_and(|value| stat_path == value)
-        || stat_path.ends_with(path)
-        || old_path.is_some_and(|value| stat_path.ends_with(value))
-        || stat_path.contains(path)
-        || old_path.is_some_and(|value| stat_path.contains(value))
+    if stat_path == path || old_path.is_some_and(|value| stat_path == value) {
+        return true;
+    }
+    if let Some((expanded_old, expanded_new)) = expand_numstat_rename(stat_path) {
+        return expanded_new == path
+            || old_path.is_some_and(|value| expanded_old == value || expanded_new == value);
+    }
+    false
 }
 
 fn lookup_history_numstat(
@@ -1225,5 +1237,13 @@ mod tests {
             ),
             GitShowFailure::Other
         );
+    }
+
+    #[test]
+    fn history_numstat_matches_exact_and_rename_paths_only() {
+        assert!(!super::history_numstat_matches("src/a.rs", "a.rs", None));
+        assert!(super::history_numstat_matches("a.rs", "a.rs", None));
+        assert!(super::history_numstat_matches("src/{old.rs => new.rs}", "src/new.rs", Some("src/old.rs")));
+        assert!(!super::history_numstat_matches("other/{old.rs => new.rs}", "src/new.rs", Some("src/old.rs")));
     }
 }

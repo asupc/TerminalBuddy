@@ -200,6 +200,12 @@ impl DatabaseService {
             Self::complete_migration(&transaction, "antigravity-history-v1")?;
             transaction.commit().map_err(|error| format!("提交 Antigravity 历史迁移失败: {error}"))?;
         }
+        if !Self::has_migration(connection, "claude-history-v4")? {
+            let transaction = connection.transaction().map_err(|error| format!("开始 Claude 会话索引迁移失败: {error}"))?;
+            crate::services::claude_history_service::init_claude_schema(&transaction)?;
+            Self::complete_migration(&transaction, "claude-history-v4")?;
+            transaction.commit().map_err(|error| format!("提交 Claude 会话索引迁移失败: {error}"))?;
+        }
 
         Ok(())
     }

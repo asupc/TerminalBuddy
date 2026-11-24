@@ -315,7 +315,9 @@ impl RemoteWorkspaceService {
             .layer(cors)
             .layer(axum::extract::DefaultBodyLimit::max(MAX_PROXY_BODY_BYTES))
             .with_state(service);
-        self.inner.proxy_addr.set(address).map_err(|_| "远程连接代理已启动".to_string())?;
+        if self.inner.proxy_addr.set(address).is_err() {
+            return Ok(());
+        }
         crate::runtime::async_runtime::spawn(async move {
             if let Err(error) = axum::serve(listener, router).await {
                 eprintln!("远程连接代理已停止：{}", error);
@@ -707,6 +709,18 @@ async fn proxy_socket(
     uri: axum::http::Uri,
     headers: HeaderMap,
 ) -> Response {
+    let origin_allowed = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|origin| {
+            matches!(
+                origin,
+                "tauri://localhost" | "http://tauri.localhost" | "http://127.0.0.1:1450"
+            )
+        });
+    if !origin_allowed {
+        return (StatusCode::FORBIDDEN, "禁止跨域 WebSocket 访问远程代理").into_response();
+    }
     let path = uri.path().strip_prefix("/__tb_remote").unwrap_or("").to_string();
     let query = uri.query().map(str::to_string);
     upgrade.on_upgrade(move |socket| async move {

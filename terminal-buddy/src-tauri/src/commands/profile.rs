@@ -126,10 +126,9 @@ pub fn save_projects(projects: Vec<Project>) -> Result<(), String> {
         }
     }
     let file = projects_file()?;
-    let tmp = file.with_extension("json.tmp");
-    fs::write(&tmp, serde_json::to_vec_pretty(&projects).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
-    fs::rename(tmp, file).map_err(|e| e.to_string())
+    let bytes = serde_json::to_vec_pretty(&projects).map_err(|e| e.to_string())?;
+    crate::services::atomic_file::atomic_write(&file, &bytes)
+        .map_err(|e| format!("保存项目配置失败: {}", e))
 }
 
 #[cfg(test)]

@@ -140,9 +140,10 @@ pub fn dir_key(path: &str) -> String {
 /// 编码目录名 → 真实项目路径（借会话索引；找不到返回 None）
 fn encoded_to_real_dir(conn: &rusqlite::Connection, projects_root: &Path, encoded: &str) -> Option<String> {
     let prefix = format!("{}{}", projects_root.join(encoded).to_string_lossy(), std::path::MAIN_SEPARATOR);
+    let escaped = prefix.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
     conn.query_row(
-        "SELECT project_dir FROM claude_sessions WHERE file_path LIKE ?1 AND project_dir != '' LIMIT 1",
-        [format!("{}%", prefix)],
+        "SELECT project_dir FROM claude_sessions WHERE file_path LIKE ?1 ESCAPE '\\' AND project_dir != '' LIMIT 1",
+        [format!("{}%", escaped)],
         |row| row.get::<_, String>(0),
     )
     .optional()
@@ -387,7 +388,8 @@ pub fn write_claude_md(kind: &str, project_dir: &str, content: &str) -> Result<(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("创建目录失败: {}", error))?;
     }
-    fs::write(&path, content).map_err(|error| format!("写入 CLAUDE.md 失败: {}", error))
+    super::atomic_file::atomic_write(&path, content.as_bytes())
+        .map_err(|error| format!("写入 CLAUDE.md 失败: {}", error))
 }
 
 // ---------------------------------------------------------------------------

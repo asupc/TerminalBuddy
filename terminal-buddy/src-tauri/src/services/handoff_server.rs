@@ -358,9 +358,7 @@ unsafe extern "system" fn class_factory_create_instance(
         refcount: AtomicU32::new(1),
     }));
     let hr = handoff_query_interface(object as *mut c_void, riid, ppv);
-    if hr != S_OK {
-        drop(Box::from_raw(object as *mut ComObject));
-    }
+    object_release(object as *mut c_void);
     hr
 }
 
@@ -603,10 +601,6 @@ unsafe fn do_establish_pty_handoff(
     let (our_out, console_out) = create_pipe_pair()?;
     let our_out = RawGuard::new(our_out);
     let console_out = RawGuard::new(console_out);
-    // console 端句柄先交出：COM 负责封送并在返回后释放本地副本；
-    // 之后失败只需让 RawGuard 收我方端，OpenConsole 侧由 RETURN_IF_FAILED 清理。
-    *pin = console_in.into_inner();
-    *pout = console_out.into_inner();
 
     // 2. [in] 句柄各自 DuplicateHandle 一份供会话持有。
     let signal = duplicate_handle(signal)?;
@@ -661,7 +655,10 @@ unsafe fn do_establish_pty_handoff(
         client_pid,
     );
     let service = app.state::<TerminalService>();
-    service.create_handoff_terminal(handoff, Box::new(reader), &display_name, rows, cols, app.clone())
+    let id = service.create_handoff_terminal(handoff, Box::new(reader), &display_name, rows, cols, app.clone())?;
+    *pin = console_in.into_inner();
+    *pout = console_out.into_inner();
+    Ok(id)
 }
 
 // ── HandoffPty：handoff 会话后端（供 TerminalBackend::Handoff 委托）──────────

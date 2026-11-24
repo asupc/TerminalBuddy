@@ -443,15 +443,24 @@ pub async fn meta_ws_handler(
         .get("token")
         .ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
     let claims = verify_token(token, &state.jwt_secret)?;
+    let slot = WsConnectionSlot::acquire().ok_or(axum::http::StatusCode::SERVICE_UNAVAILABLE)?;
 
-    Ok(ws.on_upgrade(move |socket| handle_meta_socket(socket, state, claims.exp)))
+    Ok(ws.on_upgrade(move |socket| handle_meta_socket(socket, state, claims.exp, slot)))
 }
 
-async fn handle_meta_socket(socket: WebSocket, state: AppState, token_exp: usize) {
+async fn handle_meta_socket(
+    socket: WebSocket,
+    state: AppState,
+    token_exp: usize,
+    _slot: WsConnectionSlot,
+) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let ts = state.app_handle.state::<TerminalService>();
     let mut change_rx = ts.session_change_tx.subscribe();
     let mut token_expiry = Box::pin(time::sleep_until(token_expiry_deadline(token_exp)));
+    let mut heartbeat = time::interval(WS_HEARTBEAT_INTERVAL);
+    heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut last_activity = Instant::now();
 
     // 连上立即推一次当前会话列表：非共享模式下只有 Web 自己创建的终端，
     // 共享模式下才包含可接管的 PC 终端。过滤逻辑集中在 list_terminals_info_for。
@@ -485,10 +494,18 @@ async fn handle_meta_socket(socket: WebSocket, state: AppState, token_exp: usize
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
+            _ = heartbeat.tick() => {
+                if last_activity.elapsed() > WS_HEARTBEAT_TIMEOUT {
+                    break;
+                }
+                if ws_sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
+            }
             incoming = ws_receiver.next() => {
                 match incoming {
-                    Some(Ok(Message::Close(_))) | None => break,
-                    _ => {}
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(_)) => last_activity = Instant::now(),
                 }
             }
             _ = &mut token_expiry => break,

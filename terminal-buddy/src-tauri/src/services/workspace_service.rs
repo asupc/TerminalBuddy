@@ -17,9 +17,13 @@ pub struct WorkspaceService;
 
 impl WorkspaceService {
     fn get_workspaces_dir() -> PathBuf {
-        let dir = PathService::get_data_dir().join("Workspaces");
-        fs::create_dir_all(&dir).ok();
-        dir
+        PathService::get_data_dir().join("Workspaces")
+    }
+
+    fn require_workspaces_dir() -> Result<PathBuf, String> {
+        let dir = PathService::require_data_dir()?.join("Workspaces");
+        fs::create_dir_all(&dir).map_err(|e| format!("创建工作区目录失败: {}", e))?;
+        Ok(dir)
     }
 
     pub fn get_all_workspaces() -> Result<Vec<Workspace>, String> {
@@ -60,8 +64,8 @@ impl WorkspaceService {
             last_used_at: chrono::Utc::now().to_rfc3339(),
         };
 
-        let path =
-            Self::get_workspaces_dir().join(format!("{}.json", sanitize_filename(&workspace.name)));
+        let path = Self::require_workspaces_dir()?
+            .join(format!("{}.json", sanitize_filename(&workspace.name)));
         if path.exists() {
             return Err(format!("工作区 '{}' 已存在", name));
         }
@@ -73,25 +77,24 @@ impl WorkspaceService {
     }
 
     pub fn update_workspace(workspace: &Workspace) -> Result<(), String> {
+        let dir = Self::require_workspaces_dir()?;
         if let Ok(old) = Self::get_workspace(&workspace.id) {
             if old.name != workspace.name {
-                let old_path = Self::get_workspaces_dir()
-                    .join(format!("{}.json", sanitize_filename(&old.name)));
+                let old_path = dir.join(format!("{}.json", sanitize_filename(&old.name)));
                 fs::remove_file(&old_path).ok();
             }
         }
 
-        let path =
-            Self::get_workspaces_dir().join(format!("{}.json", sanitize_filename(&workspace.name)));
+        let path = dir.join(format!("{}.json", sanitize_filename(&workspace.name)));
         let content = serde_json::to_string_pretty(workspace)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
         super::atomic_file::atomic_write(&path, content.as_bytes()).map_err(|e| format!("Failed to write file: {}", e))
     }
 
     pub fn delete_workspace(id: &str) -> Result<(), String> {
+        let dir = Self::require_workspaces_dir()?;
         let workspace = Self::get_workspace(id)?;
-        let path =
-            Self::get_workspaces_dir().join(format!("{}.json", sanitize_filename(&workspace.name)));
+        let path = dir.join(format!("{}.json", sanitize_filename(&workspace.name)));
         fs::remove_file(&path).map_err(|e| format!("Failed to delete workspace: {}", e))
     }
 }

@@ -498,22 +498,31 @@ fn evict_idle_registry_entries(registry: &mut HashMap<PathBuf, Arc<Cell>>, keep_
 fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
     let id = Uuid::parse_str(id).map_err(|_| "AI 会话不存在")?.to_string();
     let path = directory()?.join(format!("{id}.json"));
-    let mut registry = registry().lock().map_err(|_| "AI 会话状态不可用")?;
-    if !registry.contains_key(&path) {
+    let existing = {
+        let registry = registry().lock().map_err(|_| "AI 会话状态不可用")?;
+        registry.get(&path).cloned()
+    };
+    let cell = if let Some(cell) = existing {
+        cell
+    } else {
         let bytes = fs::read(&path).map_err(|_| "AI 会话不存在")?;
         let mut data: AiSession = serde_json::from_slice(&bytes).map_err(|_| "AI 会话文件损坏")?;
         if data.owner != owner { return Err("AI 会话不存在".into()); }
         let (migrated, interrupted) = normalize_loaded_session(&mut data);
-        let cell = Cell::new(data, path.clone());
-        // 重启中断标记与结束版本一起落盘，避免再次重启时重复生成同一结束事件。
-        if interrupted || migrated { persist(&cell)?; }
-        registry.insert(path.clone(), cell);
+        let candidate = Cell::new(data, path.clone());
+        if interrupted || migrated { persist(&candidate)?; }
+        let mut registry = registry().lock().map_err(|_| "AI 会话状态不可用")?;
+        let cell = match registry.entry(path.clone()) {
+            std::collections::hash_map::Entry::Occupied(entry) => Arc::clone(entry.get()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(Arc::clone(&candidate));
+                candidate
+            }
+        };
         evict_idle_registry_entries(&mut registry, &path);
-    }
-    let cell = registry.get(&path).ok_or("AI 会话不存在")?.clone();
+        cell
+    };
     cell.touch_access();
-    // 等待单个会话的持久化锁时，不占用所有会话共用的注册表锁。
-    drop(registry);
     if cell.data.lock().map_err(|_| "AI 会话状态不可用")?.owner != owner { return Err("AI 会话不存在".into()); }
     Ok(cell)
 }
@@ -630,6 +639,27 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
         }
         let Ok(bytes) = fs::read(&path) else { continue; };
         let Ok(mut data) = serde_json::from_slice::<AiSession>(&bytes) else { continue; };
+        // 冷读期间可能有并发创建/加载把该路径注册为热会话：绝不能用重启中断覆盖刚启动的会话。
+        let active_now = registry()
+            .lock()
+            .ok()
+            .and_then(|reg| reg.get(&path).cloned());
+        if let Some(cell) = active_now {
+            let owned = cell.data.lock().is_ok_and(|d| d.owner == owner);
+            if owned {
+                heal_orphaned_running(&cell);
+                refresh_title(&cell, false);
+                if let Ok(d) = cell.data.lock() {
+                    if d.owner == owner {
+                        let mut meta = d.metadata();
+                        meta.desktop_open = is_desktop_open(&meta.id);
+                        meta.trim_realtime_payload();
+                        sessions.push(meta);
+                    }
+                }
+            }
+            continue;
+        }
         let (migrated, interrupted) = normalize_loaded_session(&mut data);
         let (final_mtime, final_size) = if interrupted || migrated {
             if let Ok(serialized) = serialize_persisted_session(&data) {
@@ -804,9 +834,12 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
         }
         // 同一历史线程已经在服务端有会话时不再新建文件，但仍要通知电脑端：
         // 手机可能刚从历史列表打开它，电脑端需要补开对应标签。
-        emit_created(&data);
+        let snapshot = data.clone();
+        emit_created(&snapshot);
+        drop(data);
+        drop(control);
         emit_update(&cell);
-        return Ok(data.clone());
+        return Ok(snapshot);
     }
     let id = Uuid::new_v4().to_string();
     let path = directory()?.join(format!("{id}.json"));
@@ -843,10 +876,28 @@ struct ThreadMatchHeader {
 
 /// 在已落盘的 AI 会话里找绑定同一历史线程的会话（磁盘 JSON 持久化过 owner 与 threadId）。
 fn find_by_thread(owner: &str, provider: &str, thread_id: &str) -> Option<AiSession> {
+    if let Ok(reg) = registry().lock() {
+        for cell in reg.values() {
+            if let Ok(data) = cell.data.lock() {
+                if data.owner == owner && data.provider == provider && data.thread_id.as_deref() == Some(thread_id) {
+                    return Some(data.clone());
+                }
+            }
+        }
+    }
     let dir = directory().ok()?;
+    find_by_thread_in(&dir, owner, provider, thread_id)
+}
+
+fn find_by_thread_in(dir: &Path, owner: &str, provider: &str, thread_id: &str) -> Option<AiSession> {
     for entry in fs::read_dir(dir).ok()?.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext != "json") { continue; }
+        if !path.extension().is_some_and(|ext| ext == "json") { continue; }
+        if let Ok(cache) = meta_cache().lock() {
+            if let Some(cached) = cache.get(&path) {
+                if cached.owner != owner || cached.meta.provider != provider { continue; }
+            }
+        }
         let Ok(bytes) = fs::read(&path) else { continue };
         let Ok(header) = serde_json::from_slice::<ThreadMatchHeader>(&bytes) else { continue };
         if header.owner != owner || header.provider != provider || header.thread_id.as_deref() != Some(thread_id) { continue; }
@@ -1588,8 +1639,19 @@ fn update(cell: &Cell, action: impl FnOnce(&mut AiSession)) {
     emit_update(cell);
 }
 fn update_usage(cell: &Cell, action: impl FnOnce(&mut AiSession) -> bool) {
-    if let Ok(mut data) = cell.data.lock() { if action(&mut data) { touch(&mut data); } }
-    emit_update(cell);
+    let changed = if let Ok(mut data) = cell.data.lock() {
+        if action(&mut data) {
+            touch(&mut data);
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    if changed {
+        emit_update(cell);
+    }
 }
 fn message(cell: &Cell, key: &str, role: &str, text: &str, append: bool) {
     if text.is_empty() { return; }
@@ -1981,14 +2043,18 @@ impl Drop for Process {
         // 子进程句柄无法从 Drop 中直接 move，因此由 Option 槽位先原子摘出。
         let (Some(child), Some(tree)) = (self.0.take(), self.1.take()) else { return; };
         let terminated = self.2;
-        let _ = thread::Builder::new().name("ai-process-reap".into()).spawn(move || {
+        RUNNING.fetch_add(1, Ordering::Relaxed);
+        if thread::Builder::new().name("ai-process-reap".into()).spawn(move || {
+            let _task = RunningTask;
             let mut process = Process(Some(child), Some(tree), terminated);
             process.terminate();
             if let Some(child) = process.0.as_mut() { let _ = child.wait(); }
             // 已回收的句柄在当前线程释放，避免再次触发回收线程。
             process.0.take();
             process.1.take();
-        });
+        }).is_err() {
+            RUNNING.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }
 fn cli_command(provider: &str) -> Command {
@@ -2469,7 +2535,19 @@ fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, va
         state.response_completed = false;
     }
     update_usage(cell, |data| state.usage.observe(data, value));
-    if let Some(id) = value["session_id"].as_str() { update(cell, |data| data.thread_id = Some(id.into())); }
+    if let Some(id) = value["session_id"].as_str() {
+        let mut changed = false;
+        if let Ok(mut data) = cell.data.lock() {
+            if data.thread_id.as_deref() != Some(id) {
+                data.thread_id = Some(id.into());
+                touch(&mut data);
+                changed = true;
+            }
+        }
+        if changed {
+            emit_update(cell);
+        }
+    }
     match value["type"].as_str().unwrap_or("") {
         "stream_event" => state.stream(cell, turn, value),
         "assistant" => state.assistant(cell, turn, value),
@@ -2860,6 +2938,7 @@ fn run_claude(cell: &Cell, process: &Mutex<Process>, stdin: ChildStdin, controls
     loop {
         signal.check()?;
         while let Ok(event) = hooks.receiver.try_recv() {
+            let settled = matches!(event, NativeHookEvent::Settled(_));
             update(cell, |data| match event {
                 NativeHookEvent::Decision(event) => {
                     if data.status != "stopping" && !data.approvals.iter().any(|item| item.id == event.decision_id) {
@@ -2872,6 +2951,11 @@ fn run_claude(cell: &Cell, process: &Mutex<Process>, stdin: ChildStdin, controls
                     if data.status == "approval" && data.approvals.is_empty() { data.status = "running".into(); }
                 }
             });
+            if settled {
+                let now = Instant::now();
+                last_event = now;
+                turn_progress = now;
+            }
         }
         while let Ok(control) = controls.try_recv() {
             match control {
@@ -2894,7 +2978,9 @@ fn run_claude(cell: &Cell, process: &Mutex<Process>, stdin: ChildStdin, controls
                     if pending.is_empty() {
                         pending_results = pending_results.saturating_add(1);
                     }
-                    last_event = Instant::now();
+                    let now = Instant::now();
+                    last_event = now;
+                    turn_progress = now;
                 }
                 Control::Approval(answer) => {
                     if let Some(request) = pending.remove(&answer.approval_id) {
@@ -2904,7 +2990,9 @@ fn run_claude(cell: &Cell, process: &Mutex<Process>, stdin: ChildStdin, controls
                             data.approvals.retain(|a| a.id != answer.approval_id);
                             if data.approvals.is_empty() { data.status = "running".into(); }
                         });
-                        last_event = Instant::now();
+                        let now = Instant::now();
+                        last_event = now;
+                        turn_progress = now;
                     }
                 }
             }
@@ -3310,7 +3398,7 @@ fn codex_status(cell: &Cell, state: &CodexOutputState, background: &CodexBackgro
 }
 fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permissions: &super::ai_permission_service::NativePermissions, stdin: &mut impl Write,
     controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>, worker_id: u64, signal: &WorkerSignal) -> Result<WorkerExit> {
-    let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
+    let mut checkpoint = Instant::now(); let mut turn = Uuid::new_v4().to_string();
     let mut last_persisted = session.revision;
     let mut pending: HashMap<String, (Value, String)> = HashMap::new();
     let mut state = CodexOutputState { thread_id: session.thread_id.clone(), ..Default::default() };
@@ -3346,6 +3434,10 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
                         super::ai_permission_service::for_agent("codex")?.apply_turn(&mut params);
                         turn_request = Some(codex_request(stdin, &mut next_id, "turn/start", params)?);
                     } else {
+                        turn = Uuid::new_v4().to_string();
+                        state.completed_items.clear();
+                        state.commands.retain(|_, cmd| cmd.running);
+                        background.completed_items.clear();
                         state.usage = usage::CodexUsageTracker::default();
                         if let Ok(mut data) = cell.data.lock() { usage::begin_turn(&mut data); state.usage.start(&mut data); }
                         let permissions = super::ai_permission_service::for_agent("codex")?;
@@ -3378,6 +3470,10 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
         if state.thread_id.is_some() && resume_request.is_none() && turn_request.is_none() && settle_at.is_none() {
             if let Some(next) = take_pending_if_idle(cell)? {
                 let Some(id) = state.thread_id.clone() else { continue };
+                turn = Uuid::new_v4().to_string();
+                state.completed_items.clear();
+                state.commands.retain(|_, cmd| cmd.running);
+                background.completed_items.clear();
                 request_id = Some(next.request_id.clone());
                 state.usage = usage::CodexUsageTracker::default();
                 if let Ok(mut data) = cell.data.lock() { usage::begin_turn(&mut data); state.usage.start(&mut data); }
@@ -3520,7 +3616,10 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
         if state.finished && (completed || method == "thread/tokenUsage/updated" && state.accepts(params)) {
             update(cell, |data| state.usage.completed(data));
         }
-        if completed { settle_at = Some(Instant::now() + Duration::from_millis(300)); }
+        if completed {
+            state.commands.retain(|_, cmd| cmd.running);
+            settle_at = Some(Instant::now() + Duration::from_millis(300));
+        }
         codex_status(cell, &state, &background, request_id.as_deref(), resume_request.is_some() || turn_request.is_some() || settle_at.is_some());
         if completed { refresh_title(cell, true); persist(cell)?; }
         // turn/completed 仅结束主回合；后台任务继续接收输出，完全空闲后按设置回收进程。
@@ -3534,7 +3633,12 @@ pub fn shutdown_all() {
         if let Ok(control) = cell.control.lock() {
             if let Some(worker) = control.as_ref() {
                 let idle = cell.data.lock().map(|data| data.status == "idle").unwrap_or(false);
-                let _ = worker.tx.send(if idle { Control::Retire } else { Control::Stop });
+                if idle {
+                    let _ = worker.tx.send(Control::Retire);
+                } else {
+                    worker.signal.stop();
+                    let _ = worker.tx.send(Control::Stop);
+                }
             }
         }
     }
@@ -4988,5 +5092,25 @@ mod interrupt_notice_tests {
         ] {
             assert!(!is_interrupt_notice(text), "不应误判为中断：{text}");
         }
+    }
+
+    #[test]
+    fn find_by_thread_in_ignores_extensionless_and_non_json_files() {
+        let dir = std::env::temp_dir().join(format!("tb-find-thread-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let valid = serde_json::json!({
+            "id": "s-1", "title": "t", "provider": "claude", "projectPath": "/p",
+            "status": "idle", "messages": [], "approvals": [], "createdAt": 1, "updatedAt": 1,
+            "revision": 1, "resultRevision": 0, "owner": "pc", "threadId": "th-1"
+        });
+        std::fs::write(dir.join("extensionless"), serde_json::to_vec(&valid).unwrap()).unwrap();
+        std::fs::write(dir.join("other.txt"), serde_json::to_vec(&valid).unwrap()).unwrap();
+        assert!(super::find_by_thread_in(&dir, "pc", "claude", "th-1").is_none());
+        std::fs::write(dir.join("s-1.json"), serde_json::to_vec(&valid).unwrap()).unwrap();
+        assert_eq!(
+            super::find_by_thread_in(&dir, "pc", "claude", "th-1").map(|s| s.id).as_deref(),
+            Some("s-1")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
