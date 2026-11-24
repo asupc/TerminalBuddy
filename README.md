@@ -459,8 +459,8 @@ npm run tauri build
 
 - **Docker 服务器部署**：在电脑或手机浏览器中使用与桌面同款的功能，详见 [DEPLOY_README.md](DEPLOY_README.md) 与 [docs/Docker与完整网页界面.md](docs/Docker与完整网页界面.md)；
 - **飞牛 fnOS 一键部署**：执行 `./xcj/deploy-fnos.sh` 将 TerminalBuddy 部署到飞牛 NAS，默认在开发机本机构建镜像后上传（需 Docker；构建复用 BuildKit 层缓存），飞牛只负责载入镜像与重建容器，内置写入探测、健康检查与失败自动回退；
-- **Linux 交叉编译 Windows 单文件 exe**：仓库根目录执行 `./xcj/build-windows-exe.sh`，在 Linux 本机使用 cargo-xwin 交叉编译（首次自动补齐 Rust / cargo-xwin 与 `~/.cache/terminal-buddy/xwin` 下的 Windows SDK 缓存），产出 `dist/` 下的单文件 exe 与 `.sha256` 校验；构建成功后自动归档到 `/mnt/fnos/code/`（不可用时保留在 `dist/`）；
-- **Android 客户端构建**：Linux 上在仓库根目录执行 `./xcj/build-android.sh`，在本机使用 JDK 17+、Android SDK 36 与 Gradle 构建 Release APK（首次自动下载 SDK 到 `~/.android-sdk`），并用 apksigner 校验签名；产出 `dist/` 下的 APK 与 `.sha256`，构建成功后自动归档到 `/mnt/fnos/code/`（不可用时保留在 `dist/`）。也可 `cd android && ./gradlew :app:assembleDebug`（详见 [android/README.md](android/README.md)），Windows 直装设备用 `scripts/build-android.bat`。
+- **Linux 交叉编译 Windows 单文件 exe**：仓库根目录执行 `./xcj/build-windows-exe.sh`，在 Linux 本机使用 cargo-xwin 交叉编译（首次自动补齐 Rust / cargo-xwin 与 `~/.cache/terminal-buddy/xwin` 下的 Windows SDK 缓存），产出 `dist/` 下的单文件 exe（不生成 `.sha256`）；构建成功后自动归档到 `/mnt/fnos/code/`（不可用时保留在 `dist/`）；
+- **Android 客户端构建**：Linux 上在仓库根目录执行 `./xcj/build-android.sh`，在本机使用 JDK 17+、Android SDK 36 与 Gradle 构建 Release APK（首次自动下载 SDK 到 `~/.android-sdk`），并用 apksigner 校验签名；产出 `dist/` 下的 APK（不生成 `.sha256`），构建成功后自动归档到 `/mnt/fnos/code/`（不可用时保留在 `dist/`）。也可 `cd android && ./gradlew :app:assembleDebug`（详见 [android/README.md](android/README.md)），Windows 直装设备用 `scripts/build-android.bat`。
 
 ---
 ## 八、安全与隐私设计

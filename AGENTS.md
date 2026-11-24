@@ -47,7 +47,7 @@ cd src-tauri && cargo test --lib         # Rust 单元测试（53 个含单测�
 - **用户入口 sh 脚本统一放在 `xcj/`**（2026-11 起约定）：
   - `xcj/update.sh`：统一更新入口（`local` 更新本机 `/opt/terminal-buddy` systemd 服务，支持在网页终端内通过 `systemd-run` 脱离 cgroup 后台完成重启/健康检查/失败回滚；`fnos` 复用 `deploy-fnos.sh`；默认 `all`）。
   - `xcj/deploy-fnos.sh` / `xcj/deploy-centos.sh`：Docker 服务端一键部署（飞牛 fnOS 本机构建镜像推送；CentOS 默认传源码远端构建）。
-  - `xcj/build-windows-exe.sh`：Linux **本机**通过 `cargo-xwin` 交叉编译 Windows 单文件 exe（不走 Docker；自动补齐 `rustup`/`cargo-xwin`/系统包与 `~/.cache/terminal-buddy/xwin` 缓存，产物落仓库根 `dist/` 并附 `.sha256`，成功后移动到 `/mnt/fnos/code/`，不可用时留在 `dist/`；不产安装包，安装包在 Windows 用 `terminal-buddy/build.bat`）。
+  - `xcj/build-windows-exe.sh`：Linux **本机**通过 `cargo-xwin` 交叉编译 Windows 单文件 exe（不走 Docker；自动补齐 `rustup`/`cargo-xwin`/系统包与 `~/.cache/terminal-buddy/xwin` 缓存，产物落仓库根 `dist/`，成功后移动到 `/mnt/fnos/code/`，不可用时留在 `dist/`；不生成 `.sha256`；不产安装包，安装包在 Windows 用 `terminal-buddy/build.bat`）。
   - `xcj/build-android.sh`：Linux **本机**编译并 `apksigner` 校验 Release APK（JDK 17 + Android SDK 36 首次自动下载至 `~/.android-sdk`；构建前自增 `android/app/build.gradle.kts` 的 `versionName`/`versionCode`，失败自动回退，结束后清理 Gradle/Kotlin JVM；产物同样落 `dist/` 后尝试移动 `/mnt/fnos/code/`）。
   - `xcj/remote-build.sh`：将源码通过 `tar-over-ssh` 同步至远端构建主机（默认 `debian99`）执行 `build-windows-exe.sh` / `build-android.sh` 后回传 `dist/`。
 - **其余脚本仍在 `scripts/`**：Windows 入口 `scripts/dev.bat`（直接启动 `tauri dev`）、`scripts/build-android.bat` / `scripts/build-android.ps1`（Windows 编译签名 APK 并 adb 安装启动）、`scripts/startDockerServer.bat`、远端目标执行脚本 `scripts/deploy-*-remote.sh` 以及旧路径兼容转发脚本。
