@@ -149,8 +149,13 @@ export const CommandsSettings: FC<CommandsSettingsProps> = ({ askConfirm, dismis
     const key = command.command.trim();
     const override = overrideFor(key);
     const next = { ...overrides };
-    if (override?.hidden) delete next[key];
-    else next[key] = { ...override, hidden: true };
+    if (override?.hidden) {
+      const { hidden: _, ...rest } = override;
+      if (Object.keys(rest).length > 0) next[key] = rest;
+      else delete next[key];
+    } else {
+      next[key] = { ...override, hidden: true };
+    }
     updateOverrides(next);
   };
 

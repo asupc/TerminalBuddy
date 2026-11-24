@@ -18,7 +18,7 @@ let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
 /** 进行中的写入 promise：flush 时 await 它，保证退出前最后一次保存真正落盘。 */
 let _saveTabsInFlight: Promise<void> = Promise.resolve();
 
-function debouncedSaveTabs() {
+export function debouncedSaveTabs() {
 	if (_saveTabsTimer) clearTimeout(_saveTabsTimer);
 	_saveTabsTimer = setTimeout(() => {
 		_saveTabsTimer = null;
@@ -467,13 +467,6 @@ export const createSessionsSlice = (
 					? { ...state.claudeSessionIds, [sessionId]: binding.sessionId }
 					: state.claudeSessionIds,
 			};
-		}),
-	clearAgentSessionBinding: (sessionId) =>
-		set((state) => {
-			if (!state.agentSessionBindings[sessionId]) return state;
-			const agentSessionBindings = { ...state.agentSessionBindings };
-			delete agentSessionBindings[sessionId];
-			return { agentSessionBindings };
 		}),
 	terminalActivities: {},
 	terminalWebTakeovers: {},

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { UnlistenFn } from './../../services/remoteWorkspace/events';
 import { History, LoaderCircle, Square } from 'lucide-react';
 import { Dialog } from '../shared/Dialog';
@@ -35,23 +35,39 @@ export function ScheduledTaskRunsDialog({ task, onClose, onChanged }: ScheduledT
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyRun, setBusyRun] = useState<string | null>(null);
+  const loadSeqRef = useRef(0);
+  const unmountedRef = useRef(false);
+
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      loadSeqRef.current += 1;
+    };
+  }, []);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     try {
       const next = await scheduledTaskRuns(task.id, 100);
+      if (unmountedRef.current || seq !== loadSeqRef.current) return;
       setRuns(next);
       setError(null);
     } catch (reason) {
+      if (unmountedRef.current || seq !== loadSeqRef.current) return;
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      setLoading(false);
+      if (!unmountedRef.current && seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, [task.id]);
 
+  const hasActiveRuns = runs.some(isActiveRun);
+
   useEffect(() => {
+    setLoading(true);
     void load();
-    // 运行中需要看到状态流转；频率与后端轮询一致。
-    const timer = window.setInterval(() => { void load(); }, 5_000);
     let cancelled = false;
     const unlisteners: UnlistenFn[] = [];
     void listenTauri<ScheduledTaskRunEvent>(SCHEDULED_TASK_RUN_EVENT, event => {
@@ -62,10 +78,19 @@ export function ScheduledTaskRunsDialog({ task, onClose, onChanged }: ScheduledT
     });
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      loadSeqRef.current += 1;
       unlisteners.forEach(unlisten => unlisten());
     };
   }, [load, task.id]);
+
+  useEffect(() => {
+    if (!hasActiveRuns) return;
+    // 仅存在运行中记录且页面可见时启用 5s 兜底轮询，空闲完全由事件驱动。
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void load();
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveRuns, load]);
 
   const stopRun = async (run: ScheduledRun) => {
     setBusyRun(run.id);

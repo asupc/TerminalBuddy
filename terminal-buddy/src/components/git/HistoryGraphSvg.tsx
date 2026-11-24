@@ -1,4 +1,4 @@
-import type { FC, ReactElement } from 'react';
+import { memo, type FC, type ReactElement } from 'react';
 import {
   CIRCLE_RADIUS,
   CIRCLE_STROKE_WIDTH,
@@ -59,7 +59,7 @@ function renderNodeCircles(kind: HistoryGraphKind, isMerge: boolean, circleX: nu
   ];
 }
 
-export const HistoryGraphSvg: FC<HistoryGraphSvgProps> = ({ viewModel }) => {
+export const HistoryGraphSvg: FC<HistoryGraphSvgProps> = memo(({ viewModel }) => {
   const { commit, inputSwimlanes, outputSwimlanes } = viewModel;
   const laneCount = Math.max(inputSwimlanes.length, outputSwimlanes.length, 1);
   const width = SWIMLANE_WIDTH * (laneCount + 1);
@@ -166,4 +166,4 @@ export const HistoryGraphSvg: FC<HistoryGraphSvgProps> = ({ viewModel }) => {
       {renderNodeCircles(viewModel.kind, commit.parents.length > 1, circleX, centerY, circleColor)}
     </svg>
   );
-};
+});

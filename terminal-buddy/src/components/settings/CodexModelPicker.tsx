@@ -18,12 +18,26 @@ export function CodexModelPicker({ models, selected, reasoningEfforts, defaultMo
   onChange: (selected: string[], defaultModel: string, reasoningEfforts: string[]) => void;
 }) {
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const rowKeySeed = useRef(0);
+  const newRowKey = () => `codex-model-row-${++rowKeySeed.current}`;
+  const rowKeysRef = useRef<string[]>(selected.map(() => newRowKey()));
+  if (rowKeysRef.current.length !== selected.length) {
+    const resized = rowKeysRef.current.slice(0, selected.length);
+    while (resized.length < selected.length) resized.push(newRowKey());
+    rowKeysRef.current = resized;
+  }
 
   const update = (next: string[], preferred = defaultModel, efforts = reasoningEfforts) => {
     const ids = next.map(id => id.trim()).filter(Boolean);
     onChange(next, ids.includes(preferred) ? preferred : ids[0] ?? '', efforts);
   };
   const { containerRef, startDrag, dragClass } = useDragReorder((from, to) => {
+    const nextKeys = [...rowKeysRef.current];
+    const [movedKey] = nextKeys.splice(from, 1);
+    if (movedKey) {
+      nextKeys.splice(to, 0, movedKey);
+      rowKeysRef.current = nextKeys;
+    }
     const next = [...selected];
     const [moved] = next.splice(from, 1);
     if (moved === undefined) return;
@@ -39,6 +53,7 @@ export function CodexModelPicker({ models, selected, reasoningEfforts, defaultMo
     update(next, selected[index].trim() === defaultModel ? value.trim() : defaultModel);
   };
   const addRow = () => {
+    rowKeysRef.current = [...rowKeysRef.current, newRowKey()];
     update([...selected, ''], defaultModel, [...reasoningEfforts, 'max']);
     requestAnimationFrame(() => inputRefs.current[selected.length]?.focus());
   };
@@ -58,7 +73,7 @@ export function CodexModelPicker({ models, selected, reasoningEfforts, defaultMo
       </div>
       {selected.length > 0 && <div className="codex-model-list" ref={containerRef}>
         {selected.map((id, index) => (
-          <div className={`codex-model-entry model-drag-row${dragClass(index)}`} key={index} data-drag-index={index}>
+          <div className={`codex-model-entry model-drag-row${dragClass(index)}`} key={rowKeysRef.current[index] ?? index} data-drag-index={index}>
             <div className="codex-model-input-row">
               <span className="model-drag-handle" role="button" tabIndex={0} title="拖拽排序"
                 aria-label={`拖拽排序模型 ${index + 1}`}
@@ -83,7 +98,10 @@ export function CodexModelPicker({ models, selected, reasoningEfforts, defaultMo
                 {id.trim() && defaultModel === id.trim() ? '默认模型' : '设为默认'}
               </button>
               <button type="button" className={`${buttonClass} danger`} disabled={disabled} aria-label={`删除模型 ${index + 1}`}
-                onClick={() => { update(selected.filter((_, i) => i !== index), defaultModel, reasoningEfforts.filter((_, i) => i !== index)); }}><Trash2 size={14} /></button>
+                onClick={() => {
+                  rowKeysRef.current = rowKeysRef.current.filter((_, i) => i !== index);
+                  update(selected.filter((_, i) => i !== index), defaultModel, reasoningEfforts.filter((_, i) => i !== index));
+                }}><Trash2 size={14} /></button>
             </div>
           </div>
         ))}

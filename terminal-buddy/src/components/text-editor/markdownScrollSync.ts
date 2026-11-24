@@ -36,6 +36,11 @@ interface ElementBounds {
 
 export class MarkdownScrollSync {
   readonly lines: CodeLineElement[];
+  private visibleLinesCache: CodeLineElement[] | null = null;
+  private cachedScrollHeight = -1;
+  private cachedClientWidth = -1;
+  private cachedDetailsSignature = '';
+  private readonly detailsElements: HTMLDetailsElement[];
 
   constructor(private readonly scrollContainer: HTMLElement) {
     this.lines = [new CodeLineElement(this.getMarkdownBody(), -1)];
@@ -56,6 +61,7 @@ export class MarkdownScrollSync {
         this.lines.push(new CodeLineElement(element, line));
       }
     }
+    this.detailsElements = Array.from(this.scrollContainer.querySelectorAll('details'));
   }
 
   scrollToRevealSourceLine(line: number): void {
@@ -145,11 +151,31 @@ export class MarkdownScrollSync {
     return { previous };
   }
 
+  private getVisibleLines(): CodeLineElement[] {
+    const { scrollHeight, clientWidth } = this.scrollContainer;
+    const detailsSignature = this.detailsElements.length === 0
+      ? ''
+      : this.detailsElements.map(node => (node.open ? '1' : '0')).join('');
+    if (
+      this.visibleLinesCache
+      && this.cachedScrollHeight === scrollHeight
+      && this.cachedClientWidth === clientWidth
+      && this.cachedDetailsSignature === detailsSignature
+    ) {
+      return this.visibleLinesCache;
+    }
+    this.cachedScrollHeight = scrollHeight;
+    this.cachedClientWidth = clientWidth;
+    this.cachedDetailsSignature = detailsSignature;
+    this.visibleLinesCache = this.lines.filter(line => line.isVisible);
+    return this.visibleLinesCache;
+  }
+
   private getLineElementsAtViewportTop(): {
     previous: CodeLineElement;
     next?: CodeLineElement;
   } {
-    const visibleLines = this.lines.filter(line => line.isVisible);
+    const visibleLines = this.getVisibleLines();
     let low = -1;
     let high = visibleLines.length - 1;
     while (low + 1 < high) {

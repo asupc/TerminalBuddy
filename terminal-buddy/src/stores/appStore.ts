@@ -479,7 +479,6 @@ export interface AppState {
 	// 统一 Agent 会话绑定
 	agentSessionBindings: Record<string, AgentSessionBinding>;
 	setAgentSessionBinding: (sessionId: string, binding: AgentSessionBinding) => void;
-	clearAgentSessionBinding: (sessionId: string) => void;
 
 	// Unified terminal activity. Claude Hook becomes authoritative after first valid event.
 	terminalActivities: Record<string, TerminalActivityState>;

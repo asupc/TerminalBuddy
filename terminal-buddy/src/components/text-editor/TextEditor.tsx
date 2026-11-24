@@ -136,6 +136,18 @@ export const TextEditor: FC<TextEditorProps> = memo(({
   const notifiedModTimeRef = useRef(0);
   const diffDiskContentRef = useRef<string | null>(null);
   const isMarkdown = isMarkdownFile(filePath);
+  const isMarkdownRef = useRef(isMarkdown);
+  isMarkdownRef.current = isMarkdown;
+  const loadSeqRef = useRef(0);
+  const unmountedRef = useRef(false);
+
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      loadSeqRef.current += 1;
+    };
+  }, []);
 
   isDirtyRef.current = isDirty;
   diffDiskContentRef.current = diffDiskContent;
@@ -144,17 +156,23 @@ export const TextEditor: FC<TextEditorProps> = memo(({
     onDirtyChange?.(dirty);
     if (sessionId !== undefined) onSessionDirtyChange?.(sessionId, dirty);
   }, [onDirtyChange, onSessionDirtyChange, sessionId]);
+  const reportDirtyRef = useRef(reportDirty);
+  reportDirtyRef.current = reportDirty;
 
   const loadFileContent = useCallback(async (forceReload = false) => {
+    const seq = ++loadSeqRef.current;
+    const targetPath = filePath;
     try {
       // 先取 meta 再读内容：若文件在两步之间被外部修改，记录的 mtime 落后于磁盘，
       // 下次轮询仍会发现并重载；反过来（记新 mtime 留旧内容）会造成漏检。
-      const meta = await getFileMeta(filePath);
+      const meta = await getFileMeta(targetPath);
+      if (seq !== loadSeqRef.current) return;
       if (!forceReload && diskMetaRef.current.lastModified !== 0
         && meta.lastModified === diskMetaRef.current.lastModified && meta.size === diskMetaRef.current.size) {
         return;
       }
-      const text = await readFileContent(filePath);
+      const text = await readFileContent(targetPath);
+      if (seq !== loadSeqRef.current) return;
       diskMetaRef.current = meta;
       lastLoadedContentRef.current = text;
 
@@ -179,6 +197,7 @@ export const TextEditor: FC<TextEditorProps> = memo(({
       setDiffDiskContent(null);
       notifiedModTimeRef.current = 0;
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       setError(String(err));
       setContent(null);
     }
@@ -456,10 +475,13 @@ export const TextEditor: FC<TextEditorProps> = memo(({
     }));
 
     const showSaveNotify = (type: 'saving' | 'success' | 'error', msg: string) => {
+      if (unmountedRef.current) return;
       if (saveNotifyTimerRef.current) clearTimeout(saveNotifyTimerRef.current);
       setSaveNotify({ type, msg });
       if (type !== 'saving') {
-        saveNotifyTimerRef.current = setTimeout(() => setSaveNotify(null), 3000);
+        saveNotifyTimerRef.current = setTimeout(() => {
+          if (!unmountedRef.current) setSaveNotify(null);
+        }, 3000);
       }
     };
 
@@ -470,11 +492,12 @@ export const TextEditor: FC<TextEditorProps> = memo(({
       run: async (ed) => {
         const value = ed.getValue();
         try {
-          let savePath = filePath;
+          const currentPath = filePathRef.current;
+          let savePath = currentPath;
           let isNewSave = false;
 
           // If this is a draft file, prompt for save location
-          if (isDraft) {
+          if (isDraftRef.current) {
             const savedPath = await saveDialog({
               defaultPath: '未命名.txt',
               filters: [{ name: '文本文件', extensions: ['txt'] }, { name: '所有文件', extensions: ['*'] }],
@@ -490,22 +513,24 @@ export const TextEditor: FC<TextEditorProps> = memo(({
           // 必须在进入 SSH 上传等长等待之前执行，否则等待期内的输入会被
           // 收尾处的 onDirtyChange(false) 误标为已保存（关标签即丢内容）。
           lastLoadedContentRef.current = value;
-          reportDirty(ed.getValue() === value);
+          reportDirtyRef.current(ed.getValue() !== value);
           const savedMeta = await getFileMeta(savePath).catch(() => null);
           if (savedMeta) diskMetaRef.current = savedMeta;
-          setConflictNotice(false);
-          setDiffDiskContent(null);
+          if (!unmountedRef.current) {
+            setConflictNotice(false);
+            setDiffDiskContent(null);
+          }
           notifiedModTimeRef.current = 0;
 
           // If this was a draft that was saved to a new location, clean up
           if (isNewSave) {
             // Remove draft file and update draft index
             const { removeDraftFile, updateSession } = useAppStore.getState();
-            await removeDraftFile(filePath);
+            await removeDraftFile(currentPath);
 
             // Update session with new path and name
             const session = useAppStore.getState().sessions.find(
-              s => s.sessionType === 'editor' && s.profileId === filePath
+              s => s.sessionType === 'editor' && s.profileId === currentPath
             );
             if (session) {
               const fileName = savePath.split(/[/\\]/).pop() || '未命名';
@@ -522,45 +547,67 @@ export const TextEditor: FC<TextEditorProps> = memo(({
           if (session?.sshRemotePath && session?.sshTerminalId) {
             showSaveNotify('saving', '正在上传到服务器...');
             const transferId = crypto.randomUUID();
-            try {
-              const terminalSession = useAppStore.getState().sessions.find(s => s.id === session.sshTerminalId);
-              await remoteUpload(session.sshTerminalId, savePath, session.sshRemotePath, transferId, terminalSession?.profileId || '');
-            } catch (uploadErr) {
-              showSaveNotify('error', '上传失败: ' + String(uploadErr));
-              return;
-            }
-            // Wait for async upload to complete
-            await new Promise<void>((resolve) => {
-              let done = false;
-              let unlistenProgress: (() => void) | undefined;
-              let unlistenError: (() => void) | undefined;
-              const finish = () => { unlistenProgress?.(); unlistenError?.(); resolve(); };
+            // 先挂接传输监听再发起上传，避免秒传 100% 事件早于监听注册而超时
+            let done = false;
+            let settled = false;
+            let unlistenProgress: (() => void) | undefined;
+            let unlistenError: (() => void) | undefined;
+            let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+            let resolveUpload!: () => void;
+            const uploadDone = new Promise<void>((resolve) => {
+              resolveUpload = resolve;
+            });
+            const finish = () => {
+              if (settled) return;
+              settled = true;
+              if (timeoutTimer) {
+                clearTimeout(timeoutTimer);
+                timeoutTimer = null;
+              }
+              unlistenProgress?.();
+              unlistenError?.();
+              resolveUpload();
+            };
 
+            const listenReady = Promise.all([
               onTransferProgress((progress) => {
                 if (progress.transferId === transferId && progress.percent >= 100 && !done) {
                   done = true;
                   showSaveNotify('success', '已保存并上传到服务器');
                   finish();
                 }
-              }).then(fn => { unlistenProgress = fn; if (done) fn(); });
-
+              }).then(fn => { unlistenProgress = fn; if (done) fn(); }),
               onTransferError((evt) => {
                 if (evt.transferId === transferId && !done) {
                   done = true;
                   showSaveNotify('error', '上传失败: ' + evt.error);
                   finish();
                 }
-              }).then(fn => { unlistenError = fn; if (done) fn(); });
+              }).then(fn => { unlistenError = fn; if (done) fn(); }),
+            ]);
 
+            try {
+              await listenReady;
+              const terminalSession = useAppStore.getState().sessions.find(s => s.id === session.sshTerminalId);
+              await remoteUpload(session.sshTerminalId, savePath, session.sshRemotePath, transferId, terminalSession?.profileId || '');
+            } catch (uploadErr) {
+              done = true;
+              finish();
+              showSaveNotify('error', '上传失败: ' + String(uploadErr));
+              return;
+            }
+
+            if (!done) {
               // Timeout fallback（本地已保存，超时只影响上传确认，给出明确提示）
-              setTimeout(() => {
+              timeoutTimer = setTimeout(() => {
                 if (!done) {
                   done = true;
                   showSaveNotify('error', '上传超时：本地已保存，请在传输面板确认上传结果');
                   finish();
                 }
               }, 30000);
-            });
+            }
+            await uploadDone;
           } else {
             showSaveNotify('success', '已保存');
           }
@@ -571,14 +618,15 @@ export const TextEditor: FC<TextEditorProps> = memo(({
       },
     }));
 
-    if (isMarkdown) {
-      editorDisposablesRef.current.push(editor.addAction({
-        id: 'cycle-markdown-view',
-        label: '切换 Markdown 视图（源码/分屏/预览）',
-        keybindings: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyV],
-        run: () => setMarkdownViewMode(cycleMarkdownViewMode),
-      }));
-    }
+    editorDisposablesRef.current.push(editor.addAction({
+      id: 'cycle-markdown-view',
+      label: '切换 Markdown 视图（源码/分屏/预览）',
+      keybindings: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyV],
+      run: () => {
+        if (!isMarkdownRef.current) return;
+        setMarkdownViewMode(cycleMarkdownViewMode);
+      },
+    }));
 
     editorDisposablesRef.current.push(editor.addAction({
       id: 'format-document',
@@ -592,11 +640,11 @@ export const TextEditor: FC<TextEditorProps> = memo(({
     editorDisposablesRef.current.push(editor.onDidChangeModelContent(() => {
       if (!isInternalUpdateRef.current) {
         // 与最后加载/保存的内容比较，undo 回到原样时 dirty 也随之恢复为 false
-        reportDirty(editor.getValue() !== lastLoadedContentRef.current);
+        reportDirtyRef.current(editor.getValue() !== lastLoadedContentRef.current);
       }
       isInternalUpdateRef.current = false;
     }));
-  }, [filePath, isDraft, isMarkdown, reportDirty]);
+  }, []);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();

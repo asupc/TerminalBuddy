@@ -96,18 +96,27 @@ export function useDragDrop(opts: UseDragDropOptions) {
 
     const handleMouseMove = (e: MouseEvent) => {
       const paths = useAppStore.getState().dragPaths;
-      if (!paths || !optsRef.current.isActiveRef.current) return;
+      if (!paths || !optsRef.current.isActiveRef.current) {
+        setInternalDragOver(false);
+        return;
+      }
       const rect = el.getBoundingClientRect();
       const inside = e.clientX >= rect.left && e.clientX <= rect.right
                   && e.clientY >= rect.top && e.clientY <= rect.bottom;
       setInternalDragOver(inside);
     };
 
+    const handleDocumentMouseUp = () => {
+      setInternalDragOver(false);
+    };
+
     el.addEventListener('mouseup', handleMouseUp);
     document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleDocumentMouseUp);
     return () => {
       el.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleDocumentMouseUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

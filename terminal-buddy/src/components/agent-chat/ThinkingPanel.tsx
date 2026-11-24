@@ -20,9 +20,8 @@ import type { AiThinking } from '../../services/tauri';
 /** 折叠态展示的字符上限：一行放不下就截断，避免撑高「思考中」气泡。 */
 const PEEK_LIMIT = 120;
 
-/** 展开状态的记忆键：面板会随「无思考」阶段卸载，展开与否跨挂载保留。 */
-const OPEN_KEY = 'thinking-panel';
-const thinkingOpen = new Map<string, boolean>();
+/** 展开状态记住：面板会随「无思考」阶段卸载，展开与否跨挂载保留。 */
+let thinkingOpen = false;
 
 /** 从思考正文里取「最新一句」：优先最后一个完整句子，其次最后一个非空行。 */
 export function thinkingPeek(text: string): string {
@@ -67,11 +66,11 @@ interface Props {
 }
 
 export const ThinkingPanel = memo(function ThinkingPanel({ thinking, running }: Props) {
-  // 展开状态用模块级 Map 记住：新段思考开始时组件不会卸载，但用户切走标签页、
+  // 展开状态用模块级变量记住：新段思考开始时组件不会卸载，但用户切走标签页、
   // 或在「无思考」的纯工具阶段面板返回 null 后重新挂载时，本地 state 会丢。
-  const [open, setOpenState] = useState(() => thinkingOpen.get(OPEN_KEY) ?? false);
+  const [open, setOpenState] = useState(() => thinkingOpen);
   const setOpen = (next: boolean) => {
-    thinkingOpen.set(OPEN_KEY, next);
+    thinkingOpen = next;
     setOpenState(next);
   };
   const bodyRef = useRef<HTMLPreElement>(null);

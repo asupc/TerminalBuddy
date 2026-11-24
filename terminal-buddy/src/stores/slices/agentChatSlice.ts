@@ -1,6 +1,6 @@
 import type { StoreApi } from "zustand";
 import type { AgentTab, AppState } from "../appStore";
-import { saveTabsToStorage } from "../appStore";
+import { debouncedSaveTabs, flushPendingSaveTabs } from "./sessionsSlice";
 import {
 	agentChatTabKey,
 	appendBackgroundTab,
@@ -8,20 +8,14 @@ import {
 	resolveCloseTabState,
 } from "../../utils/tabActivation";
 
-/** 聊天标签的落盘：打开/关闭立即写；标题/状态更新走防抖，避免每个流式帧都写 ClientData。 */
-let saveTimer: number | null = null;
+/** 聊天标签的落盘：统一委托给 sessionsSlice 的序列化写队列，并遵守 _skipSaveTabs 保护。 */
 const persistNow = (get: () => AppState) => {
-	if (saveTimer !== null) { window.clearTimeout(saveTimer); saveTimer = null; }
-	const state = get();
-	void saveTabsToStorage(state.sessions, state.activeSessionId);
+	if (get()._skipSaveTabs) return;
+	void flushPendingSaveTabs();
 };
 const schedulePersist = (get: () => AppState) => {
-	if (saveTimer !== null) window.clearTimeout(saveTimer);
-	saveTimer = window.setTimeout(() => {
-		saveTimer = null;
-		const state = get();
-		void saveTabsToStorage(state.sessions, state.activeSessionId);
-	}, 400);
+	if (get()._skipSaveTabs) return;
+	debouncedSaveTabs();
 };
 
 /**

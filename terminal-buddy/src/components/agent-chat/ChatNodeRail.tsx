@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * 输入节点导轨，移植自 ZCode `packages/ui/src/v4/ConversationTurnNavigator.tsx`：
@@ -71,7 +71,7 @@ function barVisual(index: number, focusIndex: number | null, activeIndex: number
   return { opacity: 0.58, scale: 1, focus: false };
 }
 
-export function ChatNodeRail({ nodes, activeId, onJump }: ChatNodeRailProps) {
+export const ChatNodeRail = memo(function ChatNodeRail({ nodes, activeId, onJump }: ChatNodeRailProps) {
   const railRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -210,4 +210,4 @@ export function ChatNodeRail({ nodes, activeId, onJump }: ChatNodeRailProps) {
       )}
     </nav>
   );
-}
+});

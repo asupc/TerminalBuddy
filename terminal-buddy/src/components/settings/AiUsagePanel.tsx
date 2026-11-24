@@ -1,4 +1,4 @@
-import { FC, useState, useEffect, useCallback, Fragment } from 'react';
+import { FC, useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { fetchZhipuUsage, fetchQianfanUsage, fetchDeepseekUsage, fetchMinimaxUsage, fetchArkUsage, tierDisplayName, utilizationColor, countdownStr, formatTokens, type AiUsageData, type DeepseekUsageData, type DeepseekDayUsage } from '../../services/aiUsage';
 import { getAppSettings } from '../../utils/settings';
 import './AiUsagePanel.css';
@@ -60,10 +60,6 @@ const DeepseekView: FC<{ data: DeepseekUsageData }> = ({ data }) => {
   if (!hasData) {
     return <span className="ai-usage-text">暂无数据</span>;
   }
-
-  const now = new Date();
-  const yd = new Date(now);
-  yd.setDate(yd.getDate() - 1);
 
   const normalTotal = data.normalWallets.reduce((s, w) => s + parseFloat(w.balance), 0);
   const bonusTotal = data.bonusWallets.reduce((s, w) => s + parseFloat(w.balance), 0);
@@ -129,23 +125,53 @@ const ProviderBlock: FC<ProviderBlockProps> = ({ cacheKey, label, fetchFn, isDee
   const cached = cache[cacheKey];
   const [data, setData] = useState<any>(cached?.data);
   const [refreshing, setRefreshing] = useState(!isCacheFresh(cached));
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const unmountedRef = useRef(false);
+
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
     setRefreshing(true);
     const start = Date.now();
-    const result = await fetchFn();
-    // 只缓存成功的结果，失败时清掉缓存以便下次重新拉取
-    if (result?.success) {
-      cache[cacheKey] = { data: result, timestamp: Date.now(), success: true };
-    } else {
+    try {
+      const result = await fetchFn();
+      if (unmountedRef.current) return;
+      // 只缓存成功的结果，失败时清掉缓存以便下次重新拉取
+      if (result?.success) {
+        cache[cacheKey] = { data: result, timestamp: Date.now(), success: true };
+      } else {
+        delete cache[cacheKey];
+      }
+      setData(result);
+    } catch (err) {
+      if (unmountedRef.current) return;
       delete cache[cacheKey];
-    }
-    setData(result);
-    const elapsed = Date.now() - start;
-    if (elapsed < 600) {
-      setTimeout(() => setRefreshing(false), 600 - elapsed);
-    } else {
-      setRefreshing(false);
+      setData({ success: false, error: String(err) });
+    } finally {
+      if (!unmountedRef.current) {
+        const elapsed = Date.now() - start;
+        if (elapsed < 600) {
+          timerRef.current = setTimeout(() => {
+            timerRef.current = null;
+            if (!unmountedRef.current) setRefreshing(false);
+          }, 600 - elapsed);
+        } else {
+          setRefreshing(false);
+        }
+      }
     }
   }, [cacheKey, fetchFn]);
 

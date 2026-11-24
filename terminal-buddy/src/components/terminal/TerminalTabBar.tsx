@@ -1,8 +1,8 @@
 import { terminalTabTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
-import { FC, useState, useEffect, useCallback, useRef } from 'react';
+import { FC, memo, RefObject, useState, useEffect, useCallback, useRef } from 'react';
 import { CalendarClock, FileDiff, FileText, GitBranch, History, SquareTerminal, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
-import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
+import { saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName, getNativeAgentLight } from '../../utils/claudeIndicator';
 import { AgentIcon } from '../agent-chat/AgentIcon';
@@ -10,23 +10,166 @@ import { parseClaudeRef } from '../../utils/claudeLaunch';
 import { parseCodexRef } from '../../utils/codexLaunch';
 import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
 import { isDockerClient } from '../../services/platform';
-import { ConfirmDialog } from '../shared/Dialog';
+import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { AgentTabContextMenu } from '../shell/AgentTabContextMenu';
+import { cleanupDraftFiles, useSessionCloseActions } from '../../hooks/useSessionCloseActions';
+import type { TerminalSession } from '../../types';
 import './TerminalTabBar.css';
+
+interface TerminalSessionTabItemProps {
+  session: TerminalSession;
+  isActive: boolean;
+  isRenaming: boolean;
+  renameValue: string;
+  renameInputRef: RefObject<HTMLInputElement | null>;
+  onRenameChange: (value: string) => void;
+  onCommitRename: (sessionId: string) => void;
+  onCancelRename: () => void;
+  onClose: (sessionId: string) => void;
+  onOpenContextMenu: (x: number, y: number, sessionId: string) => void;
+}
+
+/** 单标签订阅自身活动态与摘要，避免任意终端状态跳动导致全部标签重渲染 */
+const TerminalSessionTabItem = memo(function TerminalSessionTabItem({
+  session,
+  isActive,
+  isRenaming,
+  renameValue,
+  renameInputRef,
+  onRenameChange,
+  onCommitRename,
+  onCancelRename,
+  onClose,
+  onOpenContextMenu,
+}: TerminalSessionTabItemProps) {
+  const activity = useAppStore(s => s.terminalActivities[session.id]);
+  const takeover = useAppStore(s => s.terminalWebTakeovers[session.id]);
+  const profileStartupCommands = useAppStore(
+    useCallback(s => s.profiles.find(item => item.id === session.profileId)?.startupCommands, [session.profileId]),
+  );
+  const taskSummary = useTaskSummaryStore(s => s.summaries[session.id]);
+  const taskProvider = useTaskSummaryStore(s => s.providers[session.id]);
+  const tabTitle = terminalTabTitle(session.profileName, taskSummary, session.manualTitle);
+
+  return (
+    <div
+      className={`terminal-tab ${isActive ? 'active' : ''}`}
+      onClick={() => {
+        const store = useAppStore.getState();
+        if (store.splitMode !== 'off') {
+          if (!store.splitSlots.some(slot => slot.sessionId === session.id)) {
+            store.placeSessionInSplitSlot(session.id);
+          } else {
+            store.setActiveSession(session.id);
+          }
+        } else {
+          store.setActiveSession(session.id);
+        }
+      }}
+      onAuxClick={(e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          onClose(session.id);
+        }
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onOpenContextMenu(e.clientX, e.clientY, session.id);
+      }}
+    >
+      {session.sessionType === 'editor' ? (
+        <FileText className="tab-file-icon" aria-hidden="true" />
+      ) : (() => {
+        const light = getIndicatorLight(activity);
+        return (
+          <span
+            className={`terminal-tab-dot${getIndicatorClassName(light)}`}
+            style={{ background: getIndicatorColor(light, session.tabColor) }}
+            title={getIndicatorTitle(light, activity?.provider) || undefined}
+            onClick={(e) => {
+              // 错误指示灯点击清除，其它状态（含 attention）交由标签点击聚焦该终端
+              if (light !== 'failed') return;
+              e.stopPropagation();
+              useAppStore.getState().clearClaudeFailure(session.id);
+            }}
+          />
+        );
+      })()}
+      {session.isDirty && <span className="tab-dirty-dot" />}
+      {isRenaming ? (
+        <input
+          ref={renameInputRef}
+          className="tab-bar-rename-input"
+          value={renameValue}
+          onChange={(e) => onRenameChange(e.target.value)}
+          onBlur={() => onCommitRename(session.id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              onCommitRename(session.id);
+            } else if (e.key === 'Escape') {
+              onCancelRename();
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <>
+          {session.sessionType !== 'editor' && (() => {
+            const params = session.extraParams ?? '';
+            const modelRef = parseCodexRef(params) ?? parseClaudeRef(params);
+            const launchInfo = getTaskLaunchInfo(params, profileStartupCommands, session.extraParamMode);
+            const detectedProvider = taskSummary?.provider ?? taskProvider ?? launchInfo?.provider;
+            const antigravityModel = detectedProvider === 'antigravity'
+              ? (taskSummary?.model ?? (launchInfo?.provider === 'antigravity' ? launchInfo.model : undefined))
+              : undefined;
+            return (
+              <>
+                {detectedProvider === 'antigravity' && (
+                  <AgentIcon provider="antigravity" className="terminal-tab-agent-icon" />
+                )}
+                {modelRef ? (
+                  <span className="terminal-tab-model-chip" title="供应商模型">{modelRef.modelId}</span>
+                ) : antigravityModel ? (
+                  <span className="terminal-tab-model-chip" title="Antigravity 模型">{antigravityModel}</span>
+                ) : null}
+              </>
+            );
+          })()}
+          <span className="terminal-tab-name" title={tabTitle} style={session.tabColor ? { color: session.tabColor } : undefined}>{tabTitle}</span>
+          {/* Docker 端所有会话都来自网页端，Web 标签没有区分度，故隐藏 */}
+          {session.owner === 'web' && !isDockerClient() && <span className="terminal-owner-badge">Web</span>}
+          {session.owner !== 'web' && takeover && (
+            <span className="terminal-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>
+          )}
+        </>
+      )}
+      <button
+        className="terminal-tab-close"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose(session.id);
+        }}
+        title="关闭"
+        aria-label={`关闭 ${session.profileName}`}
+      ><X aria-hidden="true" /></button>
+    </div>
+  );
+});
 
 export const TerminalTabBar: FC = () => {
   const sessions = useAppStore(s => s.sessions);
-  const profiles = useAppStore(s => s.profiles);
-  const taskSummaries = useTaskSummaryStore(s => s.summaries);
-  const taskProviders = useTaskSummaryStore(s => s.providers);
   const activeSessionId = useAppStore(s => s.activeSessionId);
-  const removeSession = useAppStore(s => s.removeSession);
-  const removeSessions = useAppStore(s => s.removeSessions);
-
   const renameSession = useAppStore(s => s.renameSession);
-  const terminalActivities = useAppStore(s => s.terminalActivities);
-  const terminalWebTakeovers = useAppStore(s => s.terminalWebTakeovers);
-  const settingsVersion = useAppStore(s => s.settingsVersion);
+  const {
+    confirmDialog,
+    setConfirmDialog,
+    draftCloseDialog,
+    setDraftCloseDialog,
+    handleCloseTerminal,
+    handleDraftSaveAs,
+    handleDraftDiscard,
+    closeSessionsWithBackend,
+  } = useSessionCloseActions();
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
@@ -45,77 +188,33 @@ export const TerminalTabBar: FC = () => {
   const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
   const closeAgentTab = useAppStore(s => s.closeAgentTab);
   const setActiveAgentTab = useAppStore(s => s.setActiveAgentTab);
-  const updateAgentTab = useAppStore(s => s.updateAgentTab);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   // 原生会话标签的右键菜单（与终端标签共用 .context-menu 样式）。
   const [agentTabMenu, setAgentTabMenu] = useState<{ x: number; y: number; key: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   // 打开重命名时的初始值：未改动就不落库，避免把摘要原样固化成名称
-  const [renameBaseline, setRenameBaseline] = useState('');
-  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const renameBaselineRef = useRef('');
   const renameInputRef = useRef<HTMLInputElement>(null);
-  const tabBarRef = useRef<HTMLDivElement>(null);
-  const visibleSessions = sessions;
 
-  const handleCloseTerminal = useCallback(async (sessionId: string) => {
-    const session = sessions.find(s => s.id === sessionId);
-    if (session?.sessionType === 'editor') {
-      if (session.isDirty) {
-        setConfirmDialog({
-          title: '未保存的更改',
-          message: `文件「${session.profileName}」有未保存的更改，确定要关闭吗？`,
-          onConfirm: () => {
-            setConfirmDialog(null);
-            removeSession(sessionId);
-          },
-        });
-        return;
-      }
-      removeSession(sessionId);
-    } else if (session?.starting) {
-      removeSession(sessionId);
-    } else if (session) {
-      // 活跃终端（正在执行任务）关闭前弹窗确认
-      if (isTerminalWorking(terminalActivities[sessionId])) {
-        setConfirmDialog({
-          title: '终端正在执行任务',
-          message: `终端「${session.profileName}」正在执行任务，确定要关闭吗？`,
-          onConfirm: () => {
-            setConfirmDialog(null);
-            removeSession(sessionId);
-            void closeTerminalCmd(sessionId).catch(err => console.error(err));
-          },
-        });
-        return;
-      }
-      removeSession(sessionId);
-      void closeTerminalCmd(sessionId).catch(err => console.error(err));
-    }
-  }, [sessions, removeSession, terminalActivities]);
-
-  const closeOthers = useCallback((sessionId: string) => {
-    const sessionsToClose = sessions.filter(session => session.id !== sessionId);
-    const workingCount = sessionsToClose.filter(
-      s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(terminalActivities[s.id])
+  const closeBatch = useCallback((targets: TerminalSession[], title: string, scopeLabel: string) => {
+    if (targets.length === 0) return;
+    const activities = useAppStore.getState().terminalActivities;
+    const workingCount = targets.filter(
+      s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(activities[s.id]),
     ).length;
+    const dirtyCount = targets.filter(s => s.isDirty).length;
     const performClose = () => {
-      removeSessions(sessionsToClose.map(session => session.id));
-      void Promise.all(
-        sessionsToClose
-          .filter(session => session.sessionType !== 'editor' && !session.starting)
-          .map(session => closeTerminalCmd(session.id).catch(() => {}))
-      );
+      cleanupDraftFiles(targets);
+      void closeSessionsWithBackend(targets);
     };
-    // 脏编辑器同样要确认（审查 M-23）：批量关闭绕过单关的未保存检查会静默丢内容。
-    const dirtyCount = sessionsToClose.filter(s => s.isDirty).length;
     if (workingCount > 0 || dirtyCount > 0) {
       const warnings: string[] = [];
       if (workingCount > 0) warnings.push(`${workingCount} 个终端正在执行任务`);
       if (dirtyCount > 0) warnings.push(`${dirtyCount} 个编辑器有未保存修改`);
       setConfirmDialog({
-        title: '关闭其他',
-        message: `其他 ${sessionsToClose.length} 个选项卡中有 ${warnings.join('、')}，确定要关闭吗？`,
+        title,
+        message: `${scopeLabel} ${targets.length} 个选项卡中有 ${warnings.join('、')}，确定要关闭吗？`,
         onConfirm: () => {
           setConfirmDialog(null);
           performClose();
@@ -124,75 +223,21 @@ export const TerminalTabBar: FC = () => {
       return;
     }
     performClose();
-  }, [sessions, removeSessions, terminalActivities]);
+  }, [closeSessionsWithBackend, setConfirmDialog]);
+
+  const closeOthers = useCallback((sessionId: string) => {
+    closeBatch(sessions.filter(session => session.id !== sessionId), '关闭其他', '其他');
+  }, [closeBatch, sessions]);
 
   const closeLeft = useCallback((sessionId: string) => {
     const idx = sessions.findIndex(s => s.id === sessionId);
-    const sessionsToClose = idx < 0 ? [] : sessions.slice(0, idx);
-    if (sessionsToClose.length === 0) return;
-    const workingCount = sessionsToClose.filter(
-      s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(terminalActivities[s.id])
-    ).length;
-    const performClose = () => {
-      removeSessions(sessionsToClose.map(session => session.id));
-      void Promise.all(
-        sessionsToClose
-          .filter(session => session.sessionType !== 'editor' && !session.starting)
-          .map(session => closeTerminalCmd(session.id).catch(() => {}))
-      );
-    };
-    // 脏编辑器同样要确认（审查 M-23）：批量关闭绕过单关的未保存检查会静默丢内容。
-    const dirtyCount = sessionsToClose.filter(s => s.isDirty).length;
-    if (workingCount > 0 || dirtyCount > 0) {
-      const warnings: string[] = [];
-      if (workingCount > 0) warnings.push(`${workingCount} 个终端正在执行任务`);
-      if (dirtyCount > 0) warnings.push(`${dirtyCount} 个编辑器有未保存修改`);
-      setConfirmDialog({
-        title: '关闭左侧',
-        message: `左侧 ${sessionsToClose.length} 个选项卡中有 ${warnings.join('、')}，确定要关闭吗？`,
-        onConfirm: () => {
-          setConfirmDialog(null);
-          performClose();
-        },
-      });
-      return;
-    }
-    performClose();
-  }, [sessions, removeSessions, terminalActivities]);
+    closeBatch(idx <= 0 ? [] : sessions.slice(0, idx), '关闭左侧', '左侧');
+  }, [closeBatch, sessions]);
 
   const closeRight = useCallback((sessionId: string) => {
     const idx = sessions.findIndex(s => s.id === sessionId);
-    const sessionsToClose = idx < 0 ? [] : sessions.slice(idx + 1);
-    if (sessionsToClose.length === 0) return;
-    const workingCount = sessionsToClose.filter(
-      s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(terminalActivities[s.id])
-    ).length;
-    const performClose = () => {
-      removeSessions(sessionsToClose.map(session => session.id));
-      void Promise.all(
-        sessionsToClose
-          .filter(session => session.sessionType !== 'editor' && !session.starting)
-          .map(session => closeTerminalCmd(session.id).catch(() => {}))
-      );
-    };
-    // 脏编辑器同样要确认（审查 M-23）：批量关闭绕过单关的未保存检查会静默丢内容。
-    const dirtyCount = sessionsToClose.filter(s => s.isDirty).length;
-    if (workingCount > 0 || dirtyCount > 0) {
-      const warnings: string[] = [];
-      if (workingCount > 0) warnings.push(`${workingCount} 个终端正在执行任务`);
-      if (dirtyCount > 0) warnings.push(`${dirtyCount} 个编辑器有未保存修改`);
-      setConfirmDialog({
-        title: '关闭右侧',
-        message: `右侧 ${sessionsToClose.length} 个选项卡中有 ${warnings.join('、')}，确定要关闭吗？`,
-        onConfirm: () => {
-          setConfirmDialog(null);
-          performClose();
-        },
-      });
-      return;
-    }
-    performClose();
-  }, [sessions, removeSessions, terminalActivities]);
+    closeBatch(idx < 0 ? [] : sessions.slice(idx + 1), '关闭右侧', '右侧');
+  }, [closeBatch, sessions]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -205,33 +250,23 @@ export const TerminalTabBar: FC = () => {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'F2') return;
-      const region = useAppStore.getState().lastClickRegion;
+      const store = useAppStore.getState();
+      const region = store.lastClickRegion;
       if (region && region !== 'tab') return;
       if (!activeSessionId) return;
-      const session = sessions.find(s => s.id === activeSessionId);
+      const session = store.sessions.find(s => s.id === activeSessionId);
       if (session) {
         // 编辑所见即所得：输入框初始值取标签当前显示的标题（含摘要）
         const displayed = terminalTabTitle(session.profileName, useTaskSummaryStore.getState().summaries[session.id], session.manualTitle);
         setRenameValue(displayed);
-        setRenameBaseline(displayed);
+        renameBaselineRef.current = displayed;
         setRenamingSessionId(activeSessionId);
         setTimeout(() => renameInputRef.current?.select(), 0);
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [activeSessionId, sessions]);
-
-  // 跟踪上次点击区域
-  useEffect(() => {
-    const el = tabBarRef.current;
-    if (!el) return;
-    const handler = () => {
-      useAppStore.getState().setLastClickRegion('tab');
-    };
-    el.addEventListener('mousedown', handler);
-    return () => el.removeEventListener('mousedown', handler);
-  }, []);
+  }, [activeSessionId]);
 
   // F2 重命名时自动聚焦输入框
   useEffect(() => {
@@ -241,124 +276,43 @@ export const TerminalTabBar: FC = () => {
     }
   }, [renamingSessionId]);
 
+  const handleOpenContextMenu = useCallback((x: number, y: number, sessionId: string) => {
+    setContextMenu({ x, y, sessionId });
+  }, []);
+
+  const handleCommitRename = useCallback((sessionId: string) => {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== renameBaselineRef.current) {
+      renameSession(sessionId, trimmed);
+    }
+    setRenamingSessionId(null);
+  }, [renameSession, renameValue]);
+
+  const handleCancelRename = useCallback(() => {
+    setRenamingSessionId(null);
+  }, []);
+
   const sessionIdx = (id: string) => sessions.findIndex(s => s.id === id);
 
   return (
-    <div className="terminal-tab-bar" key={settingsVersion} ref={tabBarRef}>
-      {visibleSessions.map((session) => (
-        <div
+    <div
+      className="terminal-tab-bar"
+      onMouseDown={() => useAppStore.getState().setLastClickRegion('tab')}
+    >
+      {sessions.map((session) => (
+        <TerminalSessionTabItem
           key={session.id}
-          className={`terminal-tab ${activeSpecialTab === null && activeSessionId === session.id ? 'active' : ''}`}
-          onClick={() => {
-            const store = useAppStore.getState();
-            if (store.splitMode !== 'off') {
-              if (!store.splitSlots.some(slot => slot.sessionId === session.id)) {
-                store.placeSessionInSplitSlot(session.id);
-              } else {
-                store.setActiveSession(session.id);
-              }
-            } else {
-              store.setActiveSession(session.id);
-            }
-          }}
-          onAuxClick={(e) => {
-            if (e.button === 1) {
-              e.preventDefault();
-              handleCloseTerminal(session.id);
-            }
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setContextMenu({ x: e.clientX, y: e.clientY, sessionId: session.id });
-          }}
-        >
-          {session.sessionType === 'editor' ? (
-            <FileText className="tab-file-icon" aria-hidden="true" />
-          ) : (() => {
-            const light = getIndicatorLight(terminalActivities[session.id]);
-            return (
-              <span
-                className={`terminal-tab-dot${getIndicatorClassName(light)}`}
-                style={{ background: getIndicatorColor(light, session.tabColor) }}
-                title={getIndicatorTitle(light, terminalActivities[session.id]?.provider) || undefined}
-                onClick={(e) => {
-                  if (light !== 'failed' && light !== 'attention') return;
-                  e.stopPropagation();
-                  if (light === 'failed') useAppStore.getState().clearClaudeFailure(session.id);
-                }}
-              />
-            );
-          })()}
-          {session.isDirty && <span className="tab-dirty-dot" />}
-          {renamingSessionId === session.id ? (
-            <input
-              ref={renameInputRef}
-              className="tab-bar-rename-input"
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onBlur={() => {
-                const trimmed = renameValue.trim();
-                if (trimmed && trimmed !== renameBaseline) {
-                  renameSession(session.id, trimmed);
-                }
-                setRenamingSessionId(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  const trimmed = renameValue.trim();
-                  if (trimmed && trimmed !== renameBaseline) {
-                    renameSession(session.id, trimmed);
-                  }
-                  setRenamingSessionId(null);
-                } else if (e.key === 'Escape') {
-                  setRenamingSessionId(null);
-                }
-              }}
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <>
-              {session.sessionType !== 'editor' && (() => {
-                const params = session.extraParams ?? '';
-                const modelRef = parseCodexRef(params) ?? parseClaudeRef(params);
-                const profile = profiles.find(item => item.id === session.profileId);
-                const launchInfo = getTaskLaunchInfo(params, profile?.startupCommands, session.extraParamMode);
-                const taskSummary = taskSummaries[session.id];
-                const detectedProvider = taskSummary?.provider ?? taskProviders[session.id] ?? launchInfo?.provider;
-                const antigravityModel = detectedProvider === 'antigravity'
-                  ? (taskSummary?.model ?? (launchInfo?.provider === 'antigravity' ? launchInfo.model : undefined))
-                  : undefined;
-                return (
-                  <>
-                    {detectedProvider === 'antigravity' && (
-                      <AgentIcon provider="antigravity" className="terminal-tab-agent-icon" />
-                    )}
-                    {modelRef ? (
-                      <span className="terminal-tab-model-chip" title="供应商模型">{modelRef.modelId}</span>
-                    ) : antigravityModel ? (
-                      <span className="terminal-tab-model-chip" title="Antigravity 模型">{antigravityModel}</span>
-                    ) : null}
-                  </>
-                );
-              })()}
-              <span className="terminal-tab-name" title={terminalTabTitle(session.profileName, taskSummaries[session.id], session.manualTitle)} style={session.tabColor ? { color: session.tabColor } : undefined}>{terminalTabTitle(session.profileName, taskSummaries[session.id], session.manualTitle)}</span>
-              {/* Docker 端所有会话都来自网页端，Web 标签没有区分度，故隐藏 */}
-              {session.owner === 'web' && !isDockerClient() && <span className="terminal-owner-badge">Web</span>}
-              {session.owner !== 'web' && terminalWebTakeovers[session.id] && (
-                <span className="terminal-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>
-              )}
-            </>
-          )}
-          <button
-            className="terminal-tab-close"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleCloseTerminal(session.id);
-            }}
-            title="关闭"
-            aria-label={`关闭 ${session.profileName}`}
-          ><X aria-hidden="true" /></button>
-        </div>
+          session={session}
+          isActive={activeSpecialTab === null && activeSessionId === session.id}
+          isRenaming={renamingSessionId === session.id}
+          renameValue={renamingSessionId === session.id ? renameValue : ''}
+          renameInputRef={renameInputRef}
+          onRenameChange={setRenameValue}
+          onCommitRename={handleCommitRename}
+          onCancelRename={handleCancelRename}
+          onClose={handleCloseTerminal}
+          onOpenContextMenu={handleOpenContextMenu}
+        />
       ))}
       {agentTabs.map(tab => (
         <div
@@ -393,7 +347,7 @@ export const TerminalTabBar: FC = () => {
                   // 错误长红点击清除（本地确认）；等待确认不拦截，点击顺带打开聊天页处理。
                   if (light !== 'failed') return;
                   e.stopPropagation();
-                  updateAgentTab(tab.key, { status: 'idle' });
+                  useAppStore.getState().updateAgentTab(tab.key, { status: 'idle' });
                 }}
               />
             );
@@ -511,9 +465,9 @@ export const TerminalTabBar: FC = () => {
               const session = sessions.find(s => s.id === contextMenu.sessionId);
               if (session) {
                 // 编辑所见即所得：输入框初始值取标签当前显示的标题（含摘要）
-                const displayed = terminalTabTitle(session.profileName, taskSummaries[session.id], session.manualTitle);
+                const displayed = terminalTabTitle(session.profileName, useTaskSummaryStore.getState().summaries[session.id], session.manualTitle);
                 setRenameValue(displayed);
-                setRenameBaseline(displayed);
+                renameBaselineRef.current = displayed;
                 setRenamingSessionId(session.id);
                 setTimeout(() => renameInputRef.current?.select(), 0);
               }
@@ -580,6 +534,23 @@ export const TerminalTabBar: FC = () => {
           onClose={() => setConfirmDialog(null)}
           onConfirm={confirmDialog.onConfirm}
         />
+      )}
+      {draftCloseDialog && (
+        <Dialog
+          title="草稿有未保存的内容"
+          role="alertdialog"
+          className="tb-confirm-dialog"
+          onClose={() => setDraftCloseDialog(null)}
+          footer={(
+            <>
+              <button className="btn-secondary" onClick={() => setDraftCloseDialog(null)}>取消</button>
+              <button className="btn-danger" onClick={handleDraftDiscard}>不保存</button>
+              <button className="btn-primary" onClick={handleDraftSaveAs}>另存为...</button>
+            </>
+          )}
+        >
+          <div className="tb-confirm-message">是否保存此草稿？</div>
+        </Dialog>
       )}
     </div>
   );

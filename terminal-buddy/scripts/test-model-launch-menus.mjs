@@ -73,10 +73,13 @@ function desktopWithProject(project, availability = { claude: true, codex: true,
   const react = hooks(), launches = [], antigravityLaunches = [], settings = [];
   const profile = { id: 'profile', name: '测试命令', group: project.name, terminalType, startupPath: '', startupCommands: [command] };
   const state = {
-    profiles: [profile], projects: [project], configSearchQuery: '',
+    profiles: [profile], projects: [project], sessions: [], agentTabs: [],
+    gitChangesTab: null, gitHistoryTab: null, scheduledTasksTabOpen: false, claudeReplayTabs: [],
+    selectedProfileId: null, configPanelVisible: true, configSearchQuery: '',
     refreshClaudeLaunchTargets: async () => {}, refreshCodexLaunchTargets: async () => {},
-    selectProfile() {}, setProviderSettingsTab: source => settings.push(source), openSettingsDialog() {},
-    setLastClickRegion() {},
+    selectProfile() {}, removeProfile() {}, setProfiles() {}, setConfigSearchQuery() {},
+    setDragProfileId() {}, setProviderSettingsTab: source => settings.push(source),
+    openSettingsDialog() {}, setLastClickRegion() {},
   };
   const useAppStore = selector => selector(state);
   useAppStore.getState = () => state;
@@ -112,6 +115,14 @@ function desktopWithProject(project, availability = { claude: true, codex: true,
     '../shared/ClaudeModelMenuSection': { ClaudeModelMenuSection },
     '../shared/ProjectLaunchMenuItems': launchMenu, '../shared/ProjectContextMenu': { ProjectContextMenu },
     '../shared/ProjectEditDialog': {}, '../shared/ProjectDeleteDialog': {},
+    './ProjectTasksView': { ProjectTasksView: () => null },
+    '../../hooks/useSessionCloseActions': {
+      useSessionCloseActions: () => ({
+        confirmDialog: null, setConfirmDialog() {}, draftCloseDialog: null, setDraftCloseDialog() {},
+        handleCloseTerminal() {}, handleDraftSaveAs() {}, handleDraftDiscard() {},
+        handleCloseGroup() {}, handleCloseAllTabs() {},
+      }),
+    },
     '@tauri-apps/plugin-dialog': {},
     '../../types': types,
     '../../utils/projectPath': projectPath, '../../services/platform': { isDockerClient: () => false, supportsSystemExplorerOpen: () => false },

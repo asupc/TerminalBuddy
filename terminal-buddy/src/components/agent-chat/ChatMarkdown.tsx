@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import hljs from '../../utils/hljs';
 import MarkdownIt from 'markdown-it';
@@ -49,13 +49,37 @@ function truncateForRender(text: string): string {
   return cut;
 }
 
+/** 流式文本渲染节流间隔（ms）：避免每个 token chunk 都触发 O(L²) 全量 Markdown 解析与消毒。 */
+const STREAM_THROTTLE_MS = 80;
+
 /** memo：流式期间只有正在增长的消息文本变化，历史消息按 text 引用直接跳过重渲染。 */
 export const ChatMarkdown = memo(function ChatMarkdown({ text, streaming }: { text: string; streaming?: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const [throttledText, setThrottledText] = useState(text);
+  const lastRenderAtRef = useRef(0);
+  useEffect(() => {
+    if (!streaming) {
+      lastRenderAtRef.current = performance.now();
+      setThrottledText(text);
+      return;
+    }
+    const elapsed = performance.now() - lastRenderAtRef.current;
+    if (elapsed >= STREAM_THROTTLE_MS) {
+      lastRenderAtRef.current = performance.now();
+      setThrottledText(text);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      lastRenderAtRef.current = performance.now();
+      setThrottledText(text);
+    }, STREAM_THROTTLE_MS - elapsed);
+    return () => window.clearTimeout(timer);
+  }, [text, streaming]);
+  const activeText = streaming ? throttledText : text;
   // 流式尾块豁免截断（审查 V-3）：正在增长的消息被截断时，贴底观看的正文
   // 会冻结、只剩字符计数在跳，等流结束再截断。
-  const truncated = !expanded && !streaming && text.length > MARKDOWN_RENDER_LIMIT;
-  const source = truncated ? truncateForRender(text) : text;
+  const truncated = !expanded && !streaming && activeText.length > MARKDOWN_RENDER_LIMIT;
+  const source = truncated ? truncateForRender(activeText) : activeText;
   const html = useMemo(
     () => DOMPurify.sanitize(markdown.render(source))
       // 聊天里的外链不在当前页面跳走（Tauri WebView 里尤其危险）：统一新窗口打开。

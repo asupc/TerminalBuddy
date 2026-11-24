@@ -15,6 +15,19 @@ export interface DraftCloseDialogState {
   filePath: string;
 }
 
+export function isDraftEditorPath(profileId: string): boolean {
+  return profileId.includes('\\drafts\\draft_') || profileId.includes('/drafts/draft_');
+}
+
+export function cleanupDraftFiles(targets: TerminalSession[]): void {
+  const store = useAppStore.getState();
+  for (const session of targets) {
+    if (session.sessionType === 'editor' && isDraftEditorPath(session.profileId)) {
+      void store.removeDraftFile(session.profileId);
+    }
+  }
+}
+
 /**
  * 会话关闭、分组批量关闭与草稿保存确认逻辑。
  * 与 TabNav 保持完全一致的关闭前确认与后端 PTY 清理语义。
@@ -38,16 +51,10 @@ export function useSessionCloseActions() {
   }, [sessions.length]);
 
   const closeSessionsWithBackend = useCallback(async (targets: TerminalSession[]) => {
-    const store = useAppStore.getState();
     const terminalIds = targets
       .filter(session => session.sessionType !== 'editor' && !session.starting)
       .map(session => session.id);
-    for (const session of targets) {
-      if (session.sessionType === 'editor') {
-        const isDraft = session.profileId.includes('\\drafts\\draft_') || session.profileId.includes('/drafts/draft_');
-        if (isDraft) void store.removeDraftFile(session.profileId);
-      }
-    }
+    cleanupDraftFiles(targets);
     removeSessions(targets.map(session => session.id));
     void Promise.all(terminalIds.map(id => closeTerminalCmd(id).catch(err => console.error(err))));
   }, [removeSessions]);
@@ -55,8 +62,7 @@ export function useSessionCloseActions() {
   const handleCloseTerminal = useCallback(async (sessionId: string) => {
     const session = sessions.find(s => s.id === sessionId);
     if (session?.sessionType === 'editor') {
-      const isDraft = session.profileId.includes('\\drafts\\draft_') || session.profileId.includes('/drafts/draft_');
-      if (isDraft) {
+      if (isDraftEditorPath(session.profileId)) {
         try {
           const content = await readFileContent(session.profileId);
           if (content) {
@@ -191,5 +197,6 @@ export function useSessionCloseActions() {
     handleDraftDiscard,
     handleCloseGroup,
     handleCloseAllTabs,
+    closeSessionsWithBackend,
   };
 }

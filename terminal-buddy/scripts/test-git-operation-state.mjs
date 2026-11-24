@@ -142,7 +142,7 @@ function createBar(operations = operationModule(), overrides = {}) {
     subscribeGitRepositoryStatus: listener => { cacheListeners.add(listener); return () => cacheListeners.delete(listener); },
   };
   const Component = load('src/components/git/GitNavBar.tsx', {
-    react: runner.react, 'react/jsx-runtime': jsx, 'lucide-react': {},
+    react: runner.react, 'react/jsx-runtime': jsx, 'react-dom': { createPortal: node => node }, 'lucide-react': {},
     '../../services/tauri': api, '../../services/gitStatusCache': cache,
     '../../services/gitOperationState': operations,
     '../../stores/appStore': { useAppStore: selector => selector({ openGitHistoryTab() {} }) },
@@ -291,10 +291,11 @@ const tests = [
       '../../hooks/useActiveTabProjectDirectory': { useActiveTabProjectDirectory: () => root },
       '../../utils/projectPath': {}, '../../utils/openTerminalInDir': {}, '../../utils/contextMenu': {},
       '../../utils/terminalResizeEvent': {}, '../../services/dialog': {},
+      '../../services/fileDownload': { canDownloadToBrowser: () => false, downloadToBrowser: async () => {} },
       '../../services/gitOperationState': operations, '../../services/gitStatusCache': cache,
       '../git/GitOperationsHost': { GitOperationsHost: fakeHost }, './RemoteFileTree': {}, '../shared/Dialog': {},
       './ConfiguredFileRoot': { ConfiguredFileRoot: fakeRoot },
-      '../../services/platform': { supportsSystemExplorerOpen: () => false },
+      '../../services/platform': { supportsSystemExplorerOpen: () => false, serverPathsCaseInsensitive: () => true },
       './file-utils': load('src/components/file-explorer/file-utils.ts', {
         '../../services/platform': { serverUsesWindowsPaths: () => false },
       }),

@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 
 export interface DragDropTarget {
   index: number;
@@ -27,20 +27,41 @@ export function useDragReorder(onReorder: (from: number, to: number) => void): D
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<DragDropTarget | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => {
+    cleanupRef.current?.();
+  }, []);
 
   const startDrag = (event: ReactPointerEvent<HTMLElement>, index: number) => {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    cleanupRef.current?.();
     const startY = event.clientY;
     let active = false;
     let target: DragDropTarget | null = null;
+    let cleaned = false;
 
-    const finish = () => {
+    const removeListeners = () => {
+      if (cleaned) return;
+      cleaned = true;
       document.removeEventListener('pointermove', handleMove);
       document.removeEventListener('pointerup', finish);
       document.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
       document.body.style.cursor = '';
+      if (cleanupRef.current === abortDrag) cleanupRef.current = null;
+    };
+
+    const abortDrag = () => {
+      removeListeners();
+      setDraggingIndex(null);
+      setDropTarget(null);
+    };
+
+    const finish = () => {
+      removeListeners();
       setDraggingIndex(null);
       setDropTarget(null);
       if (!active || !target) return;
@@ -79,9 +100,11 @@ export function useDragReorder(onReorder: (from: number, to: number) => void): D
       ));
     };
 
+    cleanupRef.current = abortDrag;
     document.addEventListener('pointermove', handleMove);
     document.addEventListener('pointerup', finish);
     document.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
   };
 
   const dragClass = (index: number) => {

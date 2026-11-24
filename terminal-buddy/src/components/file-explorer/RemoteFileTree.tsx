@@ -171,6 +171,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   // 最新会话标识：快速切换 SSH 终端时，晚到的旧会话响应据此丢弃（H-8a）
   const latestTerminalIdRef = useRef(terminalId);
   latestTerminalIdRef.current = terminalId;
+  const loadSeqRef = useRef(0);
+  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const submittingMutationRef = useRef(false);
   const [showTransferPanel, setShowTransferPanel] = useState(false);
 
   const connectSession = useCallback(async () => {
@@ -200,13 +203,14 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   }, [terminalId, session?.profileId]);
 
   const loadDirectory = useCallback(async (path: string) => {
-    if (!connectedRef.current) return;
+    if (!connectedRef.current || latestTerminalIdRef.current !== terminalId) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setError(null);
     try {
       const entries = await remoteListDir(terminalId, path);
-      // 旧会话的列表响应晚到时丢弃，避免覆盖当前会话的列表与 currentPath（H-8a）
-      if (latestTerminalIdRef.current !== terminalId) return;
+      // 旧会话或已过期目录请求的响应晚到时丢弃，避免覆盖当前视图（H-8a）
+      if (latestTerminalIdRef.current !== terminalId || seq !== loadSeqRef.current) return;
       setFiles(entries);
       setCurrentPath(path);
       setSessionDirectory(terminalId, path);
@@ -214,11 +218,11 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       setRemoteFileCache(terminalId, { files: entries, currentPath: path });
     } catch (err) {
       console.error('Failed to list remote directory:', err);
-      if (latestTerminalIdRef.current === terminalId) {
+      if (latestTerminalIdRef.current === terminalId && seq === loadSeqRef.current) {
         setError(String(err));
       }
     } finally {
-      if (latestTerminalIdRef.current === terminalId) setLoading(false);
+      if (latestTerminalIdRef.current === terminalId && seq === loadSeqRef.current) setLoading(false);
     }
   }, [terminalId, setSessionDirectory, setRemoteFileCache]);
 
@@ -267,9 +271,16 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
 
     onTransferProgress((progress) => {
       if (cancelled || progress.terminalId !== terminalId) return;
+      if (progressTimerRef.current) {
+        clearTimeout(progressTimerRef.current);
+        progressTimerRef.current = null;
+      }
       setTransferProgress(progress);
       if (progress.percent >= 100) {
-        setTimeout(() => setTransferProgress(null), 1500);
+        progressTimerRef.current = setTimeout(() => {
+          progressTimerRef.current = null;
+          setTransferProgress(null);
+        }, 1500);
       }
     }).then(fn => {
       if (cancelled) fn();
@@ -278,6 +289,10 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
 
     return () => {
       cancelled = true;
+      if (progressTimerRef.current) {
+        clearTimeout(progressTimerRef.current);
+        progressTimerRef.current = null;
+      }
       unlistenProgress?.();
     };
   }, [terminalId]);
@@ -481,12 +496,13 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   };
 
   const confirmRename = async () => {
-    if (!renaming) return;
+    if (!renaming || submittingMutationRef.current) return;
     const trimmed = renameValue.trim();
     if (!trimmed || trimmed === renaming.name) {
       setRenaming(null);
       return;
     }
+    submittingMutationRef.current = true;
     try {
       const parent = renaming.path.substring(0, renaming.path.lastIndexOf('/'));
       const newPath = `${parent}/${trimmed}`;
@@ -495,8 +511,10 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     } catch (err) {
       console.error('Rename failed:', err);
       void showAlert('重命名失败: ' + String(err), '重命名失败');
+    } finally {
+      submittingMutationRef.current = false;
+      setRenaming(null);
     }
-    setRenaming(null);
   };
 
   const handleCopy = (file: RemoteFileEntry) => {
@@ -571,12 +589,13 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   };
 
   const confirmCreate = async () => {
-    if (!creating) return;
+    if (!creating || submittingMutationRef.current) return;
     const trimmed = createValue.trim();
     if (!trimmed) {
       setCreating(null);
       return;
     }
+    submittingMutationRef.current = true;
     try {
       const newPath = `${currentPath}/${trimmed}`;
       if (creating === 'dir') {
@@ -588,8 +607,10 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     } catch (err) {
       console.error('Create failed:', err);
       void showAlert('创建失败: ' + String(err), '创建失败');
+    } finally {
+      submittingMutationRef.current = false;
+      setCreating(null);
     }
-    setCreating(null);
   };
 
   const handleUpload = async () => {
@@ -843,7 +864,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="context-menu-item" onClick={handleRefresh}>刷新</div>
+          <div className="context-menu-item" onClick={() => { setContextMenu(null); handleRefresh(); }}>刷新</div>
           {contextMenu.file && (
             <>
               <div className="context-menu-separator" />

@@ -8,6 +8,8 @@ import { useAppStore } from '../stores/appStore';
 export function useExitConfirm(onExit: () => Promise<void> | void) {
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
   const closeConfirmedRef = useRef(false);
+  const onExitRef = useRef(onExit);
+  onExitRef.current = onExit;
 
   /** 触发退出流程；返回 false 表示已确认过（调用方不应再拦截关闭）。 */
   const requestExit = useCallback(() => {
@@ -16,17 +18,18 @@ export function useExitConfirm(onExit: () => Promise<void> | void) {
     if (sessions.length > 0) {
       setCloseConfirm({ sessionCount: sessions.length });
     } else {
+      closeConfirmedRef.current = true;
       // 无终端时也需要保存 Claude 会话
-      void onExit();
+      void onExitRef.current();
     }
     return true;
-  }, [onExit]);
+  }, []);
 
   const confirmExit = useCallback(async () => {
     closeConfirmedRef.current = true;
     setCloseConfirm(null);
-    await onExit();
-  }, [onExit]);
+    await onExitRef.current();
+  }, []);
 
   const cancelExit = useCallback(() => {
     setCloseConfirm(null);

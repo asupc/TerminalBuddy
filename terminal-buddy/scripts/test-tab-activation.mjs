@@ -127,6 +127,7 @@ const { createSessionsSlice } = load('src/stores/slices/sessionsSlice.ts', {
 const { createAgentChatSlice } = load('src/stores/slices/agentChatSlice.ts', {
   '../appStore': appStoreBridge,
   '../../utils/tabActivation': tabActivation,
+  './sessionsSlice': { debouncedSaveTabs: () => {}, flushPendingSaveTabs: async () => {} },
 });
 
 const realAppStore = load('src/stores/appStore.ts', {

@@ -96,6 +96,8 @@ export function ModelCombobox({
     setOpen(false);
   };
 
+  const visibleResults = results.slice(0, 60);
+
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape' && open) {
       // 先关闭列表，避免外层弹窗同时处理 Escape 而丢失编辑内容。
@@ -103,14 +105,14 @@ export function ModelCombobox({
       event.stopPropagation();
       setOpen(false);
     } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      if (!results.length) return;
+      if (!visibleResults.length) return;
       event.preventDefault();
       setOpen(true);
-      setActiveIndex(index => (index + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length);
+      setActiveIndex(index => (index + (event.key === 'ArrowDown' ? 1 : -1) + visibleResults.length) % visibleResults.length);
     } else if (event.key === 'Enter') {
       // 有高亮项则选中，否则保留当前输入（自由输入）。
       event.preventDefault();
-      if (showList && results[activeIndex]) choose(results[activeIndex]);
+      if (showList && visibleResults[activeIndex]) choose(visibleResults[activeIndex]);
       else setOpen(false);
     }
   };
@@ -127,7 +129,7 @@ export function ModelCombobox({
         aria-autocomplete="list"
         aria-expanded={showList}
         aria-controls={listId}
-        aria-activedescendant={showList && results[activeIndex] ? `${listId}-${activeIndex}` : undefined}
+        aria-activedescendant={showList && visibleResults[activeIndex] ? `${listId}-${activeIndex}` : undefined}
         value={value}
         placeholder={placeholder}
         disabled={disabled}
@@ -159,7 +161,7 @@ export function ModelCombobox({
           role="listbox"
           aria-label="候选模型"
         >
-          {results.length ? results.slice(0, 60).map((id, index) => (
+          {visibleResults.length ? visibleResults.map((id, index) => (
             <button
               key={id}
               id={`${listId}-${index}`}

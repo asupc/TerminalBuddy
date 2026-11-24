@@ -1,4 +1,4 @@
-import { FC, useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
+import { FC, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { DiffEditor, type DiffOnMount } from '@monaco-editor/react';
 import type { editor as MonacoEditor } from 'monaco-editor';
 import { attachSafeDiffModelDisposal } from '../../utils/monacoLoader';
@@ -23,6 +23,9 @@ const GIT_CHANGES_DIFF_OPTIONS: MonacoEditor.IDiffEditorConstructionOptions = {
   automaticLayout: true,
   renderSideBySide: true,
   minimap: { enabled: false },
+  // Monaco 默认会在右侧画 30px 宽的 diff overview（缩略条 + 同步滚动条），
+  // 单文件对比里显得像一根特别粗的滚动条；与文本编辑器的对比视图保持一致关掉它。
+  renderOverviewRuler: false,
 };
 const handleDiffMount: DiffOnMount = (diffEditor) => {
   attachSafeDiffModelDisposal(diffEditor);
@@ -138,34 +141,53 @@ export const GitChangesPage: FC<GitChangesPageProps> = ({ repoRoot, branch }) =>
     },
   });
 
+  const loadSeqRef = useRef(0);
+  const lastCachedStatusRef = useRef(getCachedGitRepositoryStatus(repoRoot, { exact: true }));
+
+  useEffect(() => () => {
+    loadSeqRef.current += 1;
+  }, []);
+
   const loadFiles = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setError('');
     try {
       const next = await gitGetChangedFiles(repoRoot);
+      if (seq !== loadSeqRef.current) return;
       setFiles(next);
       setSelectedPath((current) => (
         current && next.some((file) => file.path === current) ? current : next[0]?.path ?? null
       ));
       setRefreshVersion((version) => version + 1);
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       setError(String(err));
       setFiles([]);
       setSelectedPath(null);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, [repoRoot]);
 
   useEffect(() => {
+    lastCachedStatusRef.current = getCachedGitRepositoryStatus(repoRoot, { exact: true });
     void loadFiles();
-  }, [loadFiles]);
+  }, [loadFiles, repoRoot]);
 
-  // 文件面板 / 提交弹窗触发的 Git 状态刷新会更新这份缓存；状态变了就重新读一遍变更列表。
+  // 文件面板 / 提交弹窗触发的 Git 状态刷新会更新这份缓存；仅当当前仓库缓存条目确实更新时重载，避免其它仓库通知拆毁 DiffEditor。
   useEffect(() => {
     const unsubscribe = subscribeGitRepositoryStatus(() => {
       const cached = getCachedGitRepositoryStatus(repoRoot, { exact: true });
-      if (cached?.status && gitRepositoryKey(cached.status.repoRoot) === gitRepositoryKey(repoRoot)) {
+      const prev = lastCachedStatusRef.current;
+      if (
+        cached?.status
+        && gitRepositoryKey(cached.status.repoRoot) === gitRepositoryKey(repoRoot)
+        && (cached.updatedAt !== prev?.updatedAt || cached.status !== prev?.status)
+      ) {
+        lastCachedStatusRef.current = cached;
         void loadFiles();
       }
     });

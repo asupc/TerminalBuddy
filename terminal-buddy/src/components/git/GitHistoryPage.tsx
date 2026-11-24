@@ -1,4 +1,4 @@
-import { FC, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FC, lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import {
   gitGetHistory,
@@ -174,6 +174,126 @@ function historyFileIndent(viewModel: HistoryGraphViewModel): number {
   return 10 + SWIMLANE_WIDTH * (laneCount + 1) + 20;
 }
 
+interface GitHistoryRowProps {
+  viewModel: HistoryGraphViewModel;
+  refs: GitHistoryRef[];
+  range: HistoryRange | null;
+  fileState: HistoryFilesState | undefined;
+  fileIndent: number;
+  isExpanded: boolean;
+  isSelected: boolean;
+  selectedFile: GitHistoryFile | null;
+  onSelectCommit: (hash: string) => void;
+  onToggleFiles: (commit: GitCommit) => void;
+  onSelectFile: (commit: GitCommit, file: GitHistoryFile) => void;
+  onOpenFile: (commit: GitCommit, file: GitHistoryFile) => void;
+}
+
+const GitHistoryRow = memo(function GitHistoryRow({
+  viewModel,
+  refs,
+  range,
+  fileState,
+  fileIndent,
+  isExpanded,
+  isSelected,
+  selectedFile,
+  onSelectCommit,
+  onToggleFiles,
+  onSelectFile,
+  onOpenFile,
+}: GitHistoryRowProps) {
+  const { commit } = viewModel;
+  const visibleRefs = refs.slice(0, 3);
+  const hiddenRefs = refs.slice(3);
+  const rowClassName = [
+    'git-history-graph-row',
+    viewModel.kind,
+    isSelected ? 'selected' : '',
+    commit.parents.length > 1 ? 'merge' : '',
+  ].filter(Boolean).join(' ');
+
+  return (
+    <div className="git-history-entry">
+      <div
+        className={rowClassName}
+        data-commit-hash={commit.hash}
+        onClick={() => onSelectCommit(commit.hash)}
+        onDoubleClick={() => onToggleFiles(commit)}
+        title={historyRowTitle(commit, refs)}
+      >
+        <div className={`git-history-graph-cell ${viewModel.kind}`}>
+          <HistoryGraphSvg viewModel={viewModel} />
+        </div>
+        <button
+          type="button"
+          className={`git-history-expand ${isExpanded ? 'expanded' : ''}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleFiles(commit);
+          }}
+          title={isExpanded ? '收起文件' : '展开文件'}
+          aria-label={isExpanded ? '收起文件' : '展开文件'}
+        >
+          &gt;
+        </button>
+        <div className="git-history-row-main">
+          <span className="git-history-row-subject">{commit.subject}</span>
+          {commit.author && <span className="git-history-row-author">{commit.author}</span>}
+        </div>
+        <div className="git-history-row-refs" title={refsTitle(refs)}>
+          {visibleRefs.map((ref, index) => (
+            <span
+              key={`${ref.fullName}:${ref.revision}`}
+              className={`git-history-ref ${refBadgeClass(ref)} ${index === 0 ? 'primary' : 'icon-only'}`}
+              title={`${ref.fullName}\n${ref.revision}`}
+            >
+              <GitHistoryRefIcon historyRef={ref} />
+              {index === 0 && <span className="git-history-ref-label">{ref.name}</span>}
+            </span>
+          ))}
+          {hiddenRefs.length > 0 && <span className="git-history-ref more" title={refsTitle(hiddenRefs)}>+{hiddenRefs.length}</span>}
+        </div>
+      </div>
+      {isExpanded && (
+        <div className="git-history-files">
+          {fileState?.loading && <div className="git-history-file-message" style={{ paddingLeft: fileIndent }}>加载文件中...</div>}
+          {fileState?.error && <div className="git-history-file-message error" style={{ paddingLeft: fileIndent }}>{fileState.error}</div>}
+          {fileState && !fileState.loading && !fileState.error && fileState.files.length === 0 && (
+            <div className="git-history-file-message" style={{ paddingLeft: fileIndent }}>没有文件变更</div>
+          )}
+          {range && fileState?.files.map((file) => {
+            const isFileSelected = selectedFile !== null
+              && selectedFile.path === file.path
+              && selectedFile.oldPath === file.oldPath;
+            return (
+              <button
+                key={`${file.oldPath ?? ''}:${file.path}:${file.statusCode}`}
+                type="button"
+                className={`git-history-file-row ${isFileSelected ? 'selected' : ''}`}
+                style={{ paddingLeft: fileIndent }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectFile(commit, file);
+                }}
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  void onOpenFile(commit, file);
+                }}
+                title={historyFileTitle(file)}
+              >
+                <span className={`git-history-file-status ${file.statusCode}`}>{file.statusCode}</span>
+                <span className="git-history-file-path">{file.path}</span>
+                <span className="git-history-file-stat">{historyFileStats(file)}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+});
+
 export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch }) => {
   const [historyResult, setHistoryResult] = useState<GitHistoryResult | null>(null);
   const [selectedHistoryHash, setSelectedHistoryHash] = useState<string | null>(null);
@@ -280,6 +400,17 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch }) =>
   }, [loadMoreHistory]);
 
   const historyGraph = useMemo(() => buildHistoryGraph(historyResult), [historyResult]);
+  const historyRows = useMemo(
+    () => historyGraph.viewModels.map((viewModel) => ({
+      viewModel,
+      refs: sortHistoryRefs(viewModel.commit.refs),
+      range: historyRangeForCommit(viewModel.commit, historyResult),
+      fileIndent: historyFileIndent(viewModel),
+    })),
+    [historyGraph, historyResult],
+  );
+  const expandedHistoryKeysRef = useRef(expandedHistoryKeys);
+  expandedHistoryKeysRef.current = expandedHistoryKeys;
 
   useEffect(() => {
     if (!isHistoryDividerDragging) return;
@@ -317,6 +448,7 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch }) =>
   const ensureHistoryFiles = useCallback(async (range: HistoryRange) => {
     const existing = historyFilesByKey[range.key];
     if (existing?.loading || (existing && !existing.error)) return;
+    const requestId = historyLoadRequestRef.current;
 
     setHistoryFilesByKey((current) => ({
       ...current,
@@ -325,11 +457,13 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch }) =>
 
     try {
       const files = await gitGetHistoryFiles(repoRoot, range.fromRevision, range.toRevision);
+      if (historyLoadRequestRef.current !== requestId) return;
       setHistoryFilesByKey((current) => ({
         ...current,
         [range.key]: { loading: false, error: '', files },
       }));
     } catch (err) {
+      if (historyLoadRequestRef.current !== requestId) return;
       setHistoryFilesByKey((current) => ({
         ...current,
         [range.key]: { loading: false, error: String(err), files: [] },
@@ -342,14 +476,11 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch }) =>
     if (!range) return;
 
     setSelectedHistoryHash(commit.hash);
-    let shouldLoad = false;
+    const shouldLoad = !expandedHistoryKeysRef.current.has(range.key);
     setExpandedHistoryKeys((current) => {
       const next = new Set(current);
-      if (next.has(range.key)) next.delete(range.key);
-      else {
-        next.add(range.key);
-        shouldLoad = true;
-      }
+      if (shouldLoad) next.add(range.key);
+      else next.delete(range.key);
       return next;
     });
 
@@ -476,101 +607,27 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch }) =>
           {historyLoading && <div className="git-history-empty">加载中...</div>}
           {!historyLoading && historyError && <div className="git-history-empty error">{historyError}</div>}
           {!historyLoading && !historyError && historyGraph.viewModels.length === 0 && <div className="git-history-empty">暂无历史记录</div>}
-          {!historyLoading && !historyError && historyGraph.viewModels.map((viewModel) => {
+          {!historyLoading && !historyError && historyRows.map(({ viewModel, refs, range, fileIndent }) => {
             const { commit } = viewModel;
-            const refs = sortHistoryRefs(commit.refs);
-            const visibleRefs = refs.slice(0, 3);
-            const hiddenRefs = refs.slice(3);
-            const range = historyRangeForCommit(commit, historyResult);
-                  const fileState = range ? historyFilesByKey[range.key] : undefined;
-                  const fileIndent = historyFileIndent(viewModel);
+            const fileState = range ? historyFilesByKey[range.key] : undefined;
             const isExpanded = Boolean(range && expandedHistoryKeys.has(range.key));
             const isSelected = selectedHistoryHash === commit.hash;
-            const rowClassName = [
-              'git-history-graph-row',
-              viewModel.kind,
-              isSelected ? 'selected' : '',
-              commit.parents.length > 1 ? 'merge' : '',
-            ].filter(Boolean).join(' ');
-
             return (
-              <div key={commit.hash} className="git-history-entry">
-                <div
-                  className={rowClassName}
-                  data-commit-hash={commit.hash}
-                  onClick={() => setSelectedHistoryHash(commit.hash)}
-                  onDoubleClick={() => toggleHistoryFiles(commit)}
-                  title={historyRowTitle(commit, refs)}
-                >
-                  <div className={`git-history-graph-cell ${viewModel.kind}`}>
-                    <HistoryGraphSvg viewModel={viewModel} />
-                  </div>
-                  <button
-                    type="button"
-                    className={`git-history-expand ${isExpanded ? 'expanded' : ''}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      toggleHistoryFiles(commit);
-                    }}
-                    title={isExpanded ? '收起文件' : '展开文件'}
-                    aria-label={isExpanded ? '收起文件' : '展开文件'}
-                  >
-                    &gt;
-                  </button>
-                  <div className="git-history-row-main">
-                    <span className="git-history-row-subject">{commit.subject}</span>
-                    {commit.author && <span className="git-history-row-author">{commit.author}</span>}
-                  </div>
-                  <div className="git-history-row-refs" title={refsTitle(refs)}>
-                    {visibleRefs.map((ref, index) => (
-                      <span
-                        key={`${ref.fullName}:${ref.revision}`}
-                        className={`git-history-ref ${refBadgeClass(ref)} ${index === 0 ? 'primary' : 'icon-only'}`}
-                        title={`${ref.fullName}\n${ref.revision}`}
-                      >
-                        <GitHistoryRefIcon historyRef={ref} />
-                        {index === 0 && <span className="git-history-ref-label">{ref.name}</span>}
-                      </span>
-                    ))}
-                    {hiddenRefs.length > 0 && <span className="git-history-ref more" title={refsTitle(hiddenRefs)}>+{hiddenRefs.length}</span>}
-                  </div>
-                </div>
-                {isExpanded && (
-                  <div className="git-history-files">
-                    {fileState?.loading && <div className="git-history-file-message" style={{ paddingLeft: fileIndent }}>加载文件中...</div>}
-                    {fileState?.error && <div className="git-history-file-message error" style={{ paddingLeft: fileIndent }}>{fileState.error}</div>}
-                    {fileState && !fileState.loading && !fileState.error && fileState.files.length === 0 && (
-                      <div className="git-history-file-message" style={{ paddingLeft: fileIndent }}>没有文件变更</div>
-                    )}
-                    {range && fileState?.files.map((file) => {
-                      const isFileSelected = selectedHistoryFile?.range.key === range.key
-                        && selectedHistoryFile.file.path === file.path
-                        && selectedHistoryFile.file.oldPath === file.oldPath;
-                      return (
-                        <button
-                          key={`${file.oldPath ?? ''}:${file.path}:${file.statusCode}`}
-                          type="button"
-                          className={`git-history-file-row ${isFileSelected ? 'selected' : ''}`}
-                          style={{ paddingLeft: fileIndent }}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            selectHistoryFile(commit, file);
-                          }}
-                          onDoubleClick={(event) => {
-                            event.stopPropagation();
-                            void openHistoryFile(commit, file);
-                          }}
-                          title={historyFileTitle(file)}
-                        >
-                          <span className={`git-history-file-status ${file.statusCode}`}>{file.statusCode}</span>
-                          <span className="git-history-file-path">{file.path}</span>
-                          <span className="git-history-file-stat">{historyFileStats(file)}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              <GitHistoryRow
+                key={commit.hash}
+                viewModel={viewModel}
+                refs={refs}
+                range={range}
+                fileState={fileState}
+                fileIndent={fileIndent}
+                isExpanded={isExpanded}
+                isSelected={isSelected}
+                selectedFile={selectedHistoryFile?.range.key === range?.key ? selectedHistoryFile?.file ?? null : null}
+                onSelectCommit={setSelectedHistoryHash}
+                onToggleFiles={toggleHistoryFiles}
+                onSelectFile={selectHistoryFile}
+                onOpenFile={openHistoryFile}
+              />
             );
           })}
           {!historyLoading && !historyError && historyGraph.viewModels.length > 0 && (

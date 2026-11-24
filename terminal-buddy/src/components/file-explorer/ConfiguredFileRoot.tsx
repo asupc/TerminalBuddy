@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type FC } from 'react';
+import { memo, useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type FC } from 'react';
 import { ChevronRight, Folder, FolderOpen } from 'lucide-react';
 import { listDirectory } from '../../services/tauri';
 import type { FileNode } from '../../services/tauri';
@@ -26,7 +26,7 @@ export interface ConfiguredFileRootProps {
   setRenamingPath: (path: string | null) => void;
 }
 
-export const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
+export const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = memo(({
   path,
   initiallyExpanded = false,
   autoExpandToken,
@@ -213,6 +213,8 @@ export const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
               node={node}
               depth={1}
               parentPath={path}
+              sortBy={sortBy}
+              sortDir={sortDir}
               selectedPath={selectedPath}
               expandedPaths={expandedPaths}
               onExpandedChange={handleChildExpandedChange}
@@ -239,4 +241,4 @@ export const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
       )}
     </div>
   );
-};
+});

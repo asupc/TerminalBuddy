@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback, useLayoutEffect, type FC } from 'react';
+import { memo, useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, type FC } from 'react';
 import { File, Folder } from 'lucide-react';
 import type { FileNode } from '../../services/tauri';
 import { isTextFile } from '../../utils/fileExtensions';
-import { DIRECTORY_RENDER_PAGE_SIZE, scrollFileTreeItemToTop } from './file-utils';
+import { compareNodes, DIRECTORY_RENDER_PAGE_SIZE, scrollFileTreeItemToTop } from './file-utils';
 import { listDirectory, openPath, getFileSize } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { getAppSettings } from '../../utils/settings';
@@ -13,6 +13,8 @@ export interface TreeNodeProps {
   node: FileNode;
   depth: number;
   parentPath: string;
+  sortBy?: 'name' | 'size' | 'modified';
+  sortDir?: 'asc' | 'desc';
   selectedPath: string | null;
   /** 展开状态由父级统一保存：刷新/删除导致重新挂载时不会丢失已展开的目录。 */
   expandedPaths: Set<string>;
@@ -30,7 +32,7 @@ export interface TreeNodeProps {
 
 
 
-export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedPath, expandedPaths, onExpandedChange, refreshVersion, onActivate, onSelect, onNavigate, onContextMenu, onRename, renamingPath, setRenamingPath }) => {
+export const TreeNode: FC<TreeNodeProps> = memo(({ node, depth, parentPath, sortBy = 'name', sortDir = 'asc', selectedPath, expandedPaths, onExpandedChange, refreshVersion, onActivate, onSelect, onNavigate, onContextMenu, onRename, renamingPath, setRenamingPath }) => {
   const expanded = expandedPaths.has(node.path);
   const [children, setChildren] = useState<FileNode[]>([]);
   const [visibleChildCount, setVisibleChildCount] = useState(DIRECTORY_RENDER_PAGE_SIZE);
@@ -123,6 +125,11 @@ export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedP
     scrollFileTreeItemToTop(itemRef.current);
   }, [children, expanded, loading]);
 
+  const sortedChildren = useMemo(
+    () => [...children].sort((a, b) => compareNodes(a, b, sortBy, sortDir)),
+    [children, sortBy, sortDir],
+  );
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'c' && e.ctrlKey && !e.shiftKey) {
       if (renameInputRef.current === document.activeElement) return;
@@ -135,7 +142,6 @@ export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedP
       e.stopPropagation();
       setRenameValue(node.name);
       setRenamingPath(node.path);
-      setTimeout(() => renameInputRef.current?.select(), 0);
     }
   }, [node.path, node.name, isSelected, setRenamingPath]);
 
@@ -153,13 +159,16 @@ export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedP
     setRenamingPath(null);
   }, [setRenamingPath]);
 
-  // Auto-focus when entering rename mode
+  // Auto-focus and sync initial filename when entering rename mode (covers both F2 and context menu).
   useEffect(() => {
-    if (isRenaming && renameInputRef.current) {
-      renameInputRef.current.focus();
-      renameInputRef.current.select();
-    }
-  }, [isRenaming]);
+    if (!isRenaming) return;
+    setRenameValue(node.name);
+    const frame = requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isRenaming, node.name]);
 
   return (
     <div className="tree-node">
@@ -237,14 +246,16 @@ export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedP
           加载中...
         </div>
       )}
-      {expanded && children.length > 0 && (
+      {expanded && sortedChildren.length > 0 && (
         <div className="tree-children">
-          {children.slice(0, visibleChildCount).map((child) => (
+          {sortedChildren.slice(0, visibleChildCount).map((child) => (
             <TreeNode
               key={child.path}
               node={child}
               depth={depth + 1}
               parentPath={node.path}
+              sortBy={sortBy}
+              sortDir={sortDir}
               selectedPath={selectedPath}
               expandedPaths={expandedPaths}
               onExpandedChange={onExpandedChange}
@@ -258,17 +269,17 @@ export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedP
               setRenamingPath={setRenamingPath}
             />
           ))}
-          {visibleChildCount < children.length && (
+          {visibleChildCount < sortedChildren.length && (
             <button
               type="button"
               className="tree-load-more"
               onClick={() => setVisibleChildCount(count => count + DIRECTORY_RENDER_PAGE_SIZE)}
             >
-              显示更多（剩余 {children.length - visibleChildCount} 项）
+              显示更多（剩余 {sortedChildren.length - visibleChildCount} 项）
             </button>
           )}
         </div>
       )}
     </div>
   );
-};
+});

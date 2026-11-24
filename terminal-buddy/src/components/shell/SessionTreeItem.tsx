@@ -6,7 +6,6 @@ import { ChevronRight, Folder, FolderOpen, X } from 'lucide-react';
 import { useAppStore, type GitChangesTab, type GitHistoryTab, type NativeAgentTab } from '../../stores/appStore';
 import { formatDuration } from '../../utils/formatDuration';
 import { isDockerClient } from '../../services/platform';
-import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName, type IndicatorLight } from '../../utils/claudeIndicator';
 import type { TreeItem } from '../file-explorer/TreeView';
 import type { TerminalSession } from '../../types';
 
@@ -72,7 +71,6 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
   const taskProviders = useTaskSummaryStore(s => s.providers);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
-  const terminalActivities = useAppStore(s => s.terminalActivities);
   const terminalWebTakeovers = useAppStore(s => s.terminalWebTakeovers);
   const agentTabs = useAppStore(s => s.agentTabs);
   const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
@@ -84,21 +82,20 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
   const renderGroupEnd = (groupItem: TreeItem) => {
     if (!groupItem.isGroup || !groupItem.children) return null;
     // Recursively collect all leaf IDs from this group and its sub-groups
-    const collectLeafIds = (treeItem: TreeItem): string[] => {
-      const ids: string[] = [];
-      if (!treeItem.isGroup && treeItem.id) ids.push(treeItem.id);
+    const leafIds = new Set<string>();
+    const collectLeafIds = (treeItem: TreeItem) => {
+      if (!treeItem.isGroup && treeItem.id) leafIds.add(treeItem.id);
       for (const child of (treeItem.children || [])) {
-        ids.push(...collectLeafIds(child));
+        collectLeafIds(child);
       }
-      return ids;
     };
-    const allLeafIds = collectLeafIds(groupItem);
-    const groupSessions = sessions.filter(s => allLeafIds.includes(s.id));
-    const groupAgentKeys = agentTabs.filter(tab => tab.shape === 'native' && allLeafIds.includes(tab.key)).map(tab => tab.key);
+    collectLeafIds(groupItem);
+    const groupSessions = sessions.filter(s => leafIds.has(s.id));
+    const groupAgentKeys = agentTabs.filter(tab => tab.shape === 'native' && leafIds.has(tab.key)).map(tab => tab.key);
     // Git 特殊页（未提交变更 / 历史记录）也算分组内的标签，但不参与「关闭分组」（它们属于项目视图）。
     const gitPagesCount =
-      (allLeafIds.includes('__git_changes__') ? 1 : 0) +
-      (allLeafIds.includes('__git_history__') ? 1 : 0);
+      (leafIds.has('__git_changes__') ? 1 : 0) +
+      (leafIds.has('__git_history__') ? 1 : 0);
     return (
       <span className="tree-item-end">
         <span className="tree-item-count">{groupSessions.length + groupAgentKeys.length + gitPagesCount}</span>
@@ -149,30 +146,6 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
       </span>
     </div>
   );
-
-  // 灯点击语义：failed 长红点击清除；attention 点击跳终端处理
-  const onLedClick = (e: React.MouseEvent, id: string, light: IndicatorLight) => {
-    if (light !== 'failed' && light !== 'attention') return;
-    e.stopPropagation();
-    const store = useAppStore.getState();
-    if (light === 'failed') {
-      store.clearClaudeFailure(id);
-    } else {
-      store.setActiveSession(id);
-    }
-  };
-
-  const renderLedDot = (id: string, tabColor?: string | null) => {
-    const light = getIndicatorLight(terminalActivities[id]);
-    return (
-      <span
-        className={`tab-nav-dot${getIndicatorClassName(light)}`}
-        style={{ background: getIndicatorColor(light, tabColor) }}
-        title={getIndicatorTitle(light, terminalActivities[id]?.provider) || undefined}
-        onClick={(e) => onLedClick(e, id, light)}
-      />
-    );
-  };
 
   return (
     <div>
@@ -302,7 +275,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
           <div key={child.id}>
             {renamingSessionId === child.id ? (
               <div className="tree-item" style={{ paddingLeft: `${indent + 12}px` }}>
-                {child.icon || renderLedDot(child.id, (child.data as TerminalSession | undefined)?.tabColor)}
+                {child.icon}
                 <input
                   ref={renameInputRef}
                   className="tree-rename-input"
@@ -341,7 +314,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                 onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onCloseSession(child.id); } }}
                 onContextMenu={(e) => onContextMenu(e, child.id)}
               >
-                {child.icon || renderLedDot(child.id, (child.data as TerminalSession | undefined)?.tabColor)}
+                {child.icon}
                 {provider ? (
                   <SessionTaskLabel task={task} fallbackName={fallbackName} fallbackProvider={provider} color={childSession?.tabColor} manualTitle={childSession?.manualTitle} />
                 ) : (

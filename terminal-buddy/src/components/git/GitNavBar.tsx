@@ -44,18 +44,22 @@ export interface GitNavBarHandle {
 export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
   ({ currentDirectory, showToolbar = true, onRepositoryChanged, variant = 'panel', terminalActivityAt }, ref) => {
   const isStatusBar = variant === 'statusbar';
+  const matchesTargetRepository = (repo: GitRepositoryStatus | null | undefined, targetDir: string) =>
+    Boolean(repo && (isStatusBar || gitRepositoryKey(repo.repoRoot) === gitRepositoryKey(targetDir)));
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const openGitChangesTab = useAppStore(s => s.openGitChangesTab);
   const initialCachedStatus = getCachedGitRepositoryStatus(currentDirectory, { exact: true });
   const initialStatus = initialCachedStatus?.status;
-  const [status, setStatus] = useState<GitRepositoryStatus | null>(initialStatus
-    && gitRepositoryKey(initialStatus.repoRoot) === gitRepositoryKey(currentDirectory) ? initialStatus : null);
+  const [status, setStatus] = useState<GitRepositoryStatus | null>(
+    matchesTargetRepository(initialStatus, currentDirectory) ? initialStatus! : null,
+  );
   const [statusResolved, setStatusResolved] = useState(Boolean(initialCachedStatus));
   const [loadError, setLoadError] = useState('');
   const [popover, setPopover] = useState<GitPopover>(null);
+  const operationKey = status?.repoRoot ?? currentDirectory;
   const operation = useSyncExternalStore(
     subscribeGitOperations,
-    useCallback(() => getGitOperation(currentDirectory), [currentDirectory]),
+    useCallback(() => getGitOperation(operationKey), [operationKey]),
   );
   const action: GitAction = operation?.action ?? null;
   const [lastOperation, setLastOperation] = useState<GitAction>(null);
@@ -90,7 +94,7 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
     setPopover(null);
     setBranches([]);
     setLoadError('');
-    setStatus(cached?.status && gitRepositoryKey(cached.status.repoRoot) === gitRepositoryKey(currentDirectory)
+    setStatus(cached?.status && (isStatusBar || gitRepositoryKey(cached.status.repoRoot) === gitRepositoryKey(currentDirectory))
       ? cached.status : null);
     setStatusResolved(Boolean(cached));
     if (!currentDirectory) {
@@ -100,8 +104,8 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
     const applyCachedStatus = () => {
       const nextCached = getCachedGitRepositoryStatus(currentDirectory, { exact: true });
       if (!nextCached || cancelled) return;
-      // 旧的嵌套仓库被移除后，不能把其父仓库状态塞进旧控制器并误执行操作。
-      setStatus(nextCached.status && gitRepositoryKey(nextCached.status.repoRoot) === gitRepositoryKey(currentDirectory)
+      // 非状态栏控制器绑定仓库根目录；旧的嵌套仓库被移除后，不能把其父仓库状态塞进旧控制器。
+      setStatus(nextCached.status && (isStatusBar || gitRepositoryKey(nextCached.status.repoRoot) === gitRepositoryKey(currentDirectory))
         ? nextCached.status : null);
       setStatusResolved(true);
       setLoadError('');
@@ -123,7 +127,7 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
       cancelled = true;
       unsubscribe();
     };
-  }, [currentDirectory]);
+  }, [currentDirectory, isStatusBar]);
 
   useEffect(() => {
     if (!popover) return;
@@ -158,7 +162,7 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
     if (currentDirectoryRef.current === requestedDirectory) setLoadError('');
     try {
       const next = await loadGitRepositoryStatus(requestedDirectory, { force: true, exact: true });
-      const matchingStatus = next && gitRepositoryKey(next.repoRoot) === gitRepositoryKey(requestedDirectory) ? next : null;
+      const matchingStatus = next && (isStatusBar || gitRepositoryKey(next.repoRoot) === gitRepositoryKey(requestedDirectory)) ? next : null;
       if (currentDirectoryRef.current === requestedDirectory) {
         setStatus(matchingStatus);
         setStatusResolved(true);
@@ -171,7 +175,7 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
       }
       return null;
     }
-  }, [currentDirectory]);
+  }, [currentDirectory, isStatusBar]);
 
   // 终端里直接敲 git checkout / git switch 不会经过本组件，状态栏分支会停在旧值。
   // 页面可见时定期校对一次，窗口重新获得焦点时立即补一次；操作进行中交给操作结束后的刷新。
@@ -483,7 +487,11 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
   const loadBranches = useCallback(async () => {
     if (!status || getGitOperation(status.repoRoot)) return;
     const nextOpen = popover !== 'branches';
-    if (nextOpen && isStatusBar) {
+    if (!nextOpen) {
+      setPopover(null);
+      return;
+    }
+    if (isStatusBar) {
       // 状态栏在窗口底部，浮层固定定位到状态栏上方，避免被 overflow: hidden 裁剪。
       const rect = rootRef.current?.getBoundingClientRect();
       setPopoverAnchor(rect
@@ -493,15 +501,23 @@ export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
           }
         : null);
     }
-    setPopover(nextOpen ? 'branches' : null);
+    const requestedDirectory = currentDirectoryRef.current;
+    setPopover('branches');
     setBranchesLoading(true);
     setBranches([]);
     try {
-      setBranches(await gitListBranches(status.repoRoot));
+      const result = await gitListBranches(status.repoRoot);
+      if (currentDirectoryRef.current === requestedDirectory) {
+        setBranches(result);
+      }
     } catch (err) {
-      void showAlert(`读取分支失败：${String(err)}`, '读取分支失败');
+      if (currentDirectoryRef.current === requestedDirectory) {
+        void showAlert(`读取分支失败：${String(err)}`, '读取分支失败');
+      }
     } finally {
-      setBranchesLoading(false);
+      if (currentDirectoryRef.current === requestedDirectory) {
+        setBranchesLoading(false);
+      }
     }
   }, [isStatusBar, popover, status]);
 

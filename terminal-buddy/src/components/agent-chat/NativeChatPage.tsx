@@ -45,6 +45,10 @@ const STATUS_LABEL: Record<string, string> = {
   error: '出错',
 };
 
+const EMPTY_APPROVALS: AiSession['approvals'] = [];
+const EMPTY_TODOS: NonNullable<AiSession['todos']> = [];
+const EMPTY_AGENTS: NonNullable<AiSession['agents']> = [];
+
 /** 增量帧合并：流式期间的帧几乎只更新/追加尾部消息，先在尾部小窗口内定位，
  * 命中不到再退回全量索引 Map，避免每帧 O(n) 重建 Map（审查 V-17）。 */
 const MERGE_TAIL_SCAN = 8;
@@ -422,13 +426,18 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     setError(null);
     try {
       const images = await Promise.all(files.map(readDraftImage));
-      const room = Math.max(0, MAX_DRAFT_IMAGES - draftImages.length);
+      const current = useAppStore.getState().agentDraftImages[tab.key] ?? EMPTY_DRAFT_IMAGES;
+      const room = Math.max(0, MAX_DRAFT_IMAGES - current.length);
       if (images.length > room) setError(`一次最多发送 ${MAX_DRAFT_IMAGES} 张图片`);
-      if (room > 0) setDraftImages([...draftImages, ...images.slice(0, room)]);
+      if (room > 0) setDraftImages([...current, ...images.slice(0, room)]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [draftImages, setDraftImages]);
+  }, [tab.key, setDraftImages]);
+
+  const jumpToNode = useCallback((id: string) => {
+    listRef.current?.jumpTo(id);
+  }, []);
 
   const removeDraftImage = useCallback((id: string) => {
     setDraftImages(draftImages.filter(image => image.id !== id));
@@ -635,7 +644,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
           ref={listRef}
           provider={tab.provider}
           blocks={blocks}
-          approvals={session?.approvals ?? []}
+          approvals={session?.approvals ?? EMPTY_APPROVALS}
           sessionError={session?.error ?? null}
           localError={error}
           busy={busy}
@@ -651,7 +660,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
         <ChatNodeRail
           nodes={outlineNodes}
           activeId={activeNodeId}
-          onJump={id => listRef.current?.jumpTo(id)}
+          onJump={jumpToNode}
         />
         {selected && drawerAgent && (
           <AgentDrawer
@@ -664,9 +673,9 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
       </div>
 
       <footer className="agent-chat-composer">
-        <TodoCard todos={session?.todos ?? []} sessionId={tab.sessionId} running={running} />
+        <TodoCard todos={session?.todos ?? EMPTY_TODOS} sessionId={tab.sessionId} running={running} />
         <AgentChips
-          agents={session?.agents ?? []}
+          agents={session?.agents ?? EMPTY_AGENTS}
           selectedKey={selected?.agent.toolUseId ?? null}
           onSelect={openAgent}
           sessionId={tab.sessionId}

@@ -2,8 +2,9 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { register, unregister } from '@tauri-apps/plugin-global-shortcut';
 import { isTerminalWorking, useAppStore } from '../stores/appStore';
 import { getAppSettings, matchesHotkey } from '../utils/settings';
-import { closeTerminal } from './tauri';
+import { closeTerminal, readFileContent } from './tauri';
 import { showConfirm } from './dialog';
+import { isDraftEditorPath } from '../hooks/useSessionCloseActions';
 
 export type HotkeyActionId =
   | 'showWindow' | 'toggleConfigNav' | 'toggleFileNav'
@@ -58,6 +59,24 @@ registerHotkeyAction('closeTab', () => {
   if (!sessionId) return;
   const session = store.sessions.find(s => s.id === sessionId);
   if (session?.sessionType === 'editor') {
+    if (isDraftEditorPath(session.profileId)) {
+      void (async () => {
+        let hasContent = false;
+        try {
+          hasContent = Boolean(await readFileContent(session.profileId));
+        } catch {}
+        if (hasContent) {
+          const confirmed = await showConfirm(
+            `临时文件「${session.profileName}」有未保存的内容，确定关闭并删除吗？`,
+            { title: '未保存的临时文件' },
+          );
+          if (!confirmed) return;
+        }
+        await store.removeDraftFile(session.profileId);
+        store.removeSession(sessionId);
+      })();
+      return;
+    }
     if (session.isDirty) {
       void (async () => {
         const confirmed = await showConfirm(

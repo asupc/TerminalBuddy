@@ -388,7 +388,7 @@ function blockKey(block: ChatBlock): string {
   return block.message.id;
 }
 
-export function AgentMessageList({
+export const AgentMessageList = memo(function AgentMessageList({
   ref,
   provider,
   blocks,
@@ -523,25 +523,37 @@ export function AgentMessageList({
   }, [blocks.length]);
 
   // 流式追加时贴底跟随。两阶段校准：新块先以估算高度占位，第一帧把渲染窗口扩到尾部，
-  // 第二帧真身进 DOM、总高度稳定后再贴底——否则视口会停在占位时代的估算位置，
-  // 底部的思考呼吸点看起来就像「消失了」。
+  // 第二帧真身进 DOM、总高度稳定后再贴底——使用持久 rAF 调度避免高频流式 chunk 持续取消重排。
+  const recomputeRef = useRef(recompute);
+  recomputeRef.current = recompute;
+  const stickRafRef = useRef<{ raf1: number; raf2: number }>({ raf1: 0, raf2: 0 });
+  const stickPendingRef = useRef(false);
+  useEffect(() => () => {
+    cancelAnimationFrame(stickRafRef.current.raf1);
+    cancelAnimationFrame(stickRafRef.current.raf2);
+  }, []);
   useEffect(() => {
     if (!stickRef.current) return;
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      recompute();
-      raf2 = requestAnimationFrame(() => {
-        const element = scrollRef.current;
-        if (element && stickRef.current) element.scrollTop = element.scrollHeight;
+    stickPendingRef.current = true;
+    if (stickRafRef.current.raf1 || stickRafRef.current.raf2) return;
+    const schedule = () => {
+      stickPendingRef.current = false;
+      stickRafRef.current.raf1 = requestAnimationFrame(() => {
+        stickRafRef.current.raf1 = 0;
+        recomputeRef.current();
+        stickRafRef.current.raf2 = requestAnimationFrame(() => {
+          stickRafRef.current.raf2 = 0;
+          const element = scrollRef.current;
+          if (element && stickRef.current) element.scrollTop = element.scrollHeight;
+          if (stickPendingRef.current && stickRef.current) schedule();
+        });
       });
-    });
-    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+    };
+    schedule();
   }, [blocks, busy, recompute, stickRef]);
 
   // 容器尺寸变化（窗口缩放、侧栏开合）后重算窗口。recompute 的 identity 随
   // blocks 每帧变化（流式期间），通过 ref 引用最新实现，观察器只建一次（审查 V-13）。
-  const recomputeRef = useRef(recompute);
-  recomputeRef.current = recompute;
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
@@ -686,4 +698,4 @@ export function AgentMessageList({
       )}
     </div>
   );
-}
+});

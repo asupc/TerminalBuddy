@@ -11,6 +11,8 @@ const HISTORY_DIFF_OPTIONS: MonacoEditor.IDiffEditorConstructionOptions = {
   automaticLayout: true,
   renderSideBySide: true,
   minimap: { enabled: false },
+  // 同未提交变更页：关掉 Monaco 默认 30px 宽的 diff overview，避免右侧出现一根过粗的“滚动条”。
+  renderOverviewRuler: false,
   scrollBeyondLastLine: false,
   wordWrap: 'off',
   folding: true,

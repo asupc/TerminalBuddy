@@ -171,6 +171,7 @@ export function Dialog({
   }, []);
 
   useEffect(() => {
+    if (!mounted) return;
     const stackId = stackIdRef.current;
     const previouslyFocused = document.activeElement instanceof HTMLElement
       ? document.activeElement
@@ -190,7 +191,7 @@ export function Dialog({
       // 离场阶段忽略键盘，避免反复触发关闭
       if (phaseRef.current === 'leave') return;
 
-      if (event.key === 'Escape' && !closeDisabledRef.current) {
+      if (event.key === 'Escape' && !event.defaultPrevented && !closeDisabledRef.current) {
         event.preventDefault();
         event.stopImmediatePropagation();
         onCloseRef.current();
@@ -217,17 +218,18 @@ export function Dialog({
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown, true);
+    // 使用冒泡阶段监听 Escape，让内部下拉框/地址栏先拦截 Escape 并关闭自身而不误关外层弹窗。
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
       if (focusFrame !== null) cancelAnimationFrame(focusFrame);
-      document.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('keydown', handleKeyDown);
       const index = dialogStack.lastIndexOf(stackId);
       if (index >= 0) dialogStack.splice(index, 1);
       dragCleanupRef.current?.();
       resizeCleanupRef.current?.();
       if (autoFocus && previouslyFocused?.isConnected) previouslyFocused.focus();
     };
-  }, [autoFocus, modal]);
+  }, [autoFocus, modal, mounted]);
 
   const handleDragStart = (event: ReactPointerEvent<HTMLElement>) => {
     if (!event.isPrimary || event.button !== 0) return;

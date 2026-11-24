@@ -175,6 +175,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
   const scrollThumbRef = useRef<HTMLDivElement>(null);
   const scrollThumbHeightRef = useRef(0);
   const scrollViewportRef = useRef<HTMLElement | null>(null);
+  const scrollbarDragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => {
+    scrollbarDragCleanupRef.current?.();
+  }, []);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const autocompletePopupRef = useRef<HTMLDivElement>(null);
   const autocompleteRef = useRef<typeof autocomplete>(null);
@@ -561,7 +565,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
       void bootLog(`initTerminal[${terminalId}]: terminal traits took ${(performance.now() - tBuildNum).toFixed(0)}ms, build=${buildNumber}, mode=${terminalLoadingMode}`);
 
       const tNewTerm = performance.now();
-      const initialColors = colorTheme || {
+      const initialColors = colorThemeRef.current || {
         background: '#1e1e1e',
         foreground: '#cccccc',
       };
@@ -1000,7 +1004,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
 
         const isBracketedPaste = data.startsWith('\x1b[200~');
         if (isBracketedPaste) {
-          const inner = data.slice(6, -5);
+          const inner = data.endsWith('\x1b[201~') ? data.slice(6, -6) : data.slice(6);
           // 粘贴内容中可能包含 cd 命令，提取最后一个 cd 的目标目录
           const lines = inner.split(/\r?\n/);
           for (const ln of lines) {
@@ -1252,6 +1256,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
           e.stopPropagation();
           // Try reading file paths from clipboard first (files copied in Explorer)
           readClipboardFilePaths().then((paths) => {
+            if (disposed || readOnlyRef.current) return;
             if (paths.length > 0) {
               const IMAGE_EXT = /\.(png|jpg|jpeg|gif|bmp|ico|svg|webp|tiff|tif)$/i;
               if (paths.length === 1 && IMAGE_EXT.test(paths[0])) {
@@ -1262,7 +1267,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
             } else {
               // No file paths — fall back to image (e.g. screenshot), then text
               void pasteFromClipboard().then((result) => {
-                if (!result) return;
+                if (disposed || readOnlyRef.current || !result) return;
                 if (result.kind === 'image') {
                   onOutputRef.current(terminalId, `[图片:${result.path}]`);
                   return;
@@ -1271,20 +1276,17 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
                 const trimmed = text.trim();
                 if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
                   onOutputRef.current(terminalId, trimmed.replace(/"/g, '\\"'));
-                } else if (text.includes('\n') || text.includes('\r')) {
-                  // 多行粘贴统一走 sendPastedText（H-7）：行尾归一化为 CR。
-                  // 此前此处把行尾归一化成 LF，ConPTY 会把 LF 当 Ctrl+Enter 上报，
-                  // 在 kitty 键盘协议 TUI（Claude Code/Codex 等）里粘贴内容被逐行提交。
-                  sendPastedText(text);
                 } else {
+                  // 多行粘贴统一走 sendPastedText（H-7）：行尾归一化为 CR，避免 ConPTY 当 Ctrl+Enter 上报
                   sendPastedText(text);
                 }
               });
             }
           }).catch(() => {
+            if (disposed || readOnlyRef.current) return;
             // readClipboardFilePaths 失败（无文件剪贴板权限等）→ 图片/文本回退
             void pasteFromClipboard().then((result) => {
-              if (!result) return;
+              if (disposed || readOnlyRef.current || !result) return;
               if (result.kind === 'image') {
                 onOutputRef.current(terminalId, `[图片:${result.path}]`);
               } else {
@@ -1344,7 +1346,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
         pasteState.inFlight = true;
 
         void pasteFromClipboard().then((result) => {
-          if (readOnlyRef.current || !result) return;
+          if (disposed || readOnlyRef.current || !result) return;
           if (result.kind === 'image') {
             onOutputRef.current(terminalId, `[图片:${result.path}]`);
           } else {
@@ -1579,6 +1581,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
         void bootLog(`initTerminal[${terminalId}]: drainTerminalOutput took ${(performance.now() - tDrain).toFixed(0)}ms, len=${drained?.length ?? 0}`);
       } catch (err) {
         console.error('Failed to drain terminal output:', err);
+        if (!disposed) {
+          terminalOutputAttached = true;
+          if (pendingLiveOutput.length > 0) {
+            const pending = pendingLiveOutput.join('');
+            pendingLiveOutput.length = 0;
+            pendingLiveChars = 0;
+            handleOutput(pending);
+          }
+        }
       }
     })();
 
@@ -1710,7 +1721,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
       }
     } else if (!readOnlyRef.current) {
       void pasteFromClipboard().then((result) => {
-        if (readOnlyRef.current || !result) return;
+        if (xtermRef.current !== terminal || readOnlyRef.current || !result) return;
         if (result.kind === 'image') {
           onOutputRef.current(terminalId, `[图片:${result.path}]`);
         } else {
@@ -1954,9 +1965,17 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
                 vp.scrollTop = startScrollTop + (delta / maxThumbTop) * maxScrollTop;
               };
               const onUp = () => {
+                cleanup();
+              };
+              const cleanup = () => {
                 document.removeEventListener('mousemove', onMove);
                 document.removeEventListener('mouseup', onUp);
+                if (scrollbarDragCleanupRef.current === cleanup) {
+                  scrollbarDragCleanupRef.current = null;
+                }
               };
+              scrollbarDragCleanupRef.current?.();
+              scrollbarDragCleanupRef.current = cleanup;
               document.addEventListener('mousemove', onMove);
               document.addEventListener('mouseup', onUp);
             }}

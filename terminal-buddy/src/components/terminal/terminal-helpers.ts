@@ -475,6 +475,7 @@ export function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor
   }
 
   const syncTextareaAnchor = () => {
+    if (document.activeElement !== textarea) return;
     // 原生右键菜单依赖 xterm 把 textarea 放在鼠标下，不能被 IME 锚点移走。
     if (terminal.element?.hasAttribute('data-native-context-menu-open')) return;
     originalSyncTextArea?.();
@@ -490,6 +491,7 @@ export function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor
 
   // 将高频光标/渲染事件合并到下一帧单次同步；聚焦期间不再使用自递归 rAF 空转。
   const scheduleTextareaSync = () => {
+    if (document.activeElement !== textarea) return;
     if (syncRaf !== null) return;
     syncRaf = window.requestAnimationFrame(() => {
       syncRaf = null;

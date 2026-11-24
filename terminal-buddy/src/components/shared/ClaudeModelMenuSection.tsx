@@ -109,15 +109,19 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
     setSubPos({ left, top });
   }, [openSub]);
 
-  // 锚点随窗口缩放或菜单滚动移动后坐标失效，直接收起。
+  // 锚点随窗口缩放或菜单滚动移动后坐标失效，直接收起；子菜单自身内部滚动不收起。
   useEffect(() => {
     if (!openSub) return;
     const close = () => setOpenSub(null);
+    const handleScroll = (event: Event) => {
+      if (event.target instanceof Node && subRef.current?.contains(event.target)) return;
+      setOpenSub(null);
+    };
     window.addEventListener('resize', close);
-    document.addEventListener('scroll', close, true);
+    document.addEventListener('scroll', handleScroll, true);
     return () => {
       window.removeEventListener('resize', close);
-      document.removeEventListener('scroll', close, true);
+      document.removeEventListener('scroll', handleScroll, true);
     };
   }, [openSub]);
 

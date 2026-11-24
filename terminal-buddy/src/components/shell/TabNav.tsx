@@ -314,7 +314,9 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                             onClick={(e) => {
                               if (light !== 'failed' && light !== 'attention') return;
                               e.stopPropagation();
-                              if (light === 'failed') useAppStore.getState().clearClaudeFailure(session.id);
+                              const store = useAppStore.getState();
+                              if (light === 'failed') store.clearClaudeFailure(session.id);
+                              else store.setActiveSession(session.id);
                             }}
                           />
                         );

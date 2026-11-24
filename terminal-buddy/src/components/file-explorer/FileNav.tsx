@@ -47,8 +47,15 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
   const tabProjectDirectory = useActiveTabProjectDirectory();
-  const sessionDirectories = useAppStore(s => s.sessionDirectories);
-  const sessions = useAppStore(s => s.sessions);
+  const trackedActiveDirectory = useAppStore(s => s.activeSessionId ? (s.sessionDirectories[s.activeSessionId]?.trim() ?? '') : '');
+  const activeSessionTerminalType = useAppStore(s => {
+    const found = s.activeSessionId ? s.sessions.find(item => item.id === s.activeSessionId) : undefined;
+    return found?.terminalType ?? null;
+  });
+  const activeSessionProfileId = useAppStore(s => {
+    const found = s.activeSessionId ? s.sessions.find(item => item.id === s.activeSessionId) : undefined;
+    return found?.profileId ?? null;
+  });
   const profiles = useAppStore(s => s.profiles);
   const projects = useAppStore(s => s.projects);
   const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
@@ -79,13 +86,12 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   const ctxMenuRef = useRef<HTMLDivElement>(null);
   const customPathInputRef = useRef<HTMLInputElement>(null);
 
-  const activeSession = sessions.find(s => s.id === activeSessionId);
-  const isSsh = activeSession?.terminalType === 'ssh';
+  const isSsh = activeSessionTerminalType === 'ssh';
   const configuredDirectories = useMemo(() => {
     const uniquePaths = new Map<string, string>();
     for (const project of projects) {
       const path = normalizeConfiguredPath(project.path);
-      if (path) uniquePaths.set(path.toLowerCase(), path);
+      if (path) uniquePaths.set(rootKey(path), path);
     }
     for (const profile of profiles) {
       const path = normalizeConfiguredPath(effectiveProfilePath(profile, projects));
@@ -145,23 +151,22 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   }, [activeSessionId, activeSpecialTab, claudeReplayTab?.sessionId, activeProjectRoot]);
 
   const fileRootKeys = useMemo(
-    () => new Set(rootDirectories.map(path => path.toLowerCase())),
+    () => new Set(rootDirectories.map(rootKey)),
     [rootDirectories],
   );
 
   const availableDirectories = useMemo(
-    () => configuredDirectories.filter(path => !fileRootKeys.has(path.toLowerCase())),
+    () => configuredDirectories.filter(path => !fileRootKeys.has(rootKey(path))),
     [configuredDirectories, fileRootKeys],
   );
 
   const activeSessionDirectory = useMemo(() => {
     if (!activeSessionId) return '';
-    const trackedDirectory = sessionDirectories[activeSessionId]?.trim();
-    if (trackedDirectory) return trackedDirectory;
-    const session = sessions.find(item => item.id === activeSessionId);
-    if (!session) return '';
-    return (() => { const profile = profiles.find(p => p.id === session.profileId); return profile ? effectiveProfilePath(profile, projects) : ''; })();
-  }, [activeSessionId, profiles, projects, sessionDirectories, sessions]);
+    if (trackedActiveDirectory) return trackedActiveDirectory;
+    if (!activeSessionProfileId) return '';
+    const profile = profiles.find(p => p.id === activeSessionProfileId);
+    return profile ? effectiveProfilePath(profile, projects) : '';
+  }, [activeSessionId, activeSessionProfileId, profiles, projects, trackedActiveDirectory]);
 
   const gitTargetDirectory = gitTargetOverride
     || tabProjectDirectory
@@ -178,7 +183,8 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   }, [filterQuery, rootDirectories]);
   const displayedRootDirectories = useMemo(() => {
     if (!focusedRootPath) return visibleConfiguredDirectories;
-    const focusedRoot = rootDirectories.find(path => path.toLowerCase() === focusedRootPath.toLowerCase());
+    const focusedKey = rootKey(focusedRootPath);
+    const focusedRoot = rootDirectories.find(path => rootKey(path) === focusedKey);
     return focusedRoot ? [focusedRoot] : visibleConfiguredDirectories;
   }, [focusedRootPath, rootDirectories, visibleConfiguredDirectories]);
   useEffect(() => {
@@ -211,7 +217,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
     );
     setSelectedPath(path => path && !belongsToVisibleTree(path) ? null : path);
     setGitTargetOverride(path => path && !belongsToVisibleTree(path) ? null : path);
-    setFocusedRootPath(path => path && !rootDirectories.some(root => root.toLowerCase() === path.toLowerCase()) ? null : path);
+    setFocusedRootPath(path => path && !rootDirectories.some(root => rootKey(root) === rootKey(path)) ? null : path);
   }, [rootDirectories]);
 
   useEffect(() => {
@@ -376,8 +382,8 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
         setCustomPathError('路径无效');
         return;
       }
-      const normalizedKey = normalizedPath.toLowerCase();
-      if (rootDirectories.some(root => root.toLowerCase() === normalizedKey)) {
+      const normalizedKey = rootKey(normalizedPath);
+      if (rootDirectories.some(root => rootKey(root) === normalizedKey)) {
         setCustomPathError('已在文件列表中');
         return;
       }
@@ -416,7 +422,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
 
   const handleRemoveRoot = useCallback((path: string) => {
     removeFileRoot(path);
-    setFocusedRootPath(current => current?.toLowerCase() === path.toLowerCase() ? null : current);
+    setFocusedRootPath(current => current && rootKey(current) === rootKey(path) ? null : current);
     setSelectedPath(current => current && isPathEqualOrInside(current, path) ? null : current);
     setGitTargetOverride(current => current && isPathEqualOrInside(current, path) ? null : current);
     if (rootDirectories.length === 1) setFilterQuery('');
@@ -659,7 +665,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
           <div className="file-root-picker-list">
             {availableDirectories.map(path => (
               <button
-                key={path.toLowerCase()}
+                key={rootKey(path)}
                 type="button"
                 className="file-root-option"
                 onClick={() => handleAddRoot(path)}
@@ -723,12 +729,14 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
         {rootDirectories.length > 0 && !focusedRootPath && visibleConfiguredDirectories.length === 0 && (
           <div className="empty-hint">无匹配目录</div>
         )}
-        {displayedRootDirectories.map(path => (
+        {displayedRootDirectories.map(path => {
+          const isAutoExpanded = autoExpandedRootPath !== null && rootKey(autoExpandedRootPath) === rootKey(path);
+          return (
           <ConfiguredFileRoot
-            key={path.toLowerCase()}
+            key={rootKey(path)}
             path={path}
-            initiallyExpanded={autoExpandedRootPath?.toLowerCase() === path.toLowerCase()}
-            autoExpandToken={autoExpandedRootPath?.toLowerCase() === path.toLowerCase()
+            initiallyExpanded={isAutoExpanded}
+            autoExpandToken={isAutoExpanded
               ? `${activeSpecialTab ?? activeSessionId}:${claudeReplayTab?.sessionId ?? ''}` : undefined}
             refreshVersion={rootRefreshVersion}
             collapseVersion={rootCollapseVersion}
@@ -745,7 +753,8 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
             renamingPath={renamingPath}
             setRenamingPath={setRenamingPath}
           />
-        ))}
+          );
+        })}
       </div>
       <div
         className={`resize-handle ${isResizing ? 'active' : ''}`}
@@ -852,7 +861,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
         />
       )}
     </div>
-    {isSsh && activeSession && <RemoteFileTree terminalId={activeSession.id} />}
+    {isSsh && activeSessionId && <RemoteFileTree terminalId={activeSessionId} />}
     </>
   );
 };

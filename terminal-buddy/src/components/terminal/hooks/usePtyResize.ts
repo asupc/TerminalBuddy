@@ -218,6 +218,7 @@ export function usePtyResize(opts: UsePtyResizeOptions) {
   // 的 tb-split-resize 互为备份——任意一条路径被 ResizeObserver 卡住时另一条仍能
   // 触发 fit。
   useEffect(() => {
+    if (!opts.visibleRef.current || !opts.onScreenRef.current) return;
     const term = opts.xtermRef.current;
     if (!term) return;
     const forceFit = forceFitOf(term);
@@ -230,6 +231,7 @@ export function usePtyResize(opts: UsePtyResizeOptions) {
       raf2 = requestAnimationFrame(() => {
         timer = setTimeout(() => {
           timer = null;
+          if (!opts.visibleRef.current || !opts.onScreenRef.current) return;
           if (useAppStore.getState().terminalLayoutVersion !== scheduledLayoutVersion) return;
           try { forceFit(true); } catch { /* terminal may be disposing */ }
         }, 50);

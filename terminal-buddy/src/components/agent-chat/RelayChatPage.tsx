@@ -55,22 +55,34 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
   const composing = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const seenSeqRef = useRef(new Set<number>());
+  const hasLiveFrameRef = useRef(false);
 
   const applyFrame = useCallback((frame: TerminalAgentFrame) => {
     if (frame.terminalId !== terminalId) return;
+    hasLiveFrameRef.current = true;
     if (frame.session) setSession(frame.session);
     switch (frame.type) {
       case 'mirror':
-      case 'rotated':
-        setMessages(frame.messages ?? []);
+      case 'rotated': {
+        const nextMessages = frame.messages ?? [];
+        seenSeqRef.current = new Set(nextMessages.map(message => message.seq));
+        setMessages(nextMessages);
         break;
-      case 'append':
-        setMessages(previous => {
-          const seen = new Set(previous.map(message => message.seq));
-          return [...previous, ...(frame.messages ?? []).filter(message => !seen.has(message.seq))];
+      }
+      case 'append': {
+        const incoming = (frame.messages ?? []).filter(message => {
+          if (seenSeqRef.current.has(message.seq)) return false;
+          seenSeqRef.current.add(message.seq);
+          return true;
         });
+        if (incoming.length > 0) {
+          setMessages(previous => [...previous, ...incoming]);
+        }
         break;
+      }
       case 'unavailable':
+        seenSeqRef.current.clear();
         setMessages([]);
         break;
       case 'error':
@@ -81,7 +93,7 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
       default:
         break;
     }
-  }, [terminalId]);
+  }, [terminalId, closeAgentTab, tab.key]);
 
   const subscribe = useCallback(async () => {
     try {
@@ -103,9 +115,12 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
   useEffect(() => {
     let disposed = false;
     mountedRef.current = true;
+    hasLiveFrameRef.current = false;
+    seenSeqRef.current.clear();
     setError(null);
     terminalAgentMessages(terminalId).then(page => {
-      if (disposed) return;
+      if (disposed || hasLiveFrameRef.current) return;
+      seenSeqRef.current = new Set(page.messages.map(message => message.seq));
       setSession(page.session);
       setMessages(page.messages);
     }).catch(reason => { if (!disposed) setError(String(reason)); });
@@ -283,7 +298,6 @@ export function RelayChatPage({ tab }: { tab: RelayAgentTab }) {
                   ? (session.replyBlockedReason ?? '当前阶段不可回复')
                   : `受限回复（最多 ${REPLY_LIMIT} 字，3 秒冷却，不支持 / ! @ #）`}
                 onChange={event => setDraft(event.target.value)}
-                onScroll={onScroll}
                 onCompositionStart={() => { composing.current = true; }}
                 onCompositionEnd={() => { composing.current = false; }}
                 onKeyDown={event => {

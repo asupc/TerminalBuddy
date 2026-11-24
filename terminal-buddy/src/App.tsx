@@ -19,8 +19,9 @@ import { ConfirmDialog } from "./components/shared/Dialog";
 import { GlobalDialogHost } from "./components/shared/GlobalDialogHost";
 import { Toast } from "./components/shared/Toast";
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
-import { useAppStore, saveTabsToStorage, initFileTreeNav } from './stores/appStore';
+import { useAppStore, initFileTreeNav } from './stores/appStore';
 import { flushPendingSaveTabs } from './stores/slices/sessionsSlice';
+import { defaultShellType } from './services/platform';
 import { getAllProfiles, getProjects, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, getAgentSessionsForTerminals, checkAppUpdate, readClientData, type UpdateInfo } from './services/tauri';
 import { compareVersions } from './utils/version';
 import { APP_VERSION } from './version';
@@ -112,17 +113,6 @@ function App() {
     setEverOpened(prev => (prev.history ? prev : { ...prev, history: true }));
     setSidebarPanel('history');
   }, [historyPanelFocusToken, uiStyle]);
-
-  useEffect(() => {
-    const onOpenEdit = (e: any) => {
-      setEditingProfile(e.detail?.profile || profiles[0] || null);
-      setShowEditDialog(true);
-    };
-    window.addEventListener('mock-open-profile-edit', onOpenEdit);
-    return () => {
-      window.removeEventListener('mock-open-profile-edit', onOpenEdit);
-    };
-  }, [profiles]);
 
   useEffect(() => {
     checkAppUpdate()
@@ -372,11 +362,6 @@ function App() {
         return { agentSessionBindings };
       });
     } catch {}
-    {
-      // 保存标签（包含更新后的 claudeSessionIds / agentSessionBindings）
-      const { sessions: updatedSessions, activeSessionId } = useAppStore.getState();
-      saveTabsToStorage(updatedSessions, activeSessionId);
-    }
   }, []);
 
   const { closeConfirm, requestExit, confirmExit, cancelExit } = useExitConfirm(async () => {
@@ -697,7 +682,7 @@ function App() {
 
   // 统一快捷键系统:注册应用内分发与全局快捷键;newTerminal 依赖 App 上下文,在此注册执行器
   useEffect(() => {
-    registerHotkeyAction('newTerminal', () => { void handleStartBlankTerminal('powershell'); });
+    registerHotkeyAction('newTerminal', () => { void handleStartBlankTerminal(defaultShellType()); });
     return initAppHotkeys();
   }, [handleStartBlankTerminal]);
 
@@ -739,19 +724,21 @@ function App() {
       useAppStore.getState().setLastClickRegion(null);
     }
 
+    const store = useAppStore.getState();
+    let toggledToOpen = false;
+    if (panel === 'config' && !store.configPanelVisible) {
+      store.toggleConfigPanel();
+      toggledToOpen = true;
+    } else if (panel === 'files' && !store.fileTreeVisible) {
+      store.toggleFileTree();
+      toggledToOpen = true;
+    } else if (panel === 'history' && !store.historyPanelVisible) {
+      store.toggleHistoryPanel();
+      toggledToOpen = true;
+    }
+
     setSidebarPanel(current => {
-      if (panel === 'config' && !useAppStore.getState().configPanelVisible) {
-        useAppStore.getState().toggleConfigPanel();
-        return panel;
-      }
-      if (panel === 'files' && !useAppStore.getState().fileTreeVisible) {
-        useAppStore.getState().toggleFileTree();
-        return panel;
-      }
-      if (panel === 'history' && !useAppStore.getState().historyPanelVisible) {
-        useAppStore.getState().toggleHistoryPanel();
-        return panel;
-      }
+      if (toggledToOpen) return panel;
       if (current === panel) return null;
       return panel;
     });

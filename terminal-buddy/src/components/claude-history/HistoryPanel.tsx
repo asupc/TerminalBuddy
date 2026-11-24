@@ -583,7 +583,10 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
     setSelectedId(id);
   };
 
-  const selectedItems = items.filter(item => selectedIds.has(item.sessionId));
+  const selectedItems = useMemo(
+    () => items.filter(item => selectedIds.has(item.sessionId)),
+    [items, selectedIds],
+  );
 
   // 右键菜单在打开后可能被后台索引刷新替换掉旧对象；操作时始终取列表里的最新条目，
   // 否则「收藏/归档」会按打开菜单时的旧状态反向切换。

@@ -80,9 +80,11 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const [mstscUser, setMstscUser] = useState(profile?.mstscUser || '');
   const [mstscPassword, setMstscPassword] = useState(profile?.mstscPassword || '');
   const [mstscResolution, setMstscResolution] = useState(profile?.mstscResolution || '');
+  const dragCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     return () => {
       if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+      dragCleanupRef.current?.();
     };
   }, []);
 
@@ -141,6 +143,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const handleDragHandleMouseDown = (e: React.MouseEvent, index: number) => {
     e.preventDefault();
     e.stopPropagation();
+    dragCleanupRef.current?.();
     dragStateRef.current = { startIndex: index, startY: e.clientY };
     setDragIndex(index);
 
@@ -152,16 +155,24 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
       }
     };
 
-    const handleMouseUp = () => {
+    const cleanup = () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('blur', handleMouseUp);
       document.body.style.cursor = '';
+      if (dragCleanupRef.current === cleanup) dragCleanupRef.current = null;
+    };
+
+    const handleMouseUp = () => {
+      cleanup();
       dragStateRef.current = null;
       setDragIndex(null);
     };
 
+    dragCleanupRef.current = cleanup;
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleMouseUp);
   };
 
   const handleMouseEnter = (index: number) => {

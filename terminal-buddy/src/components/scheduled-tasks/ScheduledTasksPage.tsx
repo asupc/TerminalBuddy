@@ -87,32 +87,50 @@ export function ScheduledTasksPage({ onClose }: ScheduledTasksPageProps) {
   const [filter, setFilter] = useState<TaskFilter>('all');
   const [search, setSearch] = useState('');
   const pageRef = useRef<HTMLDivElement>(null);
+  const loadSeqRef = useRef(0);
+  const unmountedRef = useRef(false);
+
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      loadSeqRef.current += 1;
+    };
+  }, []);
 
   const loadTasks = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     try {
       const list = await scheduledTaskList();
+      if (unmountedRef.current || seq !== loadSeqRef.current) return;
       setTasks(list);
       setError(null);
     } catch (reason) {
+      if (unmountedRef.current || seq !== loadSeqRef.current) return;
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      setLoading(false);
+      if (!unmountedRef.current && seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   const loadOptions = useCallback(async () => {
     try {
-      setOptions(await scheduledTaskOptions());
+      const next = await scheduledTaskOptions();
+      if (!unmountedRef.current) setOptions(next);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      if (!unmountedRef.current) setError(reason instanceof Error ? reason.message : String(reason));
     }
   }, []);
 
   useEffect(() => {
     void loadTasks();
     void loadOptions();
-    // 与后端 30 秒调度 tick 对齐；事件到达时立即刷新。
-    const timer = window.setInterval(() => { void loadTasks(); }, 30_000);
+    // 与后端 30 秒调度 tick 对齐；页面隐藏时跳过轮询，事件到达时立即刷新。
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadTasks();
+    }, 30_000);
     let cancelled = false;
     const unlisteners: UnlistenFn[] = [];
     const subscribe = (event: string) => {
@@ -128,7 +146,7 @@ export function ScheduledTasksPage({ onClose }: ScheduledTasksPageProps) {
       window.clearInterval(timer);
       unlisteners.forEach(unlisten => unlisten());
     };
-  }, [loadTasks]);
+  }, [loadOptions, loadTasks]);
 
   // 状态栏入口打开页面后把焦点交给页面，键盘用户可以直接 Tab 到任务操作。
   useEffect(() => {

@@ -59,6 +59,7 @@ const resume = load('src/components/claude-history/resumeCodexSession.ts', {
   '../../utils/projectPath': paths,
   '../../utils/claudeLaunch': claude,
   '../../utils/codexLaunch': codex,
+  '../../utils/agentCommands': { currentCodexCommand: () => codex.DEFAULT_CODEX_COMMAND },
   '../../types': types,
   '../../stores/appStore': { useAppStore: store },
   './resumeClaudeSession': { focusTerminalById: terminalId => { focused = terminalId; } },
@@ -80,12 +81,12 @@ assert.equal(launched.extraParamMode, 'independent');
 assert.deepEqual(directory, ['new-terminal', '/work/app']);
 state.profiles.push(profile('parent', '/work', 'codex --sandbox read-only'), profile('closest', '/work/app', 'codex --model old --sandbox workspace-write'));
 assert.equal(resume.pickCodexProfile(state.profiles, '/work/app/child').id, 'closest');
-await resume.resumeCodexSession({ sessionId: id, title: '继续工作', projectDir: '/work/app/child' }, { name: '预设', params: '--no-alt-screen', tagColor: null });
+await resume.resumeCodexSession({ sessionId: id, title: '继续工作', projectDir: '/work/app/child' }, { providerId: 'new-provider', modelId: 'gpt-codex' });
 assert.equal(starts[1][0], 'profile');
 assert.equal(starts[1][1], 'closest');
-assert.equal(starts[1][2], `codex --model old --sandbox workspace-write resume ${id} --no-alt-screen`);
+assert.equal(starts[1][2], `__TB_CODEX_REF__:new-provider:gpt-codex --sandbox workspace-write resume ${id}`);
 assert.equal(starts[1][6], '/work/app/child');
-assert.equal(starts[1][9], 'independent');
+assert.equal(starts[1][7], 'independent');
 state.sessions.push({ id: 'existing', extraParamMode: 'independent', extraParams: `codex resume ${id}` });
 await resume.resumeCodexSession({ sessionId: id, title: '已运行', projectDir: '/work' });
 assert.equal(focused, 'existing');
