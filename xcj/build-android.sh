@@ -9,7 +9,7 @@
 #   ./xcj/build-android.sh --clean-cache 清空 Gradle 项目构建缓存
 #
 # 产物：先落到仓库根 dist/，构建成功后自动移动到 /mnt/fnos/code/
-#       （TerminalBuddy_<版本>_android.apk 及同名 .sha256；目标目录不可用时保留在 dist/）。
+#       （TerminalBuddy_<版本>_android.apk；目标目录不可用时保留在 dist/；不生成 .sha256）。
 #       仓库内 release.keystore 自动完成 Release 签名，并用 apksigner 校验。
 # Windows 上带 adb 直装的版本见 scripts/build-android.bat 与 scripts/build-android.ps1。
 #
@@ -241,23 +241,21 @@ echo "==> [3/3] 收集产物"
 mkdir -p "$OUTPUT_DIR"
 TARGET="$OUTPUT_DIR/TerminalBuddy_${NEW_VERSION}_android.apk"
 cp -f "$APK" "$TARGET"
-HASH="$(sha256sum "$APK" | cut -d' ' -f1)"
-printf '%s  %s\n' "$HASH" "$(basename "$TARGET")" > "$TARGET.sha256"
 rm -f "$BAK"
 if [ -n "$PROP_BAK" ]; then
     rm -f "$PROP_BAK"
 fi
 
-# 构建成功后把 apk（连同 .sha256）移动到 /mnt/fnos/code；
+# 构建成功后把 apk 移动到 /mnt/fnos/code；
 # 目标目录不可用时保留在 dist/，避免构建成果丢失。
 # DEPLOY_DIR 为空时跳过移动（远程构建回传场景使用）。
 if [ -z "$DEPLOY_DIR" ]; then
     echo "==> DEPLOY_DIR 为空，跳过移动，产物保留在 $OUTPUT_DIR"
     ls -lh "$TARGET"
 elif [ -d "$DEPLOY_DIR" ] || mkdir -p "$DEPLOY_DIR" 2>/dev/null; then
-    if mv -f "$TARGET" "$TARGET.sha256" "$DEPLOY_DIR/"; then
+    if mv -f "$TARGET" "$DEPLOY_DIR/"; then
         echo "==> 已移动产物到 $DEPLOY_DIR"
-        ls -lh "$DEPLOY_DIR/$(basename "$TARGET")" "$DEPLOY_DIR/$(basename "$TARGET").sha256"
+        ls -lh "$DEPLOY_DIR/$(basename "$TARGET")"
     else
         echo "警告：移动到 $DEPLOY_DIR 失败，产物保留在 $OUTPUT_DIR" >&2
         ls -lh "$TARGET"

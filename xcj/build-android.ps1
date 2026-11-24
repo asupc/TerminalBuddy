@@ -8,11 +8,11 @@
       检测 JDK 17+ → 解析/自动补齐 Android SDK（默认 %USERPROFILE%\.android-sdk）
       → versionName 末段 +1、versionCode +1（失败自动回退）
       → gradlew :app:assembleRelease → apksigner 校验
-      → dist\ 归档并生成 .sha256 → 移动到部署目录（默认 \\192.168.1.71\code）
+      → dist\ 归档 → 移动到部署目录（默认 \\192.168.1.71\code）
       → 清理 Gradle / Kotlin JVM。
 
     与 Linux 版的差异：Windows 没有 apt，Android SDK 缺失时自动下载 cmdline-tools
-    到用户目录（约 1-2 GB）。构建成功后默认把 APK 与 .sha256 移动到共享目录
+    到用户目录（约 1-2 GB）。构建成功后默认把 APK 移动到共享目录
     \\192.168.1.71\code（对应 Linux 版的 /mnt/fnos/code）；该目录不可达时降级为
     保留在 dist\ 并给出警告。
 
@@ -60,7 +60,7 @@ function Show-Usage {
 用法：xcj\build-android.ps1 [--clean-cache] [--deploy-dir <目录>] [--no-deploy]
 
   --clean-cache       清空项目内 Gradle 构建缓存（android\.gradle 与 android\app\build）
-  --deploy-dir <目录> 构建成功后把 APK 与 .sha256 移动到该目录（也支持 --deploy-dir=<目录>）
+  --deploy-dir <目录> 构建成功后把 APK 移动到该目录（也支持 --deploy-dir=<目录>）
   --no-deploy         不移动产物，保留在 dist\
   -h, --help          显示本帮助
 
@@ -489,12 +489,6 @@ function Invoke-Main {
         $target = Join-Path $OutputDir $targetName
         Copy-Item -LiteralPath $apk -Destination $target -Force
         $finalTarget = $target
-        $hash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
-        [IO.File]::WriteAllText(
-            "$target.sha256",
-            "$hash  $targetName`n",
-            (New-Object System.Text.UTF8Encoding($false))
-        )
         $succeeded = $true
     }
     finally {
@@ -539,9 +533,7 @@ function Invoke-Main {
             if (!(Test-Path -LiteralPath $deployDir -PathType Container)) {
                 New-Item -ItemType Directory -Path $deployDir -Force -ErrorAction Stop | Out-Null
             }
-            foreach ($item in @($target, "$target.sha256")) {
-                Move-Item -LiteralPath $item -Destination $deployDir -Force -ErrorAction Stop
-            }
+            Move-Item -LiteralPath $target -Destination $deployDir -Force -ErrorAction Stop
             $finalTarget = Join-Path $deployDir $targetName
             $moved = $true
             Write-Step "已移动产物到 $deployDir"
@@ -550,7 +542,7 @@ function Invoke-Main {
             Write-WarnNote "移动到 $deployDir 失败（$($_.Exception.Message)），产物保留在 $OutputDir"
         }
         if (!$moved -and !(Test-Path -LiteralPath $target -PathType Leaf)) {
-            # 极少数情况下 APK 已过去、.sha256 失败，避免最后一行报出无效路径
+            # 极少数情况下 Move-Item 已移走文件才报错，避免最后一行报出无效路径
             Write-WarnNote "本地产物 $target 已不在 $OutputDir，请确认上述目标目录内容是否完整"
         }
     }
