@@ -1,9 +1,9 @@
 //! Antigravity（agy）多账号管理服务。
 //!
 //! 设计边界：
-//! 1. 录入授权 Token 后仅做标准 Google OAuth 身份解析（JWT `id_token` 解码 / `openidconnect.googleapis.com/v1/userinfo`），
+//! 1. 录入授权 Token 后仅做标准 Google OAuth 身份解析（JWT `id_token` 解码 / `acp-auth-state.json` / Google UserInfo），
 //!    **绝不使用授权 Token 发起任何 LLM 推理或模型接口调用**。
-//! 2. 浏览器 OAuth 登录通过隔离目录拉起官方 `agy acp --login` 完成，不硬编码客户端密钥，100% 兼容 `agy` 原生凭据格式。
+//! 2. 浏览器 OAuth 登录通过隔离目录拉起官方 `agy acp --login` 完成，原样保留 `agy` 生成的凭据文件，100% 兼容 `agy` 原生格式。
 //! 3. 每个账号物化独立的 `GEMINI_HOME` 隔离目录并写入 `antigravity-keyring-unavailable` 标记，
 //!    支持桌面端同时并发运行多个不同账号的原生 ACP 会话与终端 CLI 会话。
 use crate::models::antigravity_account::{
@@ -15,10 +15,10 @@ use super::agent_cli_service::{self, CliTool};
 use super::atomic_file::atomic_write_private;
 use super::crypto_service::{decrypt_secret_field, encrypt_secret_field};
 use super::path_service::PathService;
-use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
 use chrono::Utc;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -37,7 +37,10 @@ pub const ANTIGRAVITY_REF_PREFIX: &str = "__tb_agy_account__:";
 const STORE_FILE_NAME: &str = "antigravity_accounts.json";
 const PROFILES_DIR_NAME: &str = "antigravity-profiles";
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const GOOGLE_USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
+const GOOGLE_USERINFO_URLS: &[&str] = &[
+    "https://www.googleapis.com/oauth2/v2/userinfo",
+    "https://openidconnect.googleapis.com/v1/userinfo",
+];
 const ISOLATED_SSH_CONNECTION: &str = "127.0.0.1 0 127.0.0.1 0";
 
 #[derive(Debug, Clone, Default)]
@@ -54,6 +57,11 @@ struct PendingOAuthLogin {
     staging_dir: PathBuf,
     output_rx: mpsc::Receiver<String>,
     created_at: Instant,
+}
+
+struct OAuthCapturedFiles {
+    token_raw: String,
+    auth_state_raw: Option<String>,
 }
 
 fn store_lock() -> &'static Mutex<()> {
@@ -186,9 +194,9 @@ pub fn prepare_isolated_env(account_id: &str) -> Result<(PathBuf, Vec<(String, S
         .iter()
         .find(|a| a.id == account_id)
         .ok_or_else(|| "所选 Antigravity 账号已不存在，请重新选择".to_string())?;
-    let token_json = decrypt_secret_field(&account.encrypted_token_json)?;
+    let token_raw = decrypt_secret_field(&account.encrypted_token_json)?;
     let profile_dir = profiles_root()?.join(sanitize_account_dir_name(&account.id));
-    materialize_profile_dir(&profile_dir, &token_json)?;
+    materialize_profile_dir(&profile_dir, &token_raw, None)?;
     let env = isolated_env_for_dir(&profile_dir);
     Ok((profile_dir, env))
 }
@@ -206,18 +214,30 @@ pub fn isolated_env_for_dir(profile_dir: &Path) -> Vec<(String, String)> {
     env
 }
 
-fn materialize_profile_dir(profile_dir: &Path, token_json: &str) -> Result<()> {
+fn materialize_profile_dir(
+    profile_dir: &Path,
+    token_raw: &str,
+    auth_state_raw: Option<&str>,
+) -> Result<()> {
     for sub in ["antigravity-acp", "antigravity-cli"] {
         let app_dir = profile_dir.join(sub);
         let cache_dir = app_dir.join("cache");
         fs::create_dir_all(&cache_dir)
             .map_err(|e| format!("创建 Antigravity 账号隔离目录失败：{e}"))?;
         let token_path = app_dir.join("antigravity-oauth-token");
-        atomic_write_private(&token_path, token_json.as_bytes())
+        atomic_write_private(&token_path, token_raw.as_bytes())
             .map_err(|e| format!("写入 Antigravity 账号凭据失败：{e}"))?;
         let marker = cache_dir.join("antigravity-keyring-unavailable");
         if !marker.exists() {
             let _ = fs::write(&marker, b"1");
+        }
+        if sub == "antigravity-acp" {
+            if let Some(state_json) = auth_state_raw {
+                let _ = atomic_write_private(
+                    &cache_dir.join("acp-auth-state.json"),
+                    state_json.as_bytes(),
+                );
+            }
         }
     }
     Ok(())
@@ -240,7 +260,11 @@ pub fn expand_leading_antigravity_ref(command: &str) -> Result<String> {
         Some(idx) => (&rest[..idx], rest[idx..].trim_start()),
         None => (rest, ""),
     };
-    if account_id.is_empty() || !account_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if account_id.is_empty()
+        || !account_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err("Antigravity 账号引用格式无效".into());
     }
     let (profile_dir, _env) = prepare_isolated_env(account_id)?;
@@ -283,46 +307,80 @@ pub async fn save_account_from_token(input: AntigravityTokenInput) -> Result<Ant
         return Err("请输入授权 Token（支持 OAuth JSON、access_token 或 refresh_token）".into());
     }
 
+    if raw_token.starts_with("4/0A") {
+        return Err(
+            "检测到这是 Google OAuth 一次性授权码（4/0A...），请点击「浏览器 OAuth 登录」弹窗完成授权"
+                .into(),
+        );
+    }
+
     let mut token_obj = normalize_token_input(
         raw_token,
         input.client_id.as_deref(),
         input.client_secret.as_deref(),
     )?;
 
-    let identity = resolve_identity_from_token(&mut token_obj).await?;
-    let token_json = serde_json::to_string(&Value::Object(token_obj.clone()))
-        .map_err(|e| format!("序列化 Token 数据失败：{e}"))?;
+    let identity = resolve_identity_from_payload(raw_token, Some(&mut token_obj), None, true).await?;
+    let persisted_payload = if raw_token.starts_with('{') && input.client_id.is_none() && input.client_secret.is_none() {
+        raw_token.to_string()
+    } else {
+        serde_json::to_string(&Value::Object(token_obj.clone()))
+            .map_err(|e| format!("序列化 Token 数据失败：{e}"))?
+    };
 
     upsert_account_record(
         input.id.as_deref(),
         input.alias.as_deref(),
         &identity,
-        &token_json,
-        &token_obj,
+        &persisted_payload,
+        Some(&token_obj),
+        None,
         "token",
     )
 }
 
 /// 导入本机当前已登录的 `agy` 文件凭据（只读，不修改原文件）。
 pub async fn import_local_account() -> Result<AntigravityAccountState> {
-    let token_path = find_local_agy_token_file()
-        .ok_or_else(|| "未检测到本机 ~/.gemini 下的 Antigravity 凭据文件；若登录态保存在系统密钥链中，请使用「浏览器 OAuth 登录」或手动粘贴 Token".to_string())?;
+    let (token_path, auth_state_raw) = find_local_agy_token_file().ok_or_else(|| {
+        "未检测到本机 ~/.gemini 下的 Antigravity 凭据文件；若登录态保存在系统密钥链中，请使用「浏览器 OAuth 登录」或手动粘贴 Token"
+            .to_string()
+    })?;
     let raw = fs::read_to_string(&token_path)
         .map_err(|e| format!("读取本机 Antigravity 凭据失败：{e}"))?;
-    let mut token_obj = normalize_token_input(&raw, None, None)?;
-    let identity = resolve_identity_from_token(&mut token_obj).await?;
-    let token_json = serde_json::to_string(&Value::Object(token_obj.clone()))
-        .map_err(|e| format!("序列化 Token 数据失败：{e}"))?;
-    upsert_account_record(None, None, &identity, &token_json, &token_obj, "local_import")
+    let mut parsed_obj = parse_raw_payload_to_map(&raw);
+    let identity = resolve_identity_from_payload(
+        &raw,
+        parsed_obj.as_mut(),
+        auth_state_raw.as_deref(),
+        false,
+    )
+    .await?;
+
+    upsert_account_record(
+        None,
+        None,
+        &identity,
+        &raw,
+        parsed_obj.as_ref(),
+        auth_state_raw.as_deref(),
+        "local_import",
+    )
 }
 
-fn find_local_agy_token_file() -> Option<PathBuf> {
+fn find_local_agy_token_file() -> Option<(PathBuf, Option<String>)> {
     let home = dirs::home_dir()?;
     let gemini = home.join(".gemini");
     for sub in ["antigravity-cli", "antigravity-acp"] {
         let candidate = gemini.join(sub).join("antigravity-oauth-token");
         if candidate.is_file() {
-            return Some(candidate);
+            let state = fs::read_to_string(
+                gemini
+                    .join("antigravity-acp")
+                    .join("cache")
+                    .join("acp-auth-state.json"),
+            )
+            .ok();
+            return Some((candidate, state));
         }
     }
     None
@@ -339,7 +397,8 @@ pub fn start_oauth_login() -> Result<AntigravityOAuthStartResult> {
         .map_err(|e| format!("创建临时 OAuth 登录目录失败：{e}"))?;
     let _ = fs::write(acp_cache.join("antigravity-keyring-unavailable"), b"1");
 
-    let normalized_staging = PathService::normalize_child_process_path_str(&staging_dir.to_string_lossy());
+    let normalized_staging =
+        PathService::normalize_child_process_path_str(&staging_dir.to_string_lossy());
     let mut cmd = Command::new(&binary);
     cmd.args([
         "acp",
@@ -427,7 +486,9 @@ pub fn start_oauth_login() -> Result<AntigravityOAuthStartResult> {
         ));
     };
 
-    let mut map = pending_oauth_logins().lock().map_err(|_| "OAuth 登录状态锁不可用")?;
+    let mut map = pending_oauth_logins()
+        .lock()
+        .map_err(|_| "OAuth 登录状态锁不可用")?;
     map.insert(
         login_id.clone(),
         PendingOAuthLogin {
@@ -442,8 +503,10 @@ pub fn start_oauth_login() -> Result<AntigravityOAuthStartResult> {
     Ok(AntigravityOAuthStartResult { login_id, auth_url })
 }
 
-/// 提交浏览器授权后拿到的授权码，等待 `agy` 换票落盘并解析账号信息入库。
-pub async fn complete_oauth_login(input: AntigravityOAuthCompleteInput) -> Result<AntigravityAccountState> {
+/// 提交浏览器授权后拿到的授权码，等待 `agy` 原生换票落盘并解析账号信息入库。
+pub async fn complete_oauth_login(
+    input: AntigravityOAuthCompleteInput,
+) -> Result<AntigravityAccountState> {
     let code = input.code.trim().to_string();
     if code.is_empty() {
         return Err("请粘贴浏览器授权完成后显示的授权码".into());
@@ -451,14 +514,16 @@ pub async fn complete_oauth_login(input: AntigravityOAuthCompleteInput) -> Resul
     let login_id = input.login_id.trim().to_string();
     let alias = input.alias.clone();
 
-    let token_raw = tokio::task::spawn_blocking(move || -> Result<String> {
+    let captured = tokio::task::spawn_blocking(move || -> Result<OAuthCapturedFiles> {
         let mut pending = {
-            let mut map = pending_oauth_logins().lock().map_err(|_| "OAuth 登录状态锁不可用")?;
+            let mut map = pending_oauth_logins()
+                .lock()
+                .map_err(|_| "OAuth 登录状态锁不可用")?;
             map.remove(&login_id)
                 .ok_or_else(|| "OAuth 登录会话已过期或不存在，请重新点击浏览器登录".to_string())?
         };
         let staging_dir = pending.staging_dir.clone();
-        let result = (|| -> Result<String> {
+        let result = (|| -> Result<OAuthCapturedFiles> {
             if let Some(mut stdin) = pending.stdin.take() {
                 writeln!(stdin, "{code}")
                     .and_then(|_| stdin.flush())
@@ -487,8 +552,12 @@ pub async fn complete_oauth_login(input: AntigravityOAuthCompleteInput) -> Resul
             while let Ok(line) = pending.output_rx.try_recv() {
                 logs.push(line);
             }
-            let token_path = staging_dir.join("antigravity-acp").join("antigravity-oauth-token");
-            let fallback_path = staging_dir.join("antigravity-cli").join("antigravity-oauth-token");
+            let token_path = staging_dir
+                .join("antigravity-acp")
+                .join("antigravity-oauth-token");
+            let fallback_path = staging_dir
+                .join("antigravity-cli")
+                .join("antigravity-oauth-token");
             let actual_path = if token_path.is_file() {
                 token_path
             } else if fallback_path.is_file() {
@@ -500,8 +569,19 @@ pub async fn complete_oauth_login(input: AntigravityOAuthCompleteInput) -> Resul
                     tail.trim()
                 ));
             };
-            fs::read_to_string(&actual_path)
-                .map_err(|e| format!("读取授权生成的凭据文件失败：{e}"))
+            let token_raw = fs::read_to_string(&actual_path)
+                .map_err(|e| format!("读取授权生成的凭据文件失败：{e}"))?;
+            let auth_state_raw = fs::read_to_string(
+                staging_dir
+                    .join("antigravity-acp")
+                    .join("cache")
+                    .join("acp-auth-state.json"),
+            )
+            .ok();
+            Ok(OAuthCapturedFiles {
+                token_raw,
+                auth_state_raw,
+            })
         })();
         let _ = fs::remove_dir_all(&staging_dir);
         result
@@ -509,16 +589,31 @@ pub async fn complete_oauth_login(input: AntigravityOAuthCompleteInput) -> Resul
     .await
     .map_err(|e| format!("OAuth 后台任务异常：{e}"))??;
 
-    let mut token_obj = normalize_token_input(&token_raw, None, None)?;
-    let identity = resolve_identity_from_token(&mut token_obj).await?;
-    let token_json = serde_json::to_string(&Value::Object(token_obj.clone()))
-        .map_err(|e| format!("序列化 Token 数据失败：{e}"))?;
+    // 保留 agy 原生落盘的凭据原文不改写，避免破坏其内部格式。
+    let mut parsed_obj = parse_raw_payload_to_map(&captured.token_raw);
+    let identity = resolve_identity_from_payload(
+        &captured.token_raw,
+        parsed_obj.as_mut(),
+        captured.auth_state_raw.as_deref(),
+        false,
+    )
+    .await?;
 
-    upsert_account_record(None, alias.as_deref(), &identity, &token_json, &token_obj, "oauth")
+    upsert_account_record(
+        None,
+        alias.as_deref(),
+        &identity,
+        &captured.token_raw,
+        parsed_obj.as_ref(),
+        captured.auth_state_raw.as_deref(),
+        "oauth",
+    )
 }
 
 pub fn cancel_oauth_login(login_id: &str) -> Result<()> {
-    let mut map = pending_oauth_logins().lock().map_err(|_| "OAuth 登录状态锁不可用")?;
+    let mut map = pending_oauth_logins()
+        .lock()
+        .map_err(|_| "OAuth 登录状态锁不可用")?;
     if let Some(mut pending) = map.remove(login_id) {
         let _ = pending.child.kill();
         let _ = pending.child.wait();
@@ -558,11 +653,64 @@ fn resolve_agy_binary() -> String {
 
 fn extract_oauth_url(line: &str) -> Option<String> {
     for token in line.split_whitespace() {
-        let cleaned = token.trim_matches(|c: char| matches!(c, '"' | '\'' | '(' | ')' | '<' | '>' | ',' | ';'));
+        let cleaned = token.trim_matches(|c: char| {
+            matches!(c, '"' | '\'' | '(' | ')' | '<' | '>' | ',' | ';')
+        });
         if cleaned.starts_with("https://accounts.google.com/")
             || (cleaned.starts_with("https://") && cleaned.contains("oauth"))
         {
             return Some(cleaned.to_string());
+        }
+    }
+    None
+}
+
+/// 尝试将 agy 落盘的原始文本解析为 JSON Map（兼容纯 JSON 或 base64 包装的 JSON）。
+fn parse_raw_payload_to_map(raw: &str) -> Option<Map<String, Value>> {
+    let trimmed = raw.trim();
+    if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(trimmed) {
+        return Some(map);
+    }
+    if let Ok(decoded) = STANDARD
+        .decode(trimmed)
+        .or_else(|_| URL_SAFE_NO_PAD.decode(trimmed))
+        .or_else(|_| URL_SAFE.decode(trimmed))
+    {
+        if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(&decoded) {
+            return Some(map);
+        }
+    }
+    None
+}
+
+fn find_string_recursive(value: &Value, keys: &[&str]) -> Option<String> {
+    match value {
+        Value::Object(map) => {
+            for key in keys {
+                if let Some(s) = map.get(*key).and_then(Value::as_str).map(str::trim) {
+                    if !s.is_empty() {
+                        return Some(s.to_string());
+                    }
+                }
+            }
+            for child in map.values() {
+                if let Some(found) = find_string_recursive(child, keys) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        Value::Array(items) => items
+            .iter()
+            .find_map(|item| find_string_recursive(item, keys)),
+        _ => None,
+    }
+}
+
+fn extract_embedded_jwt(raw: &str) -> Option<String> {
+    for part in raw.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '{' | '}' | ',' | ':')) {
+        if part.starts_with("eyJ") && looks_like_jwt(part) {
+            return Some(part.to_string());
         }
     }
     None
@@ -581,7 +729,6 @@ fn normalize_token_input(
             .as_object()
             .ok_or_else(|| "授权 Token JSON 必须是对象格式".to_string())?;
         let mut normalized = map.clone();
-        // 兼容驼峰字段名，统一补充 snake_case 以便 agy 直接读取。
         for (camel, snake) in [
             ("accessToken", "access_token"),
             ("refreshToken", "refresh_token"),
@@ -623,9 +770,19 @@ fn normalize_token_input(
         obj.insert("token_type".into(), Value::String("Bearer".into()));
     }
 
-    let has_any = ["access_token", "refresh_token", "id_token"]
-        .iter()
-        .any(|k| obj.get(*k).and_then(Value::as_str).is_some_and(|s| !s.trim().is_empty()));
+    let root_val = Value::Object(obj.clone());
+    let has_any = find_string_recursive(
+        &root_val,
+        &[
+            "access_token",
+            "accessToken",
+            "refresh_token",
+            "refreshToken",
+            "id_token",
+            "idToken",
+        ],
+    )
+    .is_some();
     if !has_any {
         return Err("Token 内容中未包含 access_token、refresh_token 或 id_token".into());
     }
@@ -634,60 +791,120 @@ fn normalize_token_input(
 
 fn looks_like_jwt(s: &str) -> bool {
     let mut parts = s.split('.');
-    matches!((parts.next(), parts.next(), parts.next(), parts.next()), (Some(a), Some(b), Some(c), None) if !a.is_empty() && !b.is_empty() && !c.is_empty())
+    matches!(
+        (parts.next(), parts.next(), parts.next(), parts.next()),
+        (Some(a), Some(b), Some(c), None) if !a.is_empty() && !b.is_empty() && !c.is_empty()
+    )
 }
 
-/// 解析账号信息（严格只调用 Google OAuth / UserInfo，绝不调用任何 LLM 接口）。
-async fn resolve_identity_from_token(token_obj: &mut Map<String, Value>) -> Result<AccountIdentity> {
-    let mut identity = token_obj
-        .get("id_token")
-        .and_then(Value::as_str)
-        .and_then(decode_jwt_identity)
-        .unwrap_or_default();
+/// 解析账号信息（严格只用本地 JWT/缓存与 Google OAuth/UserInfo，绝不调用任何 LLM 接口）。
+/// `strict`: 手动 Token 录入时为 `true`（必须能解析出身份或有效 Token）；
+/// `agy acp --login` 原生换票成功时为 `false`（即便 UserInfo 受限也允许按别名完成保存）。
+async fn resolve_identity_from_payload(
+    raw_payload: &str,
+    token_obj: Option<&mut Map<String, Value>>,
+    auth_state_raw: Option<&str>,
+    strict: bool,
+) -> Result<AccountIdentity> {
+    let mut identity = AccountIdentity::default();
 
-    let access_token = token_obj
-        .get("access_token")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
+    // 1. 优先从 agy 自身写入的 acp-auth-state.json 中读取身份信息（零网络请求）
+    if let Some(state_str) = auth_state_raw {
+        if let Ok(state_val) = serde_json::from_str::<Value>(state_str) {
+            merge_identity(
+                &mut identity,
+                AccountIdentity {
+                    email: find_string_recursive(&state_val, &["email", "accountEmail", "userEmail"])
+                        .unwrap_or_default(),
+                    name: find_string_recursive(&state_val, &["name", "displayName", "userName"])
+                        .unwrap_or_default(),
+                    picture: find_string_recursive(&state_val, &["picture", "avatarUrl"])
+                        .unwrap_or_default(),
+                    subject: find_string_recursive(&state_val, &["sub", "subject", "accountId"])
+                        .unwrap_or_default(),
+                },
+            );
+        }
+    }
 
-    if let Some(at) = access_token {
+    // 2. 从 JSON 字段与内嵌 JWT `id_token` 本地解码（零网络请求）
+    let mut access_token: Option<String> = None;
+    if let Some(obj) = token_obj.as_deref() {
+        let val = Value::Object(obj.clone());
+        merge_identity(
+            &mut identity,
+            AccountIdentity {
+                email: find_string_recursive(&val, &["email", "accountEmail", "userEmail"])
+                    .unwrap_or_default(),
+                name: find_string_recursive(&val, &["name", "displayName"]).unwrap_or_default(),
+                picture: find_string_recursive(&val, &["picture", "avatarUrl"]).unwrap_or_default(),
+                subject: find_string_recursive(&val, &["sub", "subject"]).unwrap_or_default(),
+            },
+        );
+        if let Some(id_tok) = find_string_recursive(&val, &["id_token", "idToken"]) {
+            if let Some(decoded) = decode_jwt_identity(&id_tok) {
+                merge_identity(&mut identity, decoded);
+            }
+        }
+        access_token = find_string_recursive(&val, &["access_token", "accessToken"]);
+    }
+    if identity.email.is_empty() {
+        if let Some(jwt) = extract_embedded_jwt(raw_payload) {
+            if let Some(decoded) = decode_jwt_identity(&jwt) {
+                merge_identity(&mut identity, decoded);
+            }
+        }
+    }
+
+    // 3. 若仍缺少邮箱或头像且有 access_token，调用标准 Google UserInfo（不触发任何 LLM 调用）
+    if (identity.email.is_empty() || identity.name.is_empty()) && access_token.is_some() {
+        let at = access_token.unwrap();
         match fetch_google_userinfo(&at).await {
             Ok(remote) => merge_identity(&mut identity, remote),
             Err(err) => {
-                // access_token 可能已过期：若配有 refresh_token + client_id，仅刷新一次换取新 access_token 查 UserInfo。
-                if let Some(refreshed) = try_refresh_google_token(token_obj).await? {
-                    if let Some(id_tok) = refreshed.get("id_token").and_then(Value::as_str) {
-                        if let Some(decoded) = decode_jwt_identity(id_tok) {
-                            merge_identity(&mut identity, decoded);
+                if let Some(obj) = token_obj {
+                    if let Ok(Some(refreshed)) = try_refresh_google_token(obj).await {
+                        if let Some(id_tok) = refreshed.get("id_token").and_then(Value::as_str) {
+                            if let Some(decoded) = decode_jwt_identity(id_tok) {
+                                merge_identity(&mut identity, decoded);
+                            }
                         }
-                    }
-                    if let Some(new_at) = refreshed.get("access_token").and_then(Value::as_str) {
-                        if let Ok(remote) = fetch_google_userinfo(new_at).await {
-                            merge_identity(&mut identity, remote);
+                        if let Some(new_at) = refreshed.get("access_token").and_then(Value::as_str) {
+                            if let Ok(remote) = fetch_google_userinfo(new_at).await {
+                                merge_identity(&mut identity, remote);
+                            }
                         }
+                    } else if strict && identity.email.is_empty() {
+                        return Err(format!("无法通过授权 Token 获取 Google 账号信息：{err}"));
                     }
-                } else if identity.email.is_empty() {
+                } else if strict && identity.email.is_empty() {
                     return Err(format!("无法通过授权 Token 获取 Google 账号信息：{err}"));
                 }
             }
         }
-    } else if let Some(refreshed) = try_refresh_google_token(token_obj).await? {
-        if let Some(id_tok) = refreshed.get("id_token").and_then(Value::as_str) {
-            if let Some(decoded) = decode_jwt_identity(id_tok) {
-                merge_identity(&mut identity, decoded);
+    } else if identity.email.is_empty() {
+        if let Some(obj) = token_obj {
+            if let Ok(Some(refreshed)) = try_refresh_google_token(obj).await {
+                if let Some(id_tok) = refreshed.get("id_token").and_then(Value::as_str) {
+                    if let Some(decoded) = decode_jwt_identity(id_tok) {
+                        merge_identity(&mut identity, decoded);
+                    }
+                }
+                if let Some(new_at) = refreshed.get("access_token").and_then(Value::as_str) {
+                    if let Ok(remote) = fetch_google_userinfo(new_at).await {
+                        merge_identity(&mut identity, remote);
+                    }
+                }
+            } else if strict {
+                return Err(
+                    "仅提供 refresh_token 且缺少 OAuth client_id 时无法单独拉取账号信息；请粘贴完整的 antigravity-oauth-token JSON，或直接使用「浏览器 OAuth 登录」"
+                        .into(),
+                );
             }
         }
-        if let Some(new_at) = refreshed.get("access_token").and_then(Value::as_str) {
-            let remote = fetch_google_userinfo(new_at).await?;
-            merge_identity(&mut identity, remote);
-        }
-    } else if identity.email.is_empty() {
-        return Err("仅提供 refresh_token 且缺少 OAuth client_id 时无法单独拉取账号信息；请粘贴完整的 antigravity-oauth-token JSON，或直接使用「浏览器 OAuth 登录」".into());
     }
 
-    if identity.email.is_empty() && identity.name.is_empty() {
+    if strict && identity.email.is_empty() && identity.name.is_empty() {
         return Err("未能从授权 Token 中解析出账号邮箱或名称，请检查 Token 是否有效".into());
     }
     Ok(identity)
@@ -722,7 +939,12 @@ fn decode_jwt_identity(jwt: &str) -> Option<AccountIdentity> {
     if email.is_empty() && name.is_empty() && subject.is_empty() {
         return None;
     }
-    Some(AccountIdentity { email, name, picture, subject })
+    Some(AccountIdentity {
+        email,
+        name,
+        picture,
+        subject,
+    })
 }
 
 async fn fetch_google_userinfo(access_token: &str) -> Result<AccountIdentity> {
@@ -730,48 +952,54 @@ async fn fetch_google_userinfo(access_token: &str) -> Result<AccountIdentity> {
         .timeout(Duration::from_secs(12))
         .build()
         .map_err(|e| format!("初始化 HTTP 客户端失败：{e}"))?;
-    let resp = client
-        .get(GOOGLE_USERINFO_URL)
-        .bearer_auth(access_token)
-        .send()
-        .await
-        .map_err(|e| format!("请求 Google UserInfo 失败：{e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("Google UserInfo 返回状态码 {}", resp.status()));
+
+    let mut last_err = String::new();
+    for url in GOOGLE_USERINFO_URLS {
+        match client.get(*url).bearer_auth(access_token).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let body: Value = resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("解析 Google UserInfo 响应失败：{e}"))?;
+                return Ok(AccountIdentity {
+                    email: body["email"].as_str().unwrap_or("").trim().to_string(),
+                    name: body["name"].as_str().unwrap_or("").trim().to_string(),
+                    picture: body["picture"].as_str().unwrap_or("").trim().to_string(),
+                    subject: body["sub"]
+                        .as_str()
+                        .or_else(|| body["id"].as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
+                });
+            }
+            Ok(resp) => {
+                last_err = format!("Google UserInfo 返回状态码 {}", resp.status());
+            }
+            Err(e) => {
+                last_err = format!("请求 Google UserInfo 失败：{e}");
+            }
+        }
     }
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 Google UserInfo 响应失败：{e}"))?;
-    Ok(AccountIdentity {
-        email: body["email"].as_str().unwrap_or("").trim().to_string(),
-        name: body["name"].as_str().unwrap_or("").trim().to_string(),
-        picture: body["picture"].as_str().unwrap_or("").trim().to_string(),
-        subject: body["sub"].as_str().unwrap_or("").trim().to_string(),
-    })
+    Err(last_err)
 }
 
 async fn try_refresh_google_token(token_obj: &mut Map<String, Value>) -> Result<Option<Value>> {
-    let refresh_token = match token_obj.get("refresh_token").and_then(Value::as_str).map(str::trim) {
-        Some(s) if !s.is_empty() => s.to_string(),
-        _ => return Ok(None),
+    let val = Value::Object(token_obj.clone());
+    let Some(refresh_token) = find_string_recursive(&val, &["refresh_token", "refreshToken"])
+    else {
+        return Ok(None);
     };
-    let client_id = match token_obj.get("client_id").and_then(Value::as_str).map(str::trim) {
-        Some(s) if !s.is_empty() => s.to_string(),
-        _ => return Ok(None),
+    let Some(client_id) = find_string_recursive(&val, &["client_id", "clientId"]) else {
+        return Ok(None);
     };
     let mut form = vec![
         ("grant_type".to_string(), "refresh_token".to_string()),
         ("refresh_token".to_string(), refresh_token),
         ("client_id".to_string(), client_id),
     ];
-    if let Some(secret) = token_obj
-        .get("client_secret")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        form.push(("client_secret".to_string(), secret.to_string()));
+    if let Some(secret) = find_string_recursive(&val, &["client_secret", "clientSecret"]) {
+        form.push(("client_secret".to_string(), secret));
     }
 
     let client = reqwest::Client::builder()
@@ -804,13 +1032,23 @@ async fn try_refresh_google_token(token_obj: &mut Map<String, Value>) -> Result<
     Ok(Some(body))
 }
 
-fn token_hint_from_obj(token_obj: &Map<String, Value>) -> String {
+fn token_hint(raw_payload: &str, token_obj: Option<&Map<String, Value>>) -> String {
     let source = token_obj
-        .get("refresh_token")
-        .or_else(|| token_obj.get("access_token"))
-        .or_else(|| token_obj.get("id_token"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
+        .and_then(|m| {
+            let val = Value::Object(m.clone());
+            find_string_recursive(
+                &val,
+                &[
+                    "refresh_token",
+                    "refreshToken",
+                    "access_token",
+                    "accessToken",
+                    "id_token",
+                    "idToken",
+                ],
+            )
+        })
+        .unwrap_or_else(|| raw_payload.trim().to_string());
     let chars: Vec<char> = source.chars().collect();
     if chars.len() <= 8 {
         return "••••".into();
@@ -824,16 +1062,19 @@ fn upsert_account_record(
     explicit_id: Option<&str>,
     alias_input: Option<&str>,
     identity: &AccountIdentity,
-    token_json: &str,
-    token_obj: &Map<String, Value>,
+    token_raw: &str,
+    token_obj: Option<&Map<String, Value>>,
+    auth_state_raw: Option<&str>,
     auth_source: &str,
 ) -> Result<AntigravityAccountState> {
-    let encrypted = encrypt_secret_field(token_json)?;
+    let encrypted = encrypt_secret_field(token_raw)?;
     let has_refresh = token_obj
-        .get("refresh_token")
-        .and_then(Value::as_str)
-        .is_some_and(|s| !s.trim().is_empty());
-    let hint = token_hint_from_obj(token_obj);
+        .map(|m| {
+            let val = Value::Object(m.clone());
+            find_string_recursive(&val, &["refresh_token", "refreshToken"]).is_some()
+        })
+        .unwrap_or(auth_source == "oauth");
+    let hint = token_hint(token_raw, token_obj);
     let now = Utc::now().to_rfc3339();
 
     let _guard = store_lock().lock().map_err(|_| "账号存储锁不可用")?;
@@ -867,7 +1108,7 @@ fn upsert_account_record(
     } else if !identity.email.is_empty() {
         identity.email.clone()
     } else {
-        "Antigravity 账号".into()
+        format!("Antigravity 账号 {}", store.accounts.len() + 1)
     };
 
     let account_id = if let Some(idx) = existing_idx {
@@ -921,7 +1162,7 @@ fn upsert_account_record(
     save_store_to(&path, &store)?;
     if let Ok(root) = profiles_root() {
         let profile_dir = root.join(sanitize_account_dir_name(&account_id));
-        let _ = materialize_profile_dir(&profile_dir, token_json);
+        let _ = materialize_profile_dir(&profile_dir, token_raw, auth_state_raw);
     }
     Ok(to_state(&store))
 }
@@ -929,6 +1170,7 @@ fn upsert_account_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn sample_jwt(email: &str, name: &str, sub: &str) -> String {
         let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256","typ":"JWT"}"#);
@@ -955,19 +1197,22 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_camel_case_json_and_raw_tokens() {
+    fn normalizes_camel_case_json_and_nested_token_objects() {
         let obj = normalize_token_input(
-            r#"{"accessToken":"ya29.abc","refreshToken":"1//xyz"}"#,
-            Some("cid-1"),
+            r#"{"token":{"access_token":"ya29.nested","refresh_token":"1//nested"}}"#,
+            None,
             None,
         )
         .unwrap();
-        assert_eq!(obj["access_token"], "ya29.abc");
-        assert_eq!(obj["refresh_token"], "1//xyz");
-        assert_eq!(obj["client_id"], "cid-1");
-
-        let raw_refresh = normalize_token_input("1//refresh-only", None, None).unwrap();
-        assert_eq!(raw_refresh["refresh_token"], "1//refresh-only");
+        let val = Value::Object(obj);
+        assert_eq!(
+            find_string_recursive(&val, &["access_token"]).as_deref(),
+            Some("ya29.nested")
+        );
+        assert_eq!(
+            find_string_recursive(&val, &["refresh_token"]).as_deref(),
+            Some("1//nested")
+        );
     }
 
     #[test]
@@ -983,7 +1228,7 @@ mod tests {
     fn materializes_isolated_profile_dir_for_both_acp_and_cli() {
         let dir = std::env::temp_dir().join(format!("tb-agy-test-{}", Uuid::new_v4()));
         let token = r#"{"access_token":"ya29.secret","refresh_token":"1//ref"}"#;
-        materialize_profile_dir(&dir, token).unwrap();
+        materialize_profile_dir(&dir, token, Some(r#"{"email":"a@b.com"}"#)).unwrap();
         assert_eq!(
             fs::read_to_string(dir.join("antigravity-acp/antigravity-oauth-token")).unwrap(),
             token
@@ -994,6 +1239,7 @@ mod tests {
         );
         assert!(dir.join("antigravity-acp/cache/antigravity-keyring-unavailable").is_file());
         assert!(dir.join("antigravity-cli/cache/antigravity-keyring-unavailable").is_file());
+        assert!(dir.join("antigravity-acp/cache/acp-auth-state.json").is_file());
         let _ = fs::remove_dir_all(&dir);
     }
 
