@@ -85,6 +85,7 @@ export function cancelAntigravityOAuthLogin(loginId: string): Promise<void> {
 }
 
 export interface AntigravityQuotaWindow {
+  kind: 'session_5h' | 'weekly' | 'other' | string;
   label: string;
   remainingPercent: number | null;
   resetText: string | null;
