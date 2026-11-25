@@ -1427,6 +1427,7 @@ pub fn get_account_quota(
     let binary = resolve_agy_binary();
     let mut cmd = Command::new(&binary);
     cmd.args(["-p", "/usage", "--output-format", "json"]);
+    cmd.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
     for (k, v) in env_vars {
         cmd.env(k, v);
     }
@@ -1443,7 +1444,7 @@ pub fn get_account_quota(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("启动 agy 查询用量失败：{e}"))?;
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(25);
     loop {
         if child
             .try_wait()
@@ -1465,35 +1466,91 @@ pub fn get_account_quota(
         .map_err(|e| format!("读取 agy 用量输出失败：{e}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let combined = if stdout.trim().is_empty() {
-        stderr
-    } else {
-        stdout
-    };
 
-    let summary = parse_gemini_quota_output(normalized_id, &combined);
-    if let Ok(mut cache) = quota_cache().lock() {
-        cache.insert(
-            cache_key,
-            CachedQuota {
-                summary: summary.clone(),
-                fetched_at: Instant::now(),
-            },
-        );
+    let mut summary = if !stdout.trim().is_empty() {
+        parse_gemini_quota_output(normalized_id.clone(), &stdout)
+    } else {
+        parse_gemini_quota_output(normalized_id.clone(), &stderr)
+    };
+    if summary.gemini_windows.is_empty() && !stdout.trim().is_empty() && !stderr.trim().is_empty() {
+        let from_stderr = parse_gemini_quota_output(normalized_id, &stderr);
+        if !from_stderr.gemini_windows.is_empty() || summary.raw_summary.is_none() {
+            summary = from_stderr;
+        }
+    }
+
+    if !summary.gemini_windows.is_empty() {
+        if let Ok(mut cache) = quota_cache().lock() {
+            cache.insert(
+                cache_key,
+                CachedQuota {
+                    summary: summary.clone(),
+                    fetched_at: Instant::now(),
+                },
+            );
+        }
     }
     Ok(summary)
 }
 
+fn strip_ansi_codes(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    while let Some(ch) = chars.next() {
+                        if ('@'..='~').contains(&ch) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(ch) = chars.next() {
+                        if ch == '\x07' {
+                            break;
+                        }
+                        if ch == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn parse_gemini_quota_output(account_id: Option<String>, raw: &str) -> AntigravityQuotaSummary {
     let now = Utc::now().timestamp_millis();
-    let mut windows = Vec::new();
+    let cleaned = strip_ansi_codes(raw);
+    let mut primary_windows = Vec::new();
+    let mut fallback_windows = Vec::new();
+    let mut json_error: Option<String> = None;
 
-    if let Some(json_val) = extract_json_value(raw) {
-        collect_gemini_windows_from_json(&json_val, &mut windows);
+    if let Some(json_val) = extract_json_value(&cleaned) {
+        collect_gemini_windows_from_json(&json_val, &mut primary_windows, &mut fallback_windows);
+        if primary_windows.is_empty() && fallback_windows.is_empty() {
+            json_error = extract_json_error_message(&json_val);
+        }
     }
+
+    let mut windows = if !primary_windows.is_empty() {
+        primary_windows
+    } else {
+        fallback_windows
+    };
     if windows.is_empty() {
-        collect_gemini_windows_from_text(raw, &mut windows);
+        collect_gemini_windows_from_text(&cleaned, &mut windows);
     }
+    windows = normalize_quota_windows(windows);
 
     let gemini_percent = windows
         .iter()
@@ -1501,12 +1558,13 @@ fn parse_gemini_quota_output(account_id: Option<String>, raw: &str) -> Antigravi
         .min();
 
     let raw_summary = if windows.is_empty() {
-        let first_line = raw
-            .lines()
-            .map(str::trim)
-            .find(|l| !l.is_empty() && !l.starts_with('{'))
-            .map(|l| l.chars().take(80).collect::<String>());
-        first_line
+        json_error.or_else(|| {
+            cleaned
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty() && !l.starts_with('{') && !l.starts_with('}'))
+                .map(|l| l.chars().take(120).collect::<String>())
+        })
     } else {
         None
     };
@@ -1520,10 +1578,25 @@ fn parse_gemini_quota_output(account_id: Option<String>, raw: &str) -> Antigravi
     }
 }
 
+fn extract_json_error_message(val: &Value) -> Option<String> {
+    find_string_recursive(val, &["error_message", "errorMessage", "error", "message"])
+        .map(|s| s.chars().take(120).collect())
+}
+
 fn extract_json_value(raw: &str) -> Option<Value> {
     let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
     if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
         return Some(val);
+    }
+    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if start < end {
+            if let Ok(val) = serde_json::from_str::<Value>(&trimmed[start..=end]) {
+                return Some(val);
+            }
+        }
     }
     for line in trimmed.lines().rev() {
         let l = line.trim();
@@ -1545,39 +1618,129 @@ fn fraction_or_percent_to_u8(val: &Value) -> Option<u8> {
     Some(pct.round().clamp(0.0, 100.0) as u8)
 }
 
-fn collect_gemini_windows_from_json(value: &Value, out: &mut Vec<AntigravityQuotaWindow>) {
+fn extract_remaining_percent(val: &Value) -> Option<u8> {
+    let map = val.as_object()?;
+    for key in [
+        "remaining_fraction",
+        "remainingFraction",
+        "remaining_percent",
+        "remainingPercent",
+        "remaining",
+    ] {
+        if let Some(field) = map.get(key) {
+            if let Some(pct) = fraction_or_percent_to_u8(field) {
+                return Some(pct);
+            }
+            if let Some(nested) = field.as_object() {
+                for sub in [
+                    "remaining_fraction",
+                    "remainingFraction",
+                    "remaining_percent",
+                    "remainingPercent",
+                    "fraction",
+                    "percent",
+                    "value",
+                ] {
+                    if let Some(pct) = nested.get(sub).and_then(fraction_or_percent_to_u8) {
+                        return Some(pct);
+                    }
+                }
+            }
+        }
+    }
+    for nested_key in ["quota_info", "quotaInfo"] {
+        if let Some(nested) = map.get(nested_key) {
+            if let Some(pct) = extract_remaining_percent(nested) {
+                return Some(pct);
+            }
+        }
+    }
+    for used_key in ["used_fraction", "usedFraction", "used_percent", "usedPercent"] {
+        if let Some(used_pct) = map.get(used_key).and_then(fraction_or_percent_to_u8) {
+            return Some(100u8.saturating_sub(used_pct));
+        }
+    }
+    None
+}
+
+fn extract_bucket_window_hints(bucket: &Map<String, Value>) -> String {
+    let mut parts = Vec::new();
+    for key in [
+        "window",
+        "cadence",
+        "window_type",
+        "windowType",
+        "id",
+        "bucket_id",
+        "bucketId",
+        "display_name",
+        "displayName",
+        "label",
+        "name",
+    ] {
+        if let Some(s) = bucket.get(key).and_then(Value::as_str).map(str::trim) {
+            if !s.is_empty() {
+                parts.push(s);
+            }
+        }
+    }
+    parts.join(" ")
+}
+
+fn extract_group_name(map: &Map<String, Value>) -> &str {
+    for key in [
+        "display_name",
+        "displayName",
+        "name",
+        "group",
+        "family",
+        "title",
+        "id",
+        "model",
+    ] {
+        if let Some(s) = map.get(key).and_then(Value::as_str).map(str::trim) {
+            if !s.is_empty() {
+                return s;
+            }
+        }
+    }
+    ""
+}
+
+fn collect_gemini_windows_from_json(
+    value: &Value,
+    primary_out: &mut Vec<AntigravityQuotaWindow>,
+    fallback_out: &mut Vec<AntigravityQuotaWindow>,
+) {
     match value {
         Value::Object(map) => {
-            let name = map
-                .get("displayName")
-                .or_else(|| map.get("name"))
-                .or_else(|| map.get("group"))
-                .or_else(|| map.get("family"))
-                .or_else(|| map.get("model"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let is_gemini = name.to_ascii_lowercase().contains("gemini");
+            let name = extract_group_name(map);
+            let lower_name = name.to_ascii_lowercase();
+            let is_gemini = lower_name.contains("gemini");
+            let is_argon = lower_name.contains("argon");
             if is_gemini {
-                if let Some(buckets) = map.get("buckets").or_else(|| map.get("windows")).and_then(Value::as_array) {
+                let target = if is_argon {
+                    &mut *fallback_out
+                } else {
+                    &mut *primary_out
+                };
+                if let Some(buckets) = map
+                    .get("buckets")
+                    .or_else(|| map.get("windows"))
+                    .and_then(Value::as_array)
+                {
+                    let before = target.len();
                     for bucket in buckets {
-                        let raw_label = bucket
-                            .get("displayName")
-                            .or_else(|| bucket.get("cadence"))
-                            .or_else(|| bucket.get("window"))
-                            .or_else(|| bucket.get("label"))
-                            .or_else(|| bucket.get("id"))
-                            .and_then(Value::as_str)
-                            .unwrap_or("Gemini")
-                            .trim();
-                        let (kind, label) = classify_quota_window(raw_label);
-                        let pct = bucket
-                            .get("remainingFraction")
-                            .or_else(|| bucket.get("remainingPercent"))
-                            .or_else(|| bucket.get("remaining"))
-                            .and_then(fraction_or_percent_to_u8);
+                        let bmap = match bucket.as_object() {
+                            Some(m) => m,
+                            None => continue,
+                        };
+                        let hints = extract_bucket_window_hints(bmap);
+                        let (kind, label) = classify_quota_window(&hints);
+                        let pct = extract_remaining_percent(bucket);
                         let reset_text = extract_reset_field(bucket);
                         if pct.is_some() || reset_text.is_some() {
-                            out.push(AntigravityQuotaWindow {
+                            target.push(AntigravityQuotaWindow {
                                 kind,
                                 label,
                                 remaining_percent: pct,
@@ -1585,46 +1748,91 @@ fn collect_gemini_windows_from_json(value: &Value, out: &mut Vec<AntigravityQuot
                             });
                         }
                     }
-                    if !out.is_empty() {
+                    if target.len() > before {
                         return;
                     }
                 }
-                let direct_pct = map
-                    .get("remainingFraction")
-                    .or_else(|| map.get("remainingPercent"))
-                    .or_else(|| map.get("remaining"))
-                    .and_then(fraction_or_percent_to_u8);
-                if let Some(pct) = direct_pct {
-                    let (kind, label) = classify_quota_window(name.trim());
-                    let reset_text = extract_reset_field(value);
-                    out.push(AntigravityQuotaWindow {
+                let direct_pct = extract_remaining_percent(value);
+                let reset_text = extract_reset_field(value);
+                if direct_pct.is_some() || reset_text.is_some() {
+                    let hints = extract_bucket_window_hints(map);
+                    let (kind, label) = classify_quota_window(if hints.is_empty() { name } else { &hints });
+                    target.push(AntigravityQuotaWindow {
                         kind,
                         label,
-                        remaining_percent: Some(pct),
+                        remaining_percent: direct_pct,
                         reset_text,
                     });
                     return;
                 }
             }
             for child in map.values() {
-                collect_gemini_windows_from_json(child, out);
+                collect_gemini_windows_from_json(child, primary_out, fallback_out);
             }
         }
         Value::Array(items) => {
             for item in items {
-                collect_gemini_windows_from_json(item, out);
+                collect_gemini_windows_from_json(item, primary_out, fallback_out);
             }
         }
         _ => {}
     }
 }
 
+fn normalize_quota_windows(windows: Vec<AntigravityQuotaWindow>) -> Vec<AntigravityQuotaWindow> {
+    let mut best_5h: Option<AntigravityQuotaWindow> = None;
+    let mut best_weekly: Option<AntigravityQuotaWindow> = None;
+    let mut others: Vec<AntigravityQuotaWindow> = Vec::new();
+
+    let merge_window = |slot: &mut Option<AntigravityQuotaWindow>, incoming: AntigravityQuotaWindow| {
+        match slot {
+            None => *slot = Some(incoming),
+            Some(existing) => {
+                let take_incoming_pct = match (existing.remaining_percent, incoming.remaining_percent) {
+                    (None, Some(_)) => true,
+                    (Some(a), Some(b)) => b < a,
+                    _ => false,
+                };
+                if take_incoming_pct {
+                    existing.remaining_percent = incoming.remaining_percent;
+                    if incoming.reset_text.is_some() {
+                        existing.reset_text = incoming.reset_text;
+                    }
+                } else if existing.reset_text.is_none() && incoming.reset_text.is_some() {
+                    existing.reset_text = incoming.reset_text;
+                }
+            }
+        }
+    };
+
+    for w in windows {
+        match w.kind.as_str() {
+            "session_5h" => merge_window(&mut best_5h, w),
+            "weekly" => merge_window(&mut best_weekly, w),
+            _ => others.push(w),
+        }
+    }
+
+    let mut result = Vec::new();
+    if let Some(w) = best_5h {
+        result.push(w);
+    }
+    if let Some(w) = best_weekly {
+        result.push(w);
+    }
+    result.extend(others);
+    result
+}
+
 fn classify_quota_window(raw_label: &str) -> (String, String) {
     let lower = raw_label.to_ascii_lowercase();
     if lower.contains("5h")
         || lower.contains("5-h")
+        || lower.contains("5_h")
         || lower.contains("5 hour")
         || lower.contains("five_hour")
+        || lower.contains("five-hour")
+        || lower.contains("five hour")
         || lower.contains("session")
         || raw_label.contains("5小时")
         || raw_label.contains("5 小时")
@@ -1633,6 +1841,7 @@ fn classify_quota_window(raw_label: &str) -> (String, String) {
     } else if lower.contains("week")
         || lower.contains("7d")
         || lower.contains("7-d")
+        || lower.contains("7_d")
         || raw_label.contains("周")
     {
         ("weekly".into(), "周额度".into())
@@ -1643,13 +1852,35 @@ fn classify_quota_window(raw_label: &str) -> (String, String) {
 }
 
 fn extract_reset_field(val: &Value) -> Option<String> {
-    for key in ["resetTime", "resetsAt", "resetAt", "resetDescription", "resetIn"] {
-        if let Some(v) = val.get(key) {
+    let map = val.as_object()?;
+    for key in [
+        "reset_time",
+        "resetTime",
+        "resets_at",
+        "resetsAt",
+        "reset_at",
+        "resetAt",
+        "reset_description",
+        "resetDescription",
+        "reset_in",
+        "resetIn",
+        "reset_text",
+        "resetText",
+        "description",
+    ] {
+        if let Some(v) = map.get(key) {
             if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
                 return Some(s.to_string());
             }
             if let Some(ts) = v.as_i64().filter(|&n| n > 1_000_000_000) {
                 return Some(ts.to_string());
+            }
+        }
+    }
+    for nested_key in ["remaining", "quota_info", "quotaInfo"] {
+        if let Some(nested) = map.get(nested_key) {
+            if let Some(found) = extract_reset_field(nested) {
+                return Some(found);
             }
         }
     }
@@ -1824,6 +2055,55 @@ mod tests {
         let parsed = parse_gemini_quota_output(Some("acc-1".into()), json_sample);
         assert_eq!(parsed.gemini_percent, Some(64));
         assert_eq!(parsed.gemini_windows.len(), 2);
+        assert_eq!(parsed.gemini_windows[0].kind, "session_5h");
+        assert_eq!(parsed.gemini_windows[1].kind, "weekly");
+
+        // 真实 agy -p /usage --output-format json 返回的 snake_case 结构（weekly 在前、5h 在后，且含 Argon 独立组）
+        let real_agy_json = concat!(
+            "\x1b[33mNotice: checking quota\x1b[0m\n",
+            r#"{
+  "command": {
+    "name": "usage",
+    "data": {
+      "groups": [
+        {
+          "name": "Gemini 4 Argon",
+          "buckets": [{"id": "gemini-argon-wtu-weekly", "window": "weekly", "remaining_fraction": 0.12, "reset_time": "2026-12-01T00:00:00Z"}]
+        },
+        {
+          "name": "Gemini Models",
+          "buckets": [
+            {"id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.567, "reset_time": "2026-11-29T08:00:00Z"},
+            {"id": "gemini-5h", "window": "5h", "remaining_fraction": 0.954, "reset_time": "2026-11-25T14:30:00Z"}
+          ]
+        },
+        {
+          "name": "Claude and GPT models",
+          "buckets": [{"id": "3p-5h", "window": "5h", "remaining_fraction": 0.10}]
+        }
+      ]
+    }
+  }
+}"#
+        );
+        let parsed_real = parse_gemini_quota_output(Some("acc-2".into()), real_agy_json);
+        assert_eq!(parsed_real.gemini_percent, Some(57));
+        assert_eq!(parsed_real.gemini_windows.len(), 2);
+        assert_eq!(parsed_real.gemini_windows[0].kind, "session_5h");
+        assert_eq!(parsed_real.gemini_windows[0].remaining_percent, Some(95));
+        assert_eq!(parsed_real.gemini_windows[0].reset_text.as_deref(), Some("2026-11-25T14:30:00Z"));
+        assert_eq!(parsed_real.gemini_windows[1].kind, "weekly");
+        assert_eq!(parsed_real.gemini_windows[1].remaining_percent, Some(57));
+        assert_eq!(parsed_real.gemini_windows[1].reset_text.as_deref(), Some("2026-11-29T08:00:00Z"));
+
+        // 嵌套 remaining.remainingFraction 结构
+        let nested_json = r#"{"response":{"groups":[{"displayName":"Gemini Models","buckets":[{"bucketId":"gemini-5h","displayName":"Five Hour Limit Remaining","remaining":{"remainingFraction":0.72},"description":"Resets in 1h 20m"},{"bucketId":"gemini-weekly","displayName":"Weekly Limit Remaining","remaining":{"remainingFraction":0.40},"description":"Resets in 3d 2h"}]}]}}"#;
+        let parsed_nested = parse_gemini_quota_output(None, nested_json);
+        assert_eq!(parsed_nested.gemini_windows.len(), 2);
+        assert_eq!(parsed_nested.gemini_windows[0].remaining_percent, Some(72));
+        assert_eq!(parsed_nested.gemini_windows[0].reset_text.as_deref(), Some("Resets in 1h 20m"));
+        assert_eq!(parsed_nested.gemini_windows[1].remaining_percent, Some(40));
+        assert_eq!(parsed_nested.gemini_windows[1].reset_text.as_deref(), Some("Resets in 3d 2h"));
 
         let text_sample = "Gemini 5h: 75% remaining
 Gemini Weekly: 90% remaining

@@ -18,14 +18,22 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [agyQuota, setAgyQuota] = useState<AntigravityQuotaSummary | null>(null);
   const [agyQuotaLoading, setAgyQuotaLoading] = useState(false);
+  const [agyQuotaError, setAgyQuotaError] = useState<string | null>(null);
 
   const isAntigravity = view.provider === 'antigravity';
   const loadAgyQuota = useCallback((forceRefresh = false) => {
     if (!isAntigravity) return;
     setAgyQuotaLoading(true);
+    setAgyQuotaError(null);
     getAntigravityAccountQuota(view.accountId ?? null, forceRefresh)
-      .then(res => setAgyQuota(res))
-      .catch(() => setAgyQuota(null))
+      .then(res => {
+        setAgyQuota(res);
+        setAgyQuotaError(null);
+      })
+      .catch(err => {
+        setAgyQuota(null);
+        setAgyQuotaError(err instanceof Error ? err.message : String(err));
+      })
       .finally(() => setAgyQuotaLoading(false));
   }, [isAntigravity, view.accountId]);
 
@@ -87,7 +95,7 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
       if (hours > 0) return `${hours}h${mins}m`;
       return `${Math.max(1, mins)}m`;
     }
-    return trimmed;
+    return trimmed.replace(/^(?:resets?\s+(?:in|at)\s+|in\s+|刷新于\s*|重置于\s*)/i, '').trim() || trimmed;
   };
   const window5h = agyQuota?.geminiWindows.find(w => w.kind === 'session_5h') ?? null;
   const windowWeekly = agyQuota?.geminiWindows.find(w => w.kind === 'weekly') ?? null;
@@ -99,11 +107,13 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
   const geminiQuotaText = (() => {
     if (window5h || windowWeekly) {
       const parts: string[] = [];
-      if (window5h?.remainingPercent != null) {
-        parts.push(`5h ${window5h.remainingPercent}%${gemini5hReset ? `(${gemini5hReset})` : ''}`);
+      if (window5h && (window5h.remainingPercent != null || gemini5hReset)) {
+        const pct = window5h.remainingPercent != null ? `${window5h.remainingPercent}%` : '—';
+        parts.push(`5h ${pct}${gemini5hReset ? `(${gemini5hReset})` : ''}`);
       }
-      if (windowWeekly?.remainingPercent != null) {
-        parts.push(`周 ${windowWeekly.remainingPercent}%${geminiWeeklyReset ? `(${geminiWeeklyReset})` : ''}`);
+      if (windowWeekly && (windowWeekly.remainingPercent != null || geminiWeeklyReset)) {
+        const pct = windowWeekly.remainingPercent != null ? `${windowWeekly.remainingPercent}%` : '—';
+        parts.push(`周 ${pct}${geminiWeeklyReset ? `(${geminiWeeklyReset})` : ''}`);
       }
       if (parts.length > 0) return parts.join(' · ');
     }
@@ -185,6 +195,7 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
           onClose={closePopover}
           agyQuota={agyQuota}
           agyQuotaLoading={agyQuotaLoading}
+          agyQuotaError={agyQuotaError}
           onRefreshAgyQuota={() => loadAgyQuota(true)}
         />,
         document.body,

@@ -1,6 +1,6 @@
 /* 状态栏 Agent 条目：模型 / 思考强度 / 上下文 / Token 合并为一个可点击组件。 */
 .app-statusbar-agent {
-  max-width: min(620px, 62vw);
+  max-width: min(760px, 68vw);
 }
 
 /* 条目内部的上下文与 Token 明细，彼此之间留出可读间距。 */
@@ -240,4 +240,23 @@
   border-top: 1px solid var(--border-subtle);
   color: var(--text-tertiary);
   font-size: 10px;
+}
+
+.agent-stats-quota-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-stats-quota-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-stats-quota-reset {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-align: right;
+  line-height: 1.35;
 }

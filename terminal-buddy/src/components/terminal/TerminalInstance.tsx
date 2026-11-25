@@ -7,7 +7,8 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../../services/tauri';
+import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, openUrl, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../../services/tauri';
+import { showConfirm } from '../../services/dialog';
 import { defaultShellType, isBrowserClient, isWebBackend } from '../../services/platform';
 import { ServerMonitor } from '../shared/ServerMonitor';
 import { listen } from './../../services/remoteWorkspace/events';
@@ -596,8 +597,49 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
         ...(buildNumber ? { windowsPty: { backend: 'conpty' as const, buildNumber } } : {}),
         reflowCursorLine: usesVsCodeTerminal,
         screenReaderMode: false,
+        // 接管 xterm.js 内置 OSC 8 链接点击：替换原生 window.confirm 弹窗与失效的 window.open
+        linkHandler: {
+          activate: (event: MouseEvent, text: string) => {
+            void confirmAndOpenTerminalLink(event, text);
+          },
+        },
       });
       void bootLog(`initTerminal[${terminalId}]: new Terminal() took ${(performance.now() - tNewTerm).toFixed(0)}ms`);
+
+      let linkConfirmInFlight = false;
+      const confirmAndOpenTerminalLink = async (event: MouseEvent, rawUri: string) => {
+        if (!(event.ctrlKey || event.metaKey)) return;
+        const trimmed = rawUri.trim();
+        if (!trimmed || linkConfirmInFlight) return;
+        try {
+          const parsed = new URL(trimmed);
+          if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) return;
+        } catch {
+          return;
+        }
+        linkConfirmInFlight = true;
+        try {
+          const confirmed = await showConfirm(
+            `确定要在浏览器中打开以下链接吗？\n\n${trimmed}\n\n请确认链接来源可信后再访问。`,
+            {
+              title: '打开外部链接',
+              confirmText: '打开链接',
+              cancelText: '取消',
+              danger: false,
+            },
+          );
+          if (!confirmed) return;
+          if (isBrowserClient()) {
+            window.open(trimmed, '_blank', 'noopener,noreferrer');
+          } else {
+            await openUrl(trimmed);
+          }
+        } catch (err) {
+          console.error('Failed to open URL:', err);
+        } finally {
+          linkConfirmInFlight = false;
+        }
+      };
 
       const tAddons = performance.now();
       const fitAddon = new FitAddon();
@@ -606,9 +648,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = memo(({
 
       terminal.loadAddon(fitAddon);
       terminal.loadAddon(new WebLinksAddon((event: MouseEvent, uri: string) => {
-        if (event.ctrlKey || event.metaKey) {
-          openPath(uri).catch((err) => console.error('Failed to open URL:', err));
-        }
+        void confirmAndOpenTerminalLink(event, uri);
       }));
       terminal.loadAddon(clipboardAddon);
 

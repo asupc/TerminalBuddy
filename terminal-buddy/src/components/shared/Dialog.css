@@ -198,6 +198,7 @@
   font-size: 14px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 @keyframes tb-dialog-overlay-enter {

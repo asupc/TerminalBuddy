@@ -51,7 +51,8 @@ function formatQuotaResetDetail(raw?: string | null): string | undefined {
     const rel = days > 0 ? `${days}天${hours}小时` : hours > 0 ? `${hours}小时${mins}分` : `${Math.max(1, mins)}分钟`;
     return `${rel}后刷新（${clock}）`;
   }
-  return `刷新：${trimmed}`;
+  const cleaned = trimmed.replace(/^(?:resets?\s+(?:in|at)\s+|in\s+|刷新于\s*|重置于\s*)/i, '').trim() || trimmed;
+  return `刷新：${cleaned}`;
 }
 
 function hasTokens(tokens: AiTokenUsage | null): tokens is AiTokenUsage {
@@ -82,6 +83,7 @@ interface AgentStatsPopoverProps {
   onClose: () => void;
   agyQuota?: AntigravityQuotaSummary | null;
   agyQuotaLoading?: boolean;
+  agyQuotaError?: string | null;
   onRefreshAgyQuota?: () => void;
 }
 
@@ -89,7 +91,7 @@ interface AgentStatsPopoverProps {
  * 状态栏 Agent 详情浮层：在用的模型 / 思考强度 / 上下文占用与累计 Token。
  * 数据与状态栏条目同源，只是把窄条里省略的明细完整展开。
  */
-export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, agyQuotaLoading, onRefreshAgyQuota }: AgentStatsPopoverProps) {
+export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, agyQuotaLoading, agyQuotaError, onRefreshAgyQuota }: AgentStatsPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
 
   // 点外部 / Esc / 窗口尺寸变化时关闭；点击状态栏条目本身交给外层做开合切换。
@@ -191,16 +193,26 @@ export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, 
             {agyQuotaLoading && !agyQuota ? (
               <p className="agent-stats-empty">正在查询账号 Gemini 用量…</p>
             ) : agyQuota && agyQuota.geminiWindows.length > 0 ? (
-              agyQuota.geminiWindows.map((w, idx) => (
-                <StatRow
-                  key={`${w.label}-${idx}`}
-                  label={w.label}
-                  value={w.remainingPercent != null ? `剩余 ${w.remainingPercent}%` : '—'}
-                  hint={formatQuotaResetDetail(w.resetText)}
-                />
-              ))
+              <div className="agent-stats-quota-list">
+                {agyQuota.geminiWindows.map((w, idx) => {
+                  const resetDetail = formatQuotaResetDetail(w.resetText);
+                  return (
+                    <div key={`${w.kind}-${w.label}-${idx}`} className="agent-stats-quota-item">
+                      <div className="agent-stats-row">
+                        <span className="agent-stats-row-label">{w.label}</span>
+                        <span className="agent-stats-row-value">
+                          {w.remainingPercent != null ? `剩余 ${w.remainingPercent}%` : '—'}
+                        </span>
+                      </div>
+                      {resetDetail && (
+                        <div className="agent-stats-quota-reset">{resetDetail}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
-              <p className="agent-stats-empty">{agyQuota?.rawSummary || '暂未获取到 Gemini 额度信息'}</p>
+              <p className="agent-stats-empty">{agyQuotaError || agyQuota?.rawSummary || '暂未获取到 Gemini 额度信息'}</p>
             )}
           </section>
         )}

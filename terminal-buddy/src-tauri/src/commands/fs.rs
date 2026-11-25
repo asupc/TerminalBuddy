@@ -114,15 +114,23 @@ pub fn open_path(path: String) -> Result<(), String> {
         .chain(std::iter::once(0))
         .collect();
 
-    let directory: Vec<u16> = std::path::Path::new(&path)
-        .parent()
-        .map(|p| {
-            std::ffi::OsStr::new(p)
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect()
-        })
-        .unwrap_or_default();
+    let lower = path.trim().to_ascii_lowercase();
+    let is_url = lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:");
+    let directory: Vec<u16> = if is_url {
+        Vec::new()
+    } else {
+        std::path::Path::new(&path)
+            .parent()
+            .map(|p| {
+                std::ffi::OsStr::new(p)
+                    .encode_wide()
+                    .chain(std::iter::once(0))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
 
     let result = unsafe {
         ShellExecuteW(
