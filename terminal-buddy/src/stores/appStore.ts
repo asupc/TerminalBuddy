@@ -73,7 +73,7 @@ export interface RelayAgentTab {
 	shape: 'relay';
 	terminalId: string;
 	title: string;
-	provider?: 'claude' | 'codex';
+	provider?: 'claude' | 'codex' | 'antigravity';
 	openedAt: number;
 }
 
@@ -97,11 +97,11 @@ export { sessionReplayTabKey } from '../utils/sessionHistory';
 
 export type WorkspaceSpecialTab = "git-history" | "git-changes" | "claude-replay" | "agent-chat" | "scheduled-tasks" | null;
 
-export type TerminalRuntimeKind = "shell" | "claude" | "codex";
+export type TerminalRuntimeKind = "shell" | "claude" | "codex" | "antigravity";
 export type TerminalActivityPhase = "idle" | "running" | "attention" | "completed" | "failed";
 
 export interface TerminalActivityDetails {
-	provider?: "claude" | "codex";
+	provider?: "claude" | "codex" | "antigravity";
 	taskTitle?: string;
 	summary?: string;
 }
@@ -109,7 +109,7 @@ export interface TerminalActivityDetails {
 export interface TerminalActivityState {
 	runtimeKind: TerminalRuntimeKind;
 	/** 产生事件的 Agent；旧 Claude 事件没有 provider 时按 claude 处理。 */
-	provider?: "claude" | "codex";
+	provider?: "claude" | "codex" | "antigravity";
 	source: "legacy" | "hook";
 	phase: TerminalActivityPhase;
 	updatedAt: number;
@@ -222,7 +222,7 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 			const session = value as Record<string, unknown>;
 			const provider = session.provider;
 			const sessionId = session.sessionId;
-			if ((provider !== "claude" && provider !== "codex") || typeof sessionId !== "string" || !sessionId) return undefined;
+			if ((provider !== "claude" && provider !== "codex" && provider !== "antigravity") || typeof sessionId !== "string" || !sessionId) return undefined;
 			return {
 				provider,
 				sessionId,

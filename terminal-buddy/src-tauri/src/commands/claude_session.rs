@@ -155,7 +155,7 @@ pub fn get_agent_sessions_for_terminals(
     let requested: HashSet<String> = terminal_ids.iter().cloned().collect();
     let mut sessions: HashMap<_, _> = crate::services::terminal_task_service::session_bindings()
         .into_iter()
-        .filter(|(id, record)| requested.contains(id) && matches!(record.provider.as_str(), "claude" | "codex"))
+        .filter(|(id, record)| requested.contains(id) && matches!(record.provider.as_str(), "claude" | "codex" | "antigravity"))
         .collect();
     let missing: Vec<String> = terminal_ids
         .into_iter()

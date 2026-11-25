@@ -25,7 +25,7 @@ interface CompletionNotificationDetails {
   phase: 'completed' | 'failed';
   taskTitle?: string;
   summary?: string;
-  provider?: 'claude' | 'codex';
+  provider?: 'claude' | 'codex' | 'antigravity';
 }
 
 const pendingCompletionNotifications = new Map<string, PendingNotification>();
@@ -118,7 +118,7 @@ async function showCompletionNotification(
   if (!name) return;
   const isBeingViewed = terminalIsBeingViewed(terminalId, appInForeground);
   const failed = phase === 'failed';
-  const agentName = details.provider === 'codex' ? 'Codex' : 'Claude Code';
+  const agentName = details.provider === 'codex' ? 'Codex' : details.provider === 'antigravity' ? 'Antigravity' : 'Claude Code';
   const taskTitle = details.taskTitle?.trim();
   const title = taskTitle
     ? `${failed ? '任务失败' : '任务完成'}：${taskTitle}`
@@ -206,11 +206,11 @@ export function handleClaudeTerminalInputActivity(terminalId: string): void {
 }
 
 export function applyTerminalEvent(event: ClaudeHookTerminalEvent, notify = true): void {
-  notify = notify && event.eventName !== 'CodexTranscriptSnapshot';
+  notify = notify && event.eventName !== 'CodexTranscriptSnapshot' && event.eventName !== 'AntigravityTranscriptSnapshot';
   const store = useAppStore.getState();
   if (event.phase === 'ended') {
     if (!store.endClaudeHookSession(event.terminalId, event.occurredAt)) return;
-    if (event.sessionId && event.provider !== 'codex') {
+    if (event.sessionId && event.provider !== 'codex' && event.provider !== 'antigravity') {
       store.setClaudeSessionId(event.terminalId, event.sessionId);
     }
     cancelAttentionForTerminal(event.terminalId);
@@ -225,10 +225,10 @@ export function applyTerminalEvent(event: ClaudeHookTerminalEvent, notify = true
   };
   if (!store.applyClaudeHookActivity(event.terminalId, event.phase, event.occurredAt, details)) return;
   if (event.sessionId) {
-    if (event.provider === 'codex') {
+    if (event.provider === 'codex' || event.provider === 'antigravity') {
       const existing = store.agentSessionBindings[event.terminalId];
-      store.setAgentSessionBinding(event.terminalId, existing?.provider === 'codex' && existing.sessionId === event.sessionId
-        ? existing : { provider: 'codex', sessionId: event.sessionId });
+      store.setAgentSessionBinding(event.terminalId, existing?.provider === event.provider && existing.sessionId === event.sessionId
+        ? existing : { provider: event.provider, sessionId: event.sessionId });
     } else {
       store.setClaudeSessionId(event.terminalId, event.sessionId);
     }

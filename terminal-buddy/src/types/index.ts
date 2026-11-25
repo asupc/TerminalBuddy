@@ -2,7 +2,7 @@ export type SessionHistoryProvider = 'claude' | 'codex' | 'antigravity';
 
 /** 终端与 AI 会话的统一绑定：避免为每个 Agent 增加一个 xxxSessionId 字段。 */
 export interface AgentSessionBinding {
-  provider: 'claude' | 'codex';
+  provider: 'claude' | 'codex' | 'antigravity';
   sessionId: string;
   sessionFile?: string;
   cwd?: string;

@@ -125,9 +125,198 @@ fn codex_executable_end(command: &str) -> Option<usize> {
     matches!(name.as_str(), "codex" | "codex.exe" | "codex.cmd" | "codex.bat").then_some(end)
 }
 
+fn extract_inline_env_var(command: &str, var_name: &str) -> Option<String> {
+    // PowerShell: $env:VAR='value' 或 $env:VAR="value"
+    let ps_prefix = format!("$env:{var_name}=");
+    if let Some(pos) = command.find(&ps_prefix) {
+        let rest = &command[pos + ps_prefix.len()..];
+        if let Some(after_quote) = rest.strip_prefix('\'') {
+            let mut val = String::new();
+            let mut chars = after_quote.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '\'' {
+                    if chars.peek() == Some(&'\'') {
+                        chars.next();
+                        val.push('\'');
+                    } else {
+                        break;
+                    }
+                } else {
+                    val.push(c);
+                }
+            }
+            if !val.trim().is_empty() {
+                return Some(val);
+            }
+        } else if let Some(after_quote) = rest.strip_prefix('"') {
+            if let Some(end) = after_quote.find('"') {
+                let val = &after_quote[..end];
+                if !val.trim().is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    // POSIX: VAR='value' 或 VAR="value"（要求位于行首或空白/分号之后，避免误匹配子串）
+    let posix_prefix = format!("{var_name}=");
+    let mut search_start = 0;
+    while let Some(rel) = command[search_start..].find(&posix_prefix) {
+        let pos = search_start + rel;
+        let boundary_ok = pos == 0
+            || matches!(
+                command.as_bytes()[pos - 1],
+                b' ' | b'\t' | b';' | b'\n' | b'&'
+            );
+        search_start = pos + posix_prefix.len();
+        if !boundary_ok {
+            continue;
+        }
+        let rest = &command[search_start..];
+        if let Some(after_quote) = rest.strip_prefix('\'') {
+            let mut val = String::new();
+            let mut i = 0;
+            let bytes = after_quote.as_bytes();
+            while i < bytes.len() {
+                if after_quote[i..].starts_with("'\\''") {
+                    val.push('\'');
+                    i += 4;
+                } else if bytes[i] == b'\'' {
+                    break;
+                } else if let Some(ch) = after_quote[i..].chars().next() {
+                    val.push(ch);
+                    i += ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            if !val.trim().is_empty() {
+                return Some(val);
+            }
+        } else if let Some(after_quote) = rest.strip_prefix('"') {
+            if let Some(end) = after_quote.find('"') {
+                let val = &after_quote[..end];
+                if !val.trim().is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn resolve_antigravity_root_from_command(command: &str) -> Option<PathBuf> {
+    if let Some(cli_home) = extract_inline_env_var(command, "ANTIGRAVITY_CLI_HOME") {
+        return Some(PathBuf::from(cli_home));
+    }
+    if let Some(gemini_home) = extract_inline_env_var(command, "GEMINI_HOME") {
+        return Some(PathBuf::from(gemini_home).join("antigravity-cli"));
+    }
+    if let Some(home) = extract_inline_env_var(command, "USERPROFILE")
+        .or_else(|| extract_inline_env_var(command, "HOME"))
+    {
+        return Some(PathBuf::from(home).join(".gemini").join("antigravity-cli"));
+    }
+    None
+}
+
+fn skip_leading_env_assignments(command: &str) -> usize {
+    let mut offset = 0;
+    loop {
+        let rest = &command[offset..];
+        let trimmed_len = rest.len() - rest.trim_start().len();
+        offset += trimmed_len;
+        let rest = &command[offset..];
+        if rest.is_empty() {
+            break;
+        }
+        // PowerShell: $env:NAME=...;
+        if rest.starts_with("$env:") {
+            let mut quote: Option<char> = None;
+            let mut end = None;
+            let mut chars = rest.char_indices().peekable();
+            while let Some((idx, c)) = chars.next() {
+                if let Some(q) = quote {
+                    if c == q {
+                        if q == '\'' && chars.peek().is_some_and(|(_, next)| *next == '\'') {
+                            chars.next();
+                        } else {
+                            quote = None;
+                        }
+                    }
+                } else if c == '\'' || c == '"' {
+                    quote = Some(c);
+                } else if c == ';' {
+                    end = Some(idx + 1);
+                    break;
+                }
+            }
+            if let Some(e) = end {
+                offset += e;
+                continue;
+            }
+            break;
+        }
+        // POSIX: NAME=VALUE ...
+        let bytes = rest.as_bytes();
+        let mut eq_idx = None;
+        for (i, &b) in bytes.iter().enumerate() {
+            if b == b'=' && i > 0 {
+                eq_idx = Some(i);
+                break;
+            }
+            if !(b.is_ascii_alphanumeric() || b == b'_') {
+                break;
+            }
+        }
+        if let Some(eq) = eq_idx {
+            let mut quote: Option<char> = None;
+            let mut end = rest.len();
+            let mut i = eq + 1;
+            while i < rest.len() {
+                if let Some(q) = quote {
+                    if q == '\'' && rest[i..].starts_with("'\\''") {
+                        i += 4;
+                        continue;
+                    }
+                    let ch = rest[i..].chars().next().unwrap();
+                    i += ch.len_utf8();
+                    if ch == q {
+                        quote = None;
+                    }
+                } else {
+                    let ch = rest[i..].chars().next().unwrap();
+                    if ch.is_whitespace() {
+                        end = i;
+                        break;
+                    }
+                    if ch == '\'' || ch == '"' {
+                        quote = Some(ch);
+                    }
+                    i += ch.len_utf8();
+                }
+            }
+            offset += end;
+            continue;
+        }
+        break;
+    }
+    offset
+}
+
 fn agy_executable_end(command: &str) -> Option<usize> {
-    let (name, end) = leading_executable(command)?;
-    matches!(name.as_str(), "agy" | "agy.exe" | "agy.cmd" | "agy.bat" | "agy.ps1").then_some(end)
+    if let Some((name, end)) = leading_executable(command) {
+        if matches!(name.as_str(), "agy" | "agy.exe" | "agy.cmd" | "agy.bat" | "agy.ps1") {
+            return Some(end);
+        }
+    }
+    let offset = skip_leading_env_assignments(command);
+    if offset > 0 && offset < command.len() {
+        let (name, end) = leading_executable(&command[offset..])?;
+        if matches!(name.as_str(), "agy" | "agy.exe" | "agy.cmd" | "agy.bat" | "agy.ps1") {
+            return Some(offset + end);
+        }
+    }
+    None
 }
 
 fn tokenize_cli_args(rest: &str) -> Vec<String> {
@@ -239,13 +428,26 @@ pub fn prepare_launch(
         cwd: cwd.map(str::to_string),
         claude_root: env_root(env, "CLAUDE_CONFIG_DIR", home.join(".claude"), cwd),
         codex_root: env_root(env, "CODEX_HOME", home.join(".codex"), cwd),
-        antigravity_root: env_root(env, "ANTIGRAVITY_CLI_HOME", home.join(".gemini").join("antigravity-cli"), cwd),
+        antigravity_root: {
+            let default_agy = env
+                .iter()
+                .rev()
+                .find(|(k, _)| k.eq_ignore_ascii_case("GEMINI_HOME"))
+                .map(|(_, v)| v.trim())
+                .filter(|v| !v.is_empty())
+                .map(|v| PathBuf::from(v).join("antigravity-cli"))
+                .unwrap_or_else(|| home.join(".gemini").join("antigravity-cli"));
+            env_root(env, "ANTIGRAVITY_CLI_HOME", default_agy, cwd)
+        },
         ..Default::default()
     };
     let local = matches!(terminal_type, "cmd" | "powershell" | "pwsh" | "bash" | "sh" | "zsh");
     let commands = commands.into_iter().map(|command| {
         if !local { return command; }
         if let Some(end) = agy_executable_end(&command) {
+            if let Some(root) = resolve_antigravity_root_from_command(&command) {
+                tracked.antigravity_root = root;
+            }
             let rest = &command[end..];
             tracked.launch_provider = Some("antigravity".to_string());
             if let Some(model) = extract_cli_option(rest, &["--model", "-m"]) {
@@ -653,17 +855,17 @@ impl SessionSummaryTracker {
 }
 
 pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalTaskSummary> {
-    summaries_with_codex_live(terminal_pids).0
+    summaries_with_live_agents(terminal_pids).0
 }
 
-pub(crate) fn summaries_with_codex_live(
+pub(crate) fn summaries_with_live_agents(
     terminal_pids: Vec<(String, u32)>,
-) -> (HashMap<String, TerminalTaskSummary>, HashSet<String>) {
+) -> (HashMap<String, TerminalTaskSummary>, HashSet<String>, HashSet<String>) {
     // 扫描可同时由手机和桌面发起；串行扫描，但不持有 Hook 使用的关联表锁。
     static SCAN_LOCK: Mutex<()> = Mutex::new(());
     let _scan = SCAN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if terminal_pids.is_empty() {
-        return (HashMap::new(), HashSet::new());
+        return (HashMap::new(), HashSet::new(), HashSet::new());
     }
     let mut all: HashMap<_, _> = {
         let current = terminals().lock().unwrap_or_else(|e| e.into_inner());
@@ -735,7 +937,7 @@ pub(crate) fn summaries_with_codex_live(
             result.remove(&id);
         }
     }
-    (result, codex_live)
+    (result, codex_live, agy_discovery.live_terminals)
 }
 
 #[cfg(test)]
@@ -753,6 +955,18 @@ mod tests {
         assert!(agy_executable_end("echo agy").is_none());
         assert!(agy_executable_end("agy --dangerously-skip-permissions").is_some());
         assert!(agy_executable_end("& 'C:\\Program Files\\agy.cmd' --help").is_some());
+        let ps_isolated = "$env:USERPROFILE='C:\\Users\\Admin\\profile-1'; $env:HOME='C:\\Users\\Admin\\profile-1'; $env:GEMINI_HOME='C:\\Users\\Admin\\profile-1\\.gemini'; $env:AGY_ACP_FORCE_FILE_STORAGE='1'; agy --dangerously-skip-permissions --conversation abc-123";
+        assert!(agy_executable_end(ps_isolated).is_some());
+        assert_eq!(
+            resolve_antigravity_root_from_command(ps_isolated),
+            Some(PathBuf::from("C:\\Users\\Admin\\profile-1\\.gemini").join("antigravity-cli"))
+        );
+        let posix_isolated = "HOME='/tmp/profile-1' GEMINI_HOME='/tmp/profile-1/.gemini' AGY_ACP_FORCE_FILE_STORAGE='1' agy --dangerously-skip-permissions";
+        assert!(agy_executable_end(posix_isolated).is_some());
+        assert_eq!(
+            resolve_antigravity_root_from_command(posix_isolated),
+            Some(PathBuf::from("/tmp/profile-1/.gemini").join("antigravity-cli"))
+        );
 
         let conv_id = uuid::Uuid::new_v4().to_string();
         let terminal_id = format!("agy-launch-test-{}", uuid::Uuid::new_v4());

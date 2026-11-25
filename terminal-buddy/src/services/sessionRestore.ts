@@ -16,12 +16,13 @@ import { flushPendingSaveTabsIfAny } from '../stores/slices/sessionsSlice';
 import { getAppSettings, isAppSettingsInitialized } from '../utils/settings';
 import { containsClaudeRef, isClaudeCommand } from '../utils/claudeLaunch';
 import { buildCodexResumeCommand } from '../utils/codexLaunch';
-import { currentCodexCommand } from '../utils/agentCommands';
+import { buildAntigravityResumeCommand, isAntigravityCommand, resumedAntigravitySessionId } from '../utils/antigravityLaunch';
+import { currentAntigravityCommand, currentCodexCommand } from '../utils/agentCommands';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
 import type { AgentSessionBinding, TerminalSession } from '../types';
 import { isWebBackend, clientTerminalOwner, defaultShellType } from './platform';
-import { stripCodexResumeArgs, stripResumeArgs } from '../utils/commandParams';
+import { stripAntigravityResumeArgs, stripCodexResumeArgs, stripResumeArgs } from '../utils/commandParams';
 import {
   agentChatTabKey,
   appendBackgroundTab,
@@ -94,15 +95,19 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   // 会话恢复出来的页签）。先剥除再按 provider 重建，避免重复叠加或拼坏原命令。
   const claudeStripped = stripResumeArgs(rawParams);
   const codexStripped = stripCodexResumeArgs(claudeStripped.params);
+  const agySessionId = resumedAntigravitySessionId(rawParams);
+  const agyStripped = stripAntigravityResumeArgs(codexStripped.params);
   const baseParams = tab.extraParamMode === 'independent'
-    ? codexStripped.params.trim()
-    : codexStripped.params.replace(/\s+/g, ' ').trim();
+    ? agyStripped.trim()
+    : agyStripped.replace(/\s+/g, ' ').trim();
   const binding: AgentSessionBinding | undefined = tab.agentSession
     ?? (tab.claudeSessionId || claudeStripped.resumeId
       ? { provider: 'claude', sessionId: tab.claudeSessionId || claudeStripped.resumeId!, cwd: tab.directory }
       : codexStripped.sessionId
         ? { provider: 'codex', sessionId: codexStripped.sessionId, cwd: tab.directory }
-        : undefined);
+        : agySessionId
+          ? { provider: 'antigravity', sessionId: agySessionId, cwd: tab.directory }
+          : undefined);
   const autoResume = binding ? getAppSettings().autoResumeClaudeSession : false;
   const profile = tab.profileId ? store.profiles.find(item => item.id === tab.profileId) : undefined;
   let launchParams = baseParams;
@@ -112,6 +117,18 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     if (binding.provider === 'claude') {
       const resumeParam = `--resume ${binding.sessionId}`;
       launchParams = launchParams ? `${launchParams} ${resumeParam}` : resumeParam;
+    } else if (binding.provider === 'antigravity') {
+      const profileAgy = profile?.startupCommands?.find(cmd => isAntigravityCommand(cmd));
+      const baseCommand = (baseParams && isAntigravityCommand(baseParams))
+        ? baseParams
+        : (profileAgy || currentAntigravityCommand());
+      const command = buildAntigravityResumeCommand(binding.sessionId, baseCommand);
+      if (tab.profileId) {
+        launchParams = command;
+        launchMode = 'independent';
+      } else {
+        blankCommand = command;
+      }
     } else {
       const command = buildCodexResumeCommand(binding.sessionId, profile?.startupCommands ?? (baseParams || currentCodexCommand()));
       if (tab.profileId) {

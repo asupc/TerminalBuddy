@@ -89,7 +89,7 @@ pub fn is_valid_session_id(id: &str) -> bool {
 }
 
 fn valid_provider(provider: &str) -> bool {
-    matches!(provider, "claude" | "codex")
+    matches!(provider, "claude" | "codex" | "antigravity")
 }
 
 fn read_legacy() -> RegistryFile {

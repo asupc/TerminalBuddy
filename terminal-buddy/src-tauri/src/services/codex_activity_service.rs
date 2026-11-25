@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::commands::TerminalService;
 use crate::runtime::{AppHandle, Emitter, Manager};
-use super::{codex_transcript, terminal_agent_relay, terminal_task_service, ClaudeHookTerminalEvent};
+use super::{antigravity_transcript, codex_transcript, terminal_agent_relay, terminal_task_service, ClaudeHookTerminalEvent};
 
 fn activities() -> &'static Mutex<HashMap<String, ClaudeHookTerminalEvent>> {
     static ACTIVITIES: OnceLock<Mutex<HashMap<String, ClaudeHookTerminalEvent>>> = OnceLock::new();
@@ -18,11 +18,17 @@ fn activities() -> &'static Mutex<HashMap<String, ClaudeHookTerminalEvent>> {
 }
 
 /// 页面重载后也能恢复当前灯态；不依赖任务摘要是否显示。
+fn is_polled_provider(provider: &str) -> bool {
+    matches!(provider, "codex" | "antigravity")
+}
+
 pub fn snapshot(terminal_ids: &[String]) -> HashMap<String, ClaudeHookTerminalEvent> {
     let current = activities().lock().unwrap_or_else(|error| error.into_inner());
     terminal_ids.iter().filter_map(|id| {
         let event = current.get(id)?;
-        (terminal_task_service::current_binding(id) == Some(("codex".to_string(), event.session_id.clone())))
+        let provider = event.provider.as_deref().unwrap_or("codex");
+        (is_polled_provider(provider)
+            && terminal_task_service::current_binding(id) == Some((provider.to_string(), event.session_id.clone())))
             .then(|| (id.clone(), event.clone()))
     }).collect()
 }
@@ -86,8 +92,27 @@ fn parse_state(content: &str, previous: &RolloutState) -> RolloutState {
     state
 }
 
+fn parse_antigravity_state(content: &str, previous: &RolloutState, modified_ms: i64) -> RolloutState {
+    let mut state = previous.clone();
+    let raw_phase = antigravity_transcript::turn_phase(content);
+    let next_phase = match raw_phase {
+        "running" => "running",
+        _ => {
+            if previous.phase == "running" || previous.phase == "completed" {
+                "completed"
+            } else {
+                "idle"
+            }
+        }
+    };
+    state.phase = next_phase;
+    state.at = modified_ms.max(previous.at);
+    state
+}
+
 #[derive(Default)]
 struct TrackedRollout {
+    provider: String,
     session_id: String,
     path: Option<PathBuf>,
     stamp: Option<(SystemTime, u64)>,
@@ -98,7 +123,7 @@ struct TrackedRollout {
 impl TrackedRollout {
     fn refresh(&mut self, terminal_id: &str) {
         let Some(location) = terminal_task_service::locate_transcript(terminal_id) else { return; };
-        if location.provider != "codex" || location.session_id != self.session_id { return; }
+        if location.provider != self.provider || location.session_id != self.session_id { return; }
         let Ok(mut file) = File::open(&location.path) else { return; };
         let Ok(metadata) = file.metadata() else { return; };
         let Ok(modified) = metadata.modified() else { return; };
@@ -113,7 +138,15 @@ impl TrackedRollout {
         let content = if start > 0 {
             content.split_once('\n').map(|(_, tail)| tail).unwrap_or_default()
         } else { &content };
-        self.state = parse_state(content, &self.state);
+        if self.provider == "antigravity" {
+            let modified_ms = modified
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis());
+            self.state = parse_antigravity_state(content, &self.state, modified_ms);
+        } else {
+            self.state = parse_state(content, &self.state);
+        }
         self.path = Some(location.path);
         self.stamp = Some(stamp);
     }
@@ -128,22 +161,28 @@ impl TrackedRollout {
 }
 
 fn publish(app: &AppHandle, terminal_id: &str, tracked: &TrackedRollout, phase: &str) {
-    if terminal_task_service::current_binding(terminal_id) != Some(("codex".to_string(), tracked.session_id.clone())) { return; }
+    if terminal_task_service::current_binding(terminal_id) != Some((tracked.provider.clone(), tracked.session_id.clone())) { return; }
     let mut current = activities().lock().unwrap_or_else(|error| error.into_inner());
     let occurred_at = chrono::Utc::now().timestamp_millis().max(
         current.get(terminal_id).map_or(0, |event| event.occurred_at.saturating_add(1)),
     );
+    let event_name = match (tracked.provider.as_str(), tracked.published.is_none()) {
+        ("antigravity", true) => "AntigravityTranscriptSnapshot",
+        ("antigravity", false) => "AntigravityTranscriptState",
+        (_, true) => "CodexTranscriptSnapshot",
+        (_, false) => "CodexTranscriptState",
+    };
     let event = ClaudeHookTerminalEvent {
         event_id: uuid::Uuid::new_v4().to_string(), terminal_id: terminal_id.to_string(),
         session_id: tracked.session_id.clone(),
-        event_name: if tracked.published.is_none() { "CodexTranscriptSnapshot" } else { "CodexTranscriptState" }.to_string(),
-        phase: phase.to_string(), occurred_at, provider: Some("codex".to_string()),
+        event_name: event_name.to_string(),
+        phase: phase.to_string(), occurred_at, provider: Some(tracked.provider.clone()),
         notification_type: None, title: None, message: None, task_title: None,
         summary: tracked.state.summary.clone(),
     };
     current.insert(terminal_id.to_string(), event.clone());
     drop(current);
-    terminal_agent_relay::note_phase(terminal_id, "codex", &tracked.session_id, phase, occurred_at);
+    terminal_agent_relay::note_phase(terminal_id, &tracked.provider, &tracked.session_id, phase, occurred_at);
     let _ = app.emit("claude-hook-terminal-event", event);
 }
 
@@ -152,7 +191,8 @@ pub fn start(app: AppHandle) {
     crate::runtime::async_runtime::spawn(async move {
         let mut tracked = HashMap::<String, TrackedRollout>::new();
         let mut last_scan: Option<Instant> = None;
-        let mut live = HashSet::new();
+        let mut codex_live = HashSet::new();
+        let mut agy_live = HashSet::new();
         loop {
             let no_instances = app.state::<TerminalService>().lock_instances().is_empty();
             let no_activities = activities().lock().map(|map| map.is_empty()).unwrap_or(false);
@@ -167,23 +207,36 @@ pub fn start(app: AppHandle) {
                 let pids = crate::commands::claude_session::terminal_processes(&ids, &service);
                 if last_scan.map_or(true, |at| at.elapsed() >= Duration::from_secs(4)) {
                     // 发现与灯态不受 showTaskSummary 控制，手动启动与 resume 也走同一绑定链；
-                    // 直接复用同一份进程快照返回的 codex_live，避免重复扫描进程树。
-                    live = terminal_task_service::summaries_with_codex_live(pids.clone()).1;
+                    // 直接复用同一份进程快照返回的 codex_live / agy_live，避免重复扫描进程树。
+                    let (_, next_codex, next_agy) = terminal_task_service::summaries_with_live_agents(pids.clone());
+                    codex_live = next_codex;
+                    agy_live = next_agy;
                     last_scan = Some(Instant::now());
                 }
+                let is_live = |provider: &str, id: &str| -> bool {
+                    match provider {
+                        "codex" => codex_live.contains(id),
+                        "antigravity" => agy_live.contains(id),
+                        _ => false,
+                    }
+                };
                 let bindings = terminal_task_service::session_bindings();
                 tracked.retain(|id, old| {
-                    let same = bindings.get(id).is_some_and(|record| record.provider == "codex" && record.session_id == old.session_id);
-                    if ids.contains(id) && same && !live.contains(id) { publish(&poll_app, id, old, "ended"); }
-                    ids.contains(id) && same && live.contains(id)
+                    let same = bindings.get(id).is_some_and(|record| record.provider == old.provider && record.session_id == old.session_id);
+                    let alive = is_live(&old.provider, id);
+                    if ids.contains(id) && same && !alive { publish(&poll_app, id, old, "ended"); }
+                    ids.contains(id) && same && alive
                 });
                 activities().lock().unwrap_or_else(|error| error.into_inner()).retain(|id, _| {
-                    ids.contains(id) && bindings.get(id).is_some_and(|record| record.provider == "codex")
+                    ids.contains(id) && bindings.get(id).is_some_and(|record| is_polled_provider(&record.provider))
                 });
                 for (id, record) in bindings {
-                    if record.provider != "codex" || !live.contains(&id) { continue; }
+                    if !is_polled_provider(&record.provider) || !is_live(&record.provider, &id) { continue; }
                     let entry = tracked.entry(id.clone()).or_insert_with(|| TrackedRollout {
-                        session_id: record.session_id, state: RolloutState { phase: "idle", ..Default::default() }, ..Default::default()
+                        provider: record.provider.clone(),
+                        session_id: record.session_id,
+                        state: RolloutState { phase: "idle", ..Default::default() },
+                        ..Default::default()
                     });
                     entry.refresh(&id);
                     if entry.changed() {
@@ -191,10 +244,10 @@ pub fn start(app: AppHandle) {
                         entry.published = Some(entry.state.clone());
                     }
                 }
-                (tracked, last_scan, live)
+                (tracked, last_scan, codex_live, agy_live)
             }).await;
             match result {
-                Ok((next_tracked, next_scan, next_live)) => { tracked = next_tracked; last_scan = next_scan; live = next_live; }
+                Ok((next_tracked, next_scan, next_codex, next_agy)) => { tracked = next_tracked; last_scan = next_scan; codex_live = next_codex; agy_live = next_agy; }
                 Err(error) => { eprintln!("[CodexActivity] 状态同步失败：{error}"); break; }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
