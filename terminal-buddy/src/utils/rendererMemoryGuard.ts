@@ -26,9 +26,9 @@ interface ChromiumPerformanceMemory {
 
 type PerformanceWithMemory = Performance & { memory?: ChromiumPerformanceMemory };
 
-const PRESSURE_BYTES = 1200 * 1024 * 1024;
-const RELIEF_BYTES = 700 * 1024 * 1024;
-const RELOAD_BYTES = 2800 * 1024 * 1024;
+const PRESSURE_BYTES = 600 * 1024 * 1024;
+const RELIEF_BYTES = 350 * 1024 * 1024;
+const RELOAD_BYTES = 1800 * 1024 * 1024;
 const SAMPLE_INTERVAL_MS = 5_000;
 const RELOAD_GRACE_MS = 2_000;
 const LOG_COOLDOWN_MS = 60_000;

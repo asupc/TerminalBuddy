@@ -229,7 +229,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
               key={child.id}
               className={`tree-item tab-nav-item${active ? ' active' : ''}`}
               style={{ paddingLeft: `${indent + 12}px` }}
-              title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}
+              title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'antigravity' ? 'Antigravity' : 'Claude Code'} · ${tab.title}`}
               onMouseDown={() => { useAppStore.getState().setLastClickRegion('tab'); }}
               onClick={() => {
                 const store = useAppStore.getState();

@@ -34,6 +34,9 @@ fn session_change_registry() -> &'static Mutex<HashMap<String, watch::Sender<u64
 /// 订阅一个会话的变化；注册表由会话服务持有，因此 receiver 的生命周期独立于单次 WS 请求。
 pub fn subscribe_session_changes(id: &str) -> watch::Receiver<u64> {
     let mut changes = session_change_registry().lock().expect("AI 会话变化锁不可用");
+    if changes.len() >= 64 {
+        changes.retain(|key, sender| key == id || sender.receiver_count() > 0);
+    }
     let sender = changes.entry(id.to_string()).or_insert_with(|| watch::channel(0).0);
     sender.subscribe()
 }
@@ -140,8 +143,8 @@ struct Emitted {
 /// 逐条 `eval` 会让 WebView2 浏览器进程的 CDP 队列无限增长（实测堆积到 GB 级），
 /// 前端也来不及消化。节流后只保留首帧与一个尾帧，尾帧保证最终状态不丢。
 const AI_EMIT_MIN_INTERVAL: Duration = Duration::from_millis(150);
-const MAX_CACHED_SESSIONS: usize = 24;
-const MAX_META_CACHE_ENTRIES: usize = 512;
+const MAX_CACHED_SESSIONS: usize = 8;
+const MAX_META_CACHE_ENTRIES: usize = 256;
 
 fn now_ms_u64() -> u64 {
     chrono::Utc::now().timestamp_millis().max(0) as u64
@@ -3817,10 +3820,14 @@ fn run_acp(
         }
 
         let Some(value) = next_output(&output, &errors)? else {
-            if idle_since.is_some_and(|since| since.elapsed() >= Duration::from_secs(300)) {
+            let idle_ready = session_id.is_some()
+                && load_request.is_none()
+                && new_request.is_none()
+                && prompt_request.is_none();
+            if retire_idle_process(cell, worker_id, &mut idle_since, idle_ready)? {
                 return Ok(WorkerExit::Retired);
             }
-            let _ = (worker_id, turn_progress);
+            let _ = turn_progress;
             continue;
         };
         turn_progress = Instant::now();

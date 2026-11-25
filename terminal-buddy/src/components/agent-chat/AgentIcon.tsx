@@ -22,10 +22,12 @@ export function AgentIcon({ provider, className }: {
       />
     );
   }
-  const logo = provider === 'codex' ? codexLogo : claudeLogo;
+  const isCodex = provider === 'codex';
+  const logo = isCodex ? codexLogo : claudeLogo;
+  const brandClass = isCodex ? 'agent-logo--codex' : 'agent-logo--claude';
   return (
     <span
-      className={className ? `agent-logo ${className}` : 'agent-logo'}
+      className={className ? `agent-logo ${brandClass} ${className}` : `agent-logo ${brandClass}`}
       style={{ WebkitMaskImage: `url("${logo}")`, maskImage: `url("${logo}")` }}
       aria-hidden="true"
     />

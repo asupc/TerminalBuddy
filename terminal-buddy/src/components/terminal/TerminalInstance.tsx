@@ -91,19 +91,19 @@ function registerCtrlHover(): () => void {
 }
 
 /** xterm 回滚行数上限。237 列时每行约占 8B/格，5 万行单个终端约需 95MB。 */
-const TERMINAL_SCROLLBACK = 50000;
+const TERMINAL_SCROLLBACK = 10000;
 /** 内存压力下临时压缩回滚：先回收历史，再考虑整页刷新。 */
-const TERMINAL_SCROLLBACK_UNDER_PRESSURE = 4000;
+const TERMINAL_SCROLLBACK_UNDER_PRESSURE = 2000;
 /**
  * xterm 已接收但尚未解析完的字符上限。终端输出速度可以远高于解析速度，
  * 不设上限时待解析字符串会直接堆在 JS 堆里（实测把渲染进程顶到 4GB OOM）。
  * 超过上限丢弃新输出但仍回执，让 Rust 侧流控暂停 PTY，而不是继续堆积。
  */
-const MAX_TERMINAL_WRITE_BACKLOG_CHARS = 2_000_000;
+const MAX_TERMINAL_WRITE_BACKLOG_CHARS = 512_000;
 /** xterm 尚未创建时的启动输出缓存上限。 */
-const MAX_PRE_OPEN_BUFFER_CHARS = 1_000_000;
+const MAX_PRE_OPEN_BUFFER_CHARS = 256_000;
 /** 启动快照尚未落地时的实时输出缓存上限。 */
-const MAX_PENDING_LIVE_OUTPUT_CHARS = 1_000_000;
+const MAX_PENDING_LIVE_OUTPUT_CHARS = 256_000;
 /** 回执粒度：一次 invoke 覆盖的字符数，降低频繁 IPC 次数。 */
 const ACK_CHUNK_CHARS = 32 * 1024;
 /** 尾部回执最长延迟：防止突发输出停下后未满一批的字符迟迟不回执。 */

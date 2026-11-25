@@ -25,7 +25,7 @@ export function useAgentSessionCreatedSync() {
         shape: 'native',
         sessionId: session.id,
         title: session.title || '新对话',
-        provider: session.provider === 'codex' ? 'codex' : 'claude',
+        provider: session.provider === 'codex' ? 'codex' : session.provider === 'antigravity' ? 'antigravity' : 'claude',
         projectPath: session.projectPath,
         model: session.model ?? null,
         status: session.status,

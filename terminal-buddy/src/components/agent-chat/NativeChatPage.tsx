@@ -3,7 +3,6 @@ import { CircleStop, ImagePlus, Send, X } from 'lucide-react';
 import { AgentIcon } from './AgentIcon';
 import { ChatNodeRail, type ChatNode } from './ChatNodeRail';
 import { ModelSwitcher } from './ModelSwitcher';
-import { UsagePanel, cacheHitRate, compact, contextPercent } from './UsagePanel';
 import {
   AI_SESSION_REMOVED_EVENT,
   AI_SESSION_UPDATE_EVENT,
@@ -17,7 +16,6 @@ import {
   aiSessionStop,
   aiSessionSwitchModel,
   aiSessionSetConfigOption,
-  aiCatalog,
   listenTauri,
   type AiAgent,
   type AiMessage,
@@ -33,7 +31,6 @@ import { AgentChips } from './AgentChips';
 import { AgentDrawer } from './AgentDrawer';
 import { PendingItem } from './PendingItem';
 import { filterSlashCommands, SlashCompletions } from './SlashCompletions';
-import { SessionStatusBar } from './SessionStatusBar';
 import './AgentChat.css';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -586,30 +583,6 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const busyText = session?.status === 'stopping'
     ? '正在中断'
     : session?.status === 'background' ? '后台任务执行中' : 'AI 正在思考中';
-  const context = session?.usage?.context;
-  const lastTurn = session?.usage?.lastTurn;
-  const usage = session?.usage;
-  const contextUsagePercent = contextPercent(context);
-  // 上下文摘要点击后打开与手机端同源的用量明细（输入/输出/缓存/命中率）。
-  const [usageOpen, setUsageOpen] = useState(false);
-  // 思考强度：会话本身不返回 effort，按 providerId + model 到目录里匹配（与手机端同一数据源）。
-  const [effortLabel, setEffortLabel] = useState('跟随服务端');
-  useEffect(() => {
-    if (!usageOpen) return;
-    const providerId = session?.providerId;
-    const model = session?.model;
-    if (!providerId || !model) { setEffortLabel('跟随服务端'); return; }
-    let disposed = false;
-    aiCatalog()
-      .then(catalog => {
-        if (disposed) return;
-        const effort = catalog.providers.find(item => item.id === providerId)
-          ?.models.find(item => item.id === model)?.effort;
-        setEffortLabel(effort?.trim() ? effort : '跟随服务端');
-      })
-      .catch(() => { if (!disposed) setEffortLabel('跟随服务端'); });
-    return () => { disposed = true; };
-  }, [usageOpen, session?.providerId, session?.model]);
 
   // 抽屉里的 agent 用会话中的最新版本：实时帧更新状态/耗时时抽屉要跟着变，
   // 而不是停在打开那一刻的快照上。
@@ -783,56 +756,6 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
             onCompositionEnd={() => { composing.current = false; }}
           />
           <div className="agent-input-bar">
-            {/* 桌面端底部空间宽裕：直接平铺上下文与本轮 Token 统计，明细仍可点开 */}
-            <button
-              type="button"
-              className="agent-usage-inline"
-              onClick={() => setUsageOpen(true)}
-              title="点击查看完整的上下文与 Token 明细"
-            >
-              <span className="agent-usage-group">
-                <span className="agent-usage-label">上下文</span>
-                <span className="agent-usage-value">
-                  {context?.updating && !context.usedTokens
-                    ? '待更新'
-                    : contextUsagePercent != null
-                      ? `${contextUsagePercent}%`
-                      : context?.usedTokens
-                        ? (context.windowTokens
-                          ? `${compact(context.usedTokens)} / ${compact(context.windowTokens)}`
-                          : compact(context.usedTokens))
-                        : context?.windowTokens ? compact(context.windowTokens) : '—'}
-                </span>
-                {contextUsagePercent != null && (
-                  <>
-                    <span className="agent-context-bar"><span style={{ width: `${contextUsagePercent}%` }} /></span>
-                    <span className="agent-usage-sub">
-                      {compact(context?.usedTokens)} / {compact(context?.windowTokens)}
-                    </span>
-                  </>
-                )}
-              </span>
-              <span className="agent-usage-sep" />
-              <span className="agent-usage-group">
-                <span className="agent-usage-label">本轮</span>
-                <span className="agent-usage-value">↑{compact(lastTurn?.inputTokens)}</span>
-                <span className="agent-usage-value">↓{compact(lastTurn?.outputTokens)}</span>
-                <span className="agent-usage-sub">缓存命中 {cacheHitRate(lastTurn)}</span>
-              </span>
-              <span className="agent-usage-sep" />
-              <span className="agent-usage-group">
-                <span className="agent-usage-label">累计</span>
-                <span className="agent-usage-value">↑{compact(usage?.sessionTotal.inputTokens)}</span>
-                <span className="agent-usage-value">↓{compact(usage?.sessionTotal.outputTokens)}</span>
-                <span className="agent-usage-sub">缓存命中 {cacheHitRate(usage?.sessionTotal)}</span>
-                {(usage?.sessionTotal.cacheReadInputTokens ?? 0) > 0 && (
-                  <span className="agent-usage-sub">读 {compact(usage?.sessionTotal.cacheReadInputTokens)}</span>
-                )}
-                {(usage?.sessionTotal.cacheCreationInputTokens ?? 0) > 0 && (
-                  <span className="agent-usage-sub">写 {compact(usage?.sessionTotal.cacheCreationInputTokens)}</span>
-                )}
-              </span>
-            </button>
             <div className="agent-input-actions">
               <button
                 type="button"
@@ -860,17 +783,7 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
             </div>
           </div>
         </div>
-        {session && <SessionStatusBar session={session} running={running} />}
       </footer>
-      {usageOpen && (
-        <UsagePanel
-          usage={session?.usage}
-          modelLabel={session?.model || '服务端默认模型'}
-          effortLabel={effortLabel}
-          running={running}
-          onClose={() => setUsageOpen(false)}
-        />
-      )}
     </div>
   );
 }

@@ -30,7 +30,7 @@ export const AgentTabContextMenu: FC<AgentTabContextMenuProps> = ({ x, y, tab, o
     return () => { disposed = true; };
   }, [tab.sessionId]);
 
-  const providerLabel = tab.provider === 'codex' ? 'Codex' : 'Claude Code';
+  const providerLabel = tab.provider === 'codex' ? 'Codex' : tab.provider === 'antigravity' ? 'Antigravity' : 'Claude Code';
   const configLabel = session?.providerName || session?.model || tab.model || '服务端默认配置';
   const launchHint = describeAgentLaunchConfig(session);
 

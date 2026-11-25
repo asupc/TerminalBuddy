@@ -215,7 +215,7 @@ fn default_agent_idle_recycle_enabled() -> bool {
 }
 
 fn default_agent_idle_recycle_hours() -> u32 {
-    5
+    1
 }
 
 fn default_agent_auto_archive_days() -> u32 {

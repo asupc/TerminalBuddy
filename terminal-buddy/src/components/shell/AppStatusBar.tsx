@@ -324,12 +324,17 @@ const StatusBarResources = memo(function StatusBarResources() {
     };
   }, [configPanelVisible, lastClickRegion, selectedProfileId, projects, profiles]);
 
-  // 状态栏的工作上下文：面板有选中项时跟随选中项，否则跟随活动终端会话。
-  const contextDirectory = selection ? selection.directory : (isTerminal ? directory : null);
-  const contextCanBrowseLocal = selection ? selection.isLocalDirectory : canBrowseLocal;
+  // 状态栏的工作上下文：面板有选中项时跟随选中项，否则跟随活动终端会话或原生 AI 会话的项目目录。
+  const nativeProjectDir = activeNativeAgentTab?.projectPath?.trim() || null;
+  const contextDirectory = selection
+    ? selection.directory
+    : (isTerminal ? directory : nativeProjectDir);
+  const contextCanBrowseLocal = selection
+    ? selection.isLocalDirectory
+    : (isTerminal ? canBrowseLocal : Boolean(nativeProjectDir));
   const contextGitDirectory = selection
     ? (selection.isLocalDirectory ? selection.directory : null)
-    : gitDirectory;
+    : (isTerminal ? gitDirectory : nativeProjectDir);
   const contextTerminalActivityAt = selection ? undefined : terminalActivityAt;
 
   const web = useWebApiBarStatus();

@@ -516,7 +516,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
         key={tab.key}
         className={`tree-item tab-nav-item${active ? ' active' : ''}`}
         style={{ paddingLeft: `${paddingLeft}px` }}
-        title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}
+        title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'antigravity' ? 'Antigravity' : 'Claude Code'} · ${tab.title}`}
         onMouseDown={(e) => {
           if (e.button !== 0) return;
           e.stopPropagation();

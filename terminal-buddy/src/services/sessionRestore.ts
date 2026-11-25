@@ -535,7 +535,7 @@ async function restoreNativeAgentTabs(saved: SavedNativeAgentTab[], activeKey: s
       ...tab,
       shape: 'native',
       title: fresh?.title || tab.title,
-      provider: fresh ? (fresh.provider === 'codex' ? 'codex' : 'claude') : tab.provider,
+      provider: fresh ? (fresh.provider === 'codex' ? 'codex' : fresh.provider === 'antigravity' ? 'antigravity' : 'claude') : tab.provider,
       projectPath: fresh?.projectPath || tab.projectPath,
       model: fresh?.model ?? tab.model,
       status: fresh?.status,

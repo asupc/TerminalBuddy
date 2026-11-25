@@ -22,3 +22,12 @@
   user-select: none;
   pointer-events: none;
 }
+
+/* 默认品牌色：Claude 橙色、Codex 绿色（不再被标签栏/头部的 var(--accent) 染蓝）。 */
+.agent-logo.agent-logo--claude {
+  color: #d97757;
+}
+
+.agent-logo.agent-logo--codex {
+  color: #10a37f;
+}

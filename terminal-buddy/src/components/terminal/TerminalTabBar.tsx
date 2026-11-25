@@ -332,7 +332,7 @@ export const TerminalTabBar: FC = () => {
           }}
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
           title={tab.shape === 'native'
-            ? `${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`
+            ? `${tab.provider === 'codex' ? 'Codex' : tab.provider === 'antigravity' ? 'Antigravity' : 'Claude Code'} · ${tab.title}`
             : `终端接力 · ${tab.title}`}
         >
           {tab.shape === 'native' && (() => {
