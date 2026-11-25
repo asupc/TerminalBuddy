@@ -98,6 +98,9 @@ pub struct AntigravityOAuthCompleteInput {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AntigravityQuotaWindow {
+    /// `session_5h` | `weekly` | `other`
+    #[serde(default)]
+    pub kind: String,
     pub label: String,
     pub remaining_percent: Option<u8>,
     pub reset_text: Option<String>,

@@ -1560,29 +1560,25 @@ fn collect_gemini_windows_from_json(value: &Value, out: &mut Vec<AntigravityQuot
             if is_gemini {
                 if let Some(buckets) = map.get("buckets").or_else(|| map.get("windows")).and_then(Value::as_array) {
                     for bucket in buckets {
-                        let label = bucket
+                        let raw_label = bucket
                             .get("displayName")
                             .or_else(|| bucket.get("cadence"))
                             .or_else(|| bucket.get("window"))
                             .or_else(|| bucket.get("label"))
+                            .or_else(|| bucket.get("id"))
                             .and_then(Value::as_str)
                             .unwrap_or("Gemini")
-                            .trim()
-                            .to_string();
+                            .trim();
+                        let (kind, label) = classify_quota_window(raw_label);
                         let pct = bucket
                             .get("remainingFraction")
                             .or_else(|| bucket.get("remainingPercent"))
                             .or_else(|| bucket.get("remaining"))
                             .and_then(fraction_or_percent_to_u8);
-                        let reset_text = bucket
-                            .get("resetTime")
-                            .or_else(|| bucket.get("resetsAt"))
-                            .or_else(|| bucket.get("resetDescription"))
-                            .and_then(Value::as_str)
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty());
+                        let reset_text = extract_reset_field(bucket);
                         if pct.is_some() || reset_text.is_some() {
                             out.push(AntigravityQuotaWindow {
+                                kind,
                                 label,
                                 remaining_percent: pct,
                                 reset_text,
@@ -1599,14 +1595,11 @@ fn collect_gemini_windows_from_json(value: &Value, out: &mut Vec<AntigravityQuot
                     .or_else(|| map.get("remaining"))
                     .and_then(fraction_or_percent_to_u8);
                 if let Some(pct) = direct_pct {
-                    let reset_text = map
-                        .get("resetTime")
-                        .or_else(|| map.get("resetsAt"))
-                        .and_then(Value::as_str)
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty());
+                    let (kind, label) = classify_quota_window(name.trim());
+                    let reset_text = extract_reset_field(value);
                     out.push(AntigravityQuotaWindow {
-                        label: name.trim().to_string(),
+                        kind,
+                        label,
                         remaining_percent: Some(pct),
                         reset_text,
                     });
@@ -1626,6 +1619,59 @@ fn collect_gemini_windows_from_json(value: &Value, out: &mut Vec<AntigravityQuot
     }
 }
 
+fn classify_quota_window(raw_label: &str) -> (String, String) {
+    let lower = raw_label.to_ascii_lowercase();
+    if lower.contains("5h")
+        || lower.contains("5-h")
+        || lower.contains("5 hour")
+        || lower.contains("five_hour")
+        || lower.contains("session")
+        || raw_label.contains("5小时")
+        || raw_label.contains("5 小时")
+    {
+        ("session_5h".into(), "5小时额度".into())
+    } else if lower.contains("week")
+        || lower.contains("7d")
+        || lower.contains("7-d")
+        || raw_label.contains("周")
+    {
+        ("weekly".into(), "周额度".into())
+    } else {
+        let label = if raw_label.is_empty() { "Gemini".into() } else { raw_label.to_string() };
+        ("other".into(), label)
+    }
+}
+
+fn extract_reset_field(val: &Value) -> Option<String> {
+    for key in ["resetTime", "resetsAt", "resetAt", "resetDescription", "resetIn"] {
+        if let Some(v) = val.get(key) {
+            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                return Some(s.to_string());
+            }
+            if let Some(ts) = v.as_i64().filter(|&n| n > 1_000_000_000) {
+                return Some(ts.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_reset_from_line(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    for marker in ["resets in ", "reset in ", "resets at ", "reset at ", "resets: ", "reset: ", "重置于 ", "刷新于 ", "重置 ", "刷新 "] {
+        if let Some(idx) = lower.find(marker).or_else(|| line.find(marker)) {
+            let tail = line[idx + marker.len()..].trim();
+            let cleaned = tail
+                .trim_matches(|c: char| matches!(c, '(' | ')' | '[' | ']' | ',' | ';'))
+                .trim();
+            if !cleaned.is_empty() {
+                return Some(cleaned.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn collect_gemini_windows_from_text(raw: &str, out: &mut Vec<AntigravityQuotaWindow>) {
     for line in raw.lines() {
         let lower = line.to_ascii_lowercase();
@@ -1643,17 +1689,13 @@ fn collect_gemini_windows_from_text(raw: &str, out: &mut Vec<AntigravityQuotaWin
                 .rev()
                 .collect();
             if let Ok(val) = num_str.parse::<f64>() {
-                let label = if lower.contains("week") || line.contains("周") || lower.contains("7d") {
-                    "Gemini 周额度"
-                } else if lower.contains("5h") || lower.contains("session") || line.contains("5 小时") {
-                    "Gemini 5h 窗口"
-                } else {
-                    "Gemini"
-                };
+                let (kind, label) = classify_quota_window(line);
+                let reset_text = extract_reset_from_line(line);
                 out.push(AntigravityQuotaWindow {
-                    label: label.to_string(),
+                    kind,
+                    label,
                     remaining_percent: Some(val.round().clamp(0.0, 100.0) as u8),
-                    reset_text: None,
+                    reset_text,
                 });
             }
         }
