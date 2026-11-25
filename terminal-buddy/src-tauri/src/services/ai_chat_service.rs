@@ -2184,7 +2184,12 @@ fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control
     let permissions = super::ai_permission_service::for_agent(&session.provider)?;
     update(cell, |data| usage::configured_window(data, launch.context_window));
     let mut command = cli_command(&session.provider);
-    command.args(&launch.args);
+    for (key, value) in &launch.env {
+        command.env(key, value);
+    }
+    if session.provider != "antigravity" {
+        command.args(&launch.args);
+    }
     // 兼容迁移前落盘的会话：spawn 前再归一化一次，避免 `//?/` / `\\?\` 让 CLI 回落 C:\Windows。
     command.current_dir(PathService::normalize_child_process_path_str(&session.project_path));
     if let Some(hooks) = &hooks { hooks.configure(&mut command); }
@@ -2206,7 +2211,7 @@ fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control
         if let Some(id) = &session.thread_id { command.arg("--resume").arg(id); }
         if let Some(model) = &session.model { command.arg("--model").arg(model); }
     } else if session.provider == "antigravity" {
-        command.arg("acp");
+        command.arg("acp").args(&launch.args);
     } else {
         // 新旧对话均优先使用普通模式的标准提问工具；动态工具仅作补充。
         command.args(&permissions.codex_args).args(["-c", "features.default_mode_request_user_input=true"]).arg("app-server");

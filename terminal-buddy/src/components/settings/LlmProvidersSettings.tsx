@@ -2,13 +2,15 @@ import { FC } from 'react';
 import { useAppStore } from '../../stores/appStore';
 import { LlmProvidersSegment } from '../claude-panel/segments/LlmProvidersSegment';
 import { CodexProvidersSettings } from './CodexProvidersSettings';
+import { AntigravityAccountsSettings } from './AntigravityAccountsSettings';
 import './LlmProvidersSettings.css';
 
-type ProviderTabId = 'claude' | 'codex';
+type ProviderTabId = 'claude' | 'codex' | 'antigravity';
 
 const PROVIDER_TABS: ReadonlyArray<{ id: ProviderTabId; label: string }> = [
   { id: 'claude', label: 'Claude' },
   { id: 'codex', label: 'Codex' },
+  { id: 'antigravity', label: 'Antigravity' },
 ];
 
 /**
@@ -57,6 +59,16 @@ export const LlmProvidersSettings: FC = () => {
         hidden={tab !== 'codex'}
       >
         <CodexProvidersSettings active={tab === 'codex'} />
+      </div>
+
+      <div
+        id="llm-provider-panel-antigravity"
+        className="llm-providers-panel"
+        role="tabpanel"
+        aria-labelledby="llm-provider-tab-antigravity"
+        hidden={tab !== 'antigravity'}
+      >
+        <AntigravityAccountsSettings active={tab === 'antigravity'} />
       </div>
     </div>
   );

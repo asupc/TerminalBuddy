@@ -89,9 +89,9 @@ export async function openProjectAgentTerminal(
 }
 
 /** 项目 Antigravity CLI 启动：使用内置或自定义的 `agy` 基础命令在项目终端启动。 */
-export async function openProjectAntigravityTerminal(project: Project): Promise<void> {
+export async function openProjectAntigravityTerminal(project: Project, accountId?: string | null): Promise<void> {
   try {
-    const command = buildAntigravityLaunchCommand(currentAntigravityCommand());
+    const command = buildAntigravityLaunchCommand(currentAntigravityCommand(), accountId);
     await openTerminalInDir(project.path, { command, name: project.name, groupName: project.name });
   } catch (error) {
     useAppStore.getState().showToast(`Antigravity CLI 启动失败：${String(error)}`, 'error');

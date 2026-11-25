@@ -1,3 +1,4 @@
+pub mod antigravity_account;
 pub mod codex_provider;
 pub mod llm_provider;
 pub mod profile;

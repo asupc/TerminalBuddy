@@ -3,6 +3,7 @@
 export * from './agentCli';
 export * from './agentRelay';
 export * from './aiChat';
+export * from './antigravityAccounts';
 export * from './antigravityHistory';
 export * from './claudeAssets';
 export * from './claudeConfig';

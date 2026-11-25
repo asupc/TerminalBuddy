@@ -4,8 +4,8 @@ import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { openNewAgentSession } from '../../utils/openAgentChat';
 import { projectEnabledAgents, projectModelSources, type Project } from '../../types';
 import { useAgentAvailability } from '../../hooks/useAgentAvailability';
-import { AgentIcon } from '../agent-chat/AgentIcon';
 import { ClaudeModelMenuSection } from './ClaudeModelMenuSection';
+import { AntigravityAccountMenuSection } from './AntigravityAccountMenuSection';
 
 interface ProjectLaunchMenuItemsProps {
   /** 目标项目（须已配置路径）。 */
@@ -23,6 +23,7 @@ interface ProjectLaunchMenuItemsProps {
 export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ project, onLaunched }) => {
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
+  const refreshAntigravityAccounts = useAppStore(s => s.refreshAntigravityAccounts);
   // 环境检测结果：未安装的 Agent 不出现在项目右键菜单里（检测返回前视为可用）。
   const agentAvailability = useAgentAvailability();
   const showAntigravity = projectEnabledAgents(project).antigravity && (agentAvailability?.antigravity ?? true);
@@ -32,9 +33,10 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
     const state = useAppStore.getState();
     if (!state.claudeLaunchTargetsLoaded) void refreshClaudeLaunchTargets();
     if (!state.codexProviderState) void refreshCodexLaunchTargets();
-  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
+    if (!state.antigravityAccountState) void refreshAntigravityAccounts();
+  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets, refreshAntigravityAccounts]);
 
-  const gotoProvidersSettings = (source: 'claude' | 'codex') => {
+  const gotoProvidersSettings = (source: 'claude' | 'codex' | 'antigravity') => {
     useAppStore.getState().setProviderSettingsTab(source);
     useAppStore.getState().openSettingsDialog('llm-providers');
     onLaunched();
@@ -70,26 +72,19 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
         />
       ))}
       {showAntigravity && (
-        <>
-          <div className="context-menu-separator" />
-          <div
-            className="context-menu-item"
-            data-launch-agent="antigravity"
-            title="启动 Antigravity CLI（agy）"
-            onClick={() => {
-              useAppStore.getState().setLastClickRegion('tab');
-              onLaunched();
-              void openNewAgentSession(project, 'antigravity', 'default:antigravity', '').catch(error => {
-                useAppStore.getState().showToast(`创建 Antigravity 会话失败：${String(error)}`, 'error');
-              });
-            }}
-          >
-            <span className="claude-model-menu-icon">
-              <AgentIcon provider="antigravity" />
-            </span>
-            <span>Antigravity (agy)</span>
-          </div>
-        </>
+        <AntigravityAccountMenuSection
+          itemClassName="context-menu-item"
+          separatorClassName="context-menu-separator"
+          onPickAccount={(accountId) => {
+            useAppStore.getState().setLastClickRegion('tab');
+            onLaunched();
+            const providerId = accountId ? `antigravity:${accountId}` : 'default:antigravity';
+            void openNewAgentSession(project, 'antigravity', providerId, '').catch(error => {
+              useAppStore.getState().showToast(`创建 Antigravity 会话失败：${String(error)}`, 'error');
+            });
+          }}
+          onManageAccounts={() => gotoProvidersSettings('antigravity')}
+        />
       )}
     </>
   );

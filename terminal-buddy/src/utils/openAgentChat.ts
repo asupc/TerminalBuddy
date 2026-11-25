@@ -11,7 +11,10 @@ import type { Project } from '../types';
  * 这里统一补齐前缀；已带前缀的值原样传递，便于将来菜单直接提供目录 ID。
  */
 function catalogProviderId(provider: 'claude' | 'codex' | 'antigravity', providerId: string): string | null {
-  if (provider === 'antigravity') return 'default:antigravity';
+  if (provider === 'antigravity') {
+    if (!providerId || providerId === 'default:antigravity') return 'default:antigravity';
+    return providerId.startsWith('antigravity:') ? providerId : `antigravity:${providerId}`;
+  }
   if (!providerId) return null;
   if (/^(?:llm|claude|codex|default):/.test(providerId)) return providerId;
   return `${provider === 'codex' ? 'codex' : 'llm'}:${providerId}`;
@@ -53,7 +56,10 @@ export async function openNewAgentSession(
 ): Promise<void> {
   if (!getAppSettings().nativeChatSessions) {
     if (provider === 'antigravity') {
-      await openProjectAntigravityTerminal(project);
+      const accountId = providerId && providerId !== 'default:antigravity'
+        ? providerId.replace(/^antigravity:/, '')
+        : null;
+      await openProjectAntigravityTerminal(project, accountId);
     } else {
       await openProjectAgentTerminal(project, provider, providerId, modelId);
     }

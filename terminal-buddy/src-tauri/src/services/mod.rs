@@ -1,5 +1,6 @@
 pub mod agent_cli_service;
 pub mod agent_usage_service;
+pub mod antigravity_account_service;
 pub mod antigravity_history_service;
 mod antigravity_transcript;
 pub mod app_notification_service;

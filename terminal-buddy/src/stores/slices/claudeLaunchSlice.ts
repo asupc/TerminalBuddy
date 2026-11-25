@@ -1,6 +1,7 @@
 import type { StoreApi } from "zustand";
 import type { AppState } from "../appStore";
 import {
+	getAntigravityAccountState,
 	getCodexProviderState,
 	listClaudeLaunchTargets,
 	type LlmLaunchTarget,
@@ -13,12 +14,18 @@ export const createClaudeLaunchSlice = (
 	agentCommands: { claude: '', codex: '', antigravity: '' },
 	setAgentCommands: (commands) => set({ agentCommands: commands }),
 	codexProviderState: null,
+	antigravityAccountState: null,
 	providerSettingsTab: 'claude',
 	setProviderSettingsTab: (tab) => set({ providerSettingsTab: tab }),
 	setCodexProviderState: (state) => set({ codexProviderState: state }),
 	refreshCodexLaunchTargets: async () => {
 		try { set({ codexProviderState: await getCodexProviderState() }); }
 		catch { /* 加载失败时保留菜单缓存，可从供应商页面重试。 */ }
+	},
+	setAntigravityAccountState: (state) => set({ antigravityAccountState: state }),
+	refreshAntigravityAccounts: async () => {
+		try { set({ antigravityAccountState: await getAntigravityAccountState() }); }
+		catch { /* 加载失败时保留菜单缓存，可从账号设置页重试。 */ }
 	},
 	claudeLaunchTargets: [],
 	claudeLaunchTargetsLoaded: false,

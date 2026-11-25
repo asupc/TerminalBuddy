@@ -881,6 +881,9 @@ pub fn expand_leading_claude_ref(command: &str, terminal_id: &str) -> Result<Str
     if command.trim_start().starts_with(super::codex_provider_service::CODEX_REF_PREFIX) {
         return super::codex_provider_service::expand_leading_codex_ref(command);
     }
+    if command.trim_start().starts_with(super::antigravity_account_service::ANTIGRAVITY_REF_PREFIX) {
+        return super::antigravity_account_service::expand_leading_antigravity_ref(command);
+    }
     let Some((provider_id, model_id, token_end)) = parse_claude_ref(command) else {
         // 旧路径兜底：含旧版绝对路径形态且文件已不存在 → 拒绝，不静默降级；
         // 文件尚存则按普通命令原样放行。

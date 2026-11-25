@@ -10,7 +10,7 @@ import { createTransfersSlice } from "./slices/transfersSlice";
 import { createWindowSlice } from "./slices/windowSlice";
 import { createClaudeLaunchSlice } from "./slices/claudeLaunchSlice";
 import { createAgentChatSlice } from "./slices/agentChatSlice";
-import type { CodexProviderState, LlmLaunchTarget } from "../services/tauri";
+import type { AntigravityAccountState, CodexProviderState, LlmLaunchTarget } from "../services/tauri";
 
 interface SavedTab {
 	profileId: string;
@@ -561,8 +561,11 @@ export interface AppState {
 	codexProviderState: CodexProviderState | null;
 	refreshCodexLaunchTargets: () => Promise<void>;
 	setCodexProviderState: (state: CodexProviderState) => void;
-	providerSettingsTab: "claude" | "codex";
-	setProviderSettingsTab: (tab: "claude" | "codex") => void;
+	antigravityAccountState: AntigravityAccountState | null;
+	refreshAntigravityAccounts: () => Promise<void>;
+	setAntigravityAccountState: (state: AntigravityAccountState) => void;
+	providerSettingsTab: "claude" | "codex" | "antigravity";
+	setProviderSettingsTab: (tab: "claude" | "codex" | "antigravity") => void;
 	claudeLaunchTargets: LlmLaunchTarget[];
 	claudeLaunchTargetsLoaded: boolean;
 	refreshClaudeLaunchTargets: () => Promise<void>;

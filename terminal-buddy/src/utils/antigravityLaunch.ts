@@ -1,7 +1,9 @@
 export const DEFAULT_ANTIGRAVITY_COMMAND = 'agy --dangerously-skip-permissions';
+export const ANTIGRAVITY_ACCOUNT_REF_PREFIX = '__tb_agy_account__:';
 
 /** 命令里跑 Antigravity CLI：`agy`、`agy.exe`、`agy.cmd`、`agy.bat` 及带参数的变体都算。 */
 export function isAntigravityCommand(command: string): boolean {
+  if (command.trimStart().startsWith(ANTIGRAVITY_ACCOUNT_REF_PREFIX)) return true;
   return /(?:^|[\s"'=])agy(?:\.cmd|\.exe|\.bat)?(?=$|[\s"'=])/i.test(command);
 }
 
@@ -23,8 +25,11 @@ function splitCommandTail(command: string): { head: string; tail: string } {
 }
 
 /** 组装 Antigravity CLI 启动命令：返回规范化后的基础命令。 */
-export function buildAntigravityLaunchCommand(baseCommand?: string): string {
-  return baseCommand?.trim() || DEFAULT_ANTIGRAVITY_COMMAND;
+export function buildAntigravityLaunchCommand(baseCommand?: string, accountId?: string | null): string {
+  const cmd = baseCommand?.trim() || DEFAULT_ANTIGRAVITY_COMMAND;
+  const trimmedAccount = accountId?.trim();
+  if (!trimmedAccount) return cmd;
+  return `${ANTIGRAVITY_ACCOUNT_REF_PREFIX}${trimmedAccount} ${cmd}`;
 }
 
 /** 组装恢复历史对话的 Antigravity CLI 命令（`agy ... --conversation <sessionId>`）。 */

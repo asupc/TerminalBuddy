@@ -1,6 +1,6 @@
 //! 手机首页使用的供应商目录，以及原生会话的供应商启动配置。
 use crate::models::ai_chat::{AiCatalog, AiModelOption, AiProviderOption};
-use super::{atomic_file::atomic_write_private, claude_provider_service, codex_provider_service, llm_provider_service};
+use super::{antigravity_account_service, atomic_file::atomic_write_private, claude_provider_service, codex_provider_service, llm_provider_service};
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf};
 
@@ -30,12 +30,31 @@ pub fn catalog() -> Result<AiCatalog> {
         providers.push(AiProviderOption { id: format!("default:{agent}"), agent: agent.into(), name: "服务端默认配置".into(),
             is_default: false, models: vec![AiModelOption { id: String::new(), label: "服务端默认模型".into(), effort: String::new() }] });
     }
-    // Antigravity 通过官方 ACP（agy acp）和 Google 账号运行，不经过第三方中转供应商表。
+    // Antigravity 通过官方 ACP（agy acp）和 Google 账号运行，支持本机默认账号及已录入的多账号隔离启动。
+    let agy_state = antigravity_account_service::get_account_state().unwrap_or_default();
+    for account in &agy_state.accounts {
+        let display = if account.email.is_empty() || account.alias == account.email {
+            account.alias.clone()
+        } else {
+            format!("{} ({})", account.alias, account.email)
+        };
+        providers.push(AiProviderOption {
+            id: format!("antigravity:{}", account.id),
+            agent: "antigravity".into(),
+            name: display,
+            is_default: account.is_default,
+            models: vec![AiModelOption {
+                id: String::new(),
+                label: "Antigravity 默认模型".into(),
+                effort: String::new(),
+            }],
+        });
+    }
     providers.push(AiProviderOption {
         id: "default:antigravity".into(),
         agent: "antigravity".into(),
-        name: "Google 账号（ACP）".into(),
-        is_default: true,
+        name: "Google 账号（系统默认）".into(),
+        is_default: agy_state.active_account_id.is_none(),
         models: vec![AiModelOption {
             id: String::new(),
             label: "Antigravity 默认模型".into(),
@@ -53,7 +72,7 @@ fn find_target<'a>(providers: &'a [AiProviderOption], agent: &str, id: &str) -> 
         return Some(target);
     }
     if id.contains(':') { return None; }
-    ["llm", "claude", "codex"].into_iter()
+    ["llm", "claude", "codex", "antigravity"].into_iter()
         .find_map(|source| providers.iter().find(|target| target.agent == agent && target.id == format!("{source}:{id}")))
 }
 
@@ -72,6 +91,7 @@ pub fn selection(agent: &str, id: Option<&str>, model: Option<&str>) -> Result<O
 
 pub struct NativeLaunch {
     pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
     pub context_window: Option<u64>,
     settings: Option<PathBuf>,
 }
@@ -106,13 +126,23 @@ impl Drop for NativeLaunch {
 }
 
 pub fn prepare(agent: &str, provider_id: Option<&str>, model: Option<&str>) -> Result<NativeLaunch> {
-    let Some(id) = provider_id else { return Ok(NativeLaunch { args: Vec::new(), context_window: inherited_context_window(agent), settings: None }); };
-    if id == format!("default:{agent}") { return Ok(NativeLaunch { args: Vec::new(), context_window: inherited_context_window(agent), settings: None }); }
+    let Some(id) = provider_id else { return Ok(NativeLaunch { args: Vec::new(), env: Vec::new(), context_window: inherited_context_window(agent), settings: None }); };
+    if id == format!("default:{agent}") { return Ok(NativeLaunch { args: Vec::new(), env: Vec::new(), context_window: inherited_context_window(agent), settings: None }); }
     let (source, id) = id.split_once(':').ok_or("供应商配置无效，请重新选择")?;
+    if source == "antigravity" && agent == "antigravity" {
+        let (profile_dir, env) = antigravity_account_service::prepare_isolated_env(id)?;
+        let dir_str = super::path_service::PathService::normalize_child_process_path_str(&profile_dir.to_string_lossy());
+        return Ok(NativeLaunch {
+            args: vec!["--gemini-dir".into(), dir_str, "--app-data-dir".into(), "antigravity-acp".into()],
+            env,
+            context_window: None,
+            settings: None,
+        });
+    }
     if source == "codex" && agent == "codex" {
         let args = codex_provider_service::native_session_args(id, model.unwrap_or_default())?;
         let context_window = args.iter().find_map(|arg| arg.strip_prefix("model_context_window=")?.parse::<u64>().ok()).filter(|n| *n > 0);
-        return Ok(NativeLaunch { args, context_window, settings: None });
+        return Ok(NativeLaunch { args, env: Vec::new(), context_window, settings: None });
     }
     let mut settings = match (source, agent) {
         ("llm", "claude") => llm_provider_service::native_session_settings(id, model.unwrap_or_default())?,
@@ -136,7 +166,7 @@ pub fn prepare(agent: &str, provider_id: Option<&str>, model: Option<&str>) -> R
     let path = std::env::temp_dir().join(format!("terminal-buddy-native-settings-{}.json", uuid::Uuid::new_v4()));
     atomic_write_private(&path, &serde_json::to_vec(&settings).map_err(|_| "无法编码会话配置")?)
         .map_err(|e| format!("创建会话模型配置失败：{e}"))?;
-    Ok(NativeLaunch { args: vec!["--settings".into(), path.to_string_lossy().into_owned()], context_window, settings: Some(path) })
+    Ok(NativeLaunch { args: vec!["--settings".into(), path.to_string_lossy().into_owned()], env: Vec::new(), context_window, settings: Some(path) })
 }
 
 /// 打开 Claude CLI 的任务工具（`TodoWrite` / `TaskCreate` / `TaskUpdate` / `TaskList`）。
