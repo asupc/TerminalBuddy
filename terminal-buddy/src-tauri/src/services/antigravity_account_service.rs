@@ -339,14 +339,12 @@ pub async fn save_account_from_token(input: AntigravityTokenInput) -> Result<Ant
     )
 }
 
-/// 导入本机当前已登录的 `agy` 文件凭据（只读，不修改原文件）。
+/// 导入本机当前已登录的 `agy` CLI 凭据（只读，优先读取系统凭据管理器中的 CLI 登录态，再回退到 CLI 文件凭据）。
 pub async fn import_local_account() -> Result<AntigravityAccountState> {
-    let (token_path, auth_state_raw) = find_local_agy_token_file().ok_or_else(|| {
-        "未检测到本机 ~/.gemini 下的 Antigravity 凭据文件；若登录态保存在系统密钥链中，请使用「浏览器 OAuth 登录」或手动粘贴 Token"
+    let (raw, auth_state_raw) = read_local_agy_cli_credential().ok_or_else(|| {
+        "未检测到本机 Antigravity CLI（agy）的已登录凭据（已检查系统凭据管理器及 ~/.gemini/antigravity-cli）；请先在终端运行 agy 登录，或直接点击「浏览器 OAuth 登录」"
             .to_string()
     })?;
-    let raw = fs::read_to_string(&token_path)
-        .map_err(|e| format!("读取本机 Antigravity 凭据失败：{e}"))?;
     let mut parsed_obj = parse_raw_payload_to_map(&raw);
     let identity = resolve_identity_from_payload(
         &raw,
@@ -367,20 +365,179 @@ pub async fn import_local_account() -> Result<AntigravityAccountState> {
     )
 }
 
-fn find_local_agy_token_file() -> Option<(PathBuf, Option<String>)> {
-    let home = dirs::home_dir()?;
-    let gemini = home.join(".gemini");
-    for sub in ["antigravity-cli", "antigravity-acp"] {
-        let candidate = gemini.join(sub).join("antigravity-oauth-token");
-        if candidate.is_file() {
-            let state = fs::read_to_string(
-                gemini
-                    .join("antigravity-acp")
-                    .join("cache")
-                    .join("acp-auth-state.json"),
-            )
-            .ok();
-            return Some((candidate, state));
+fn read_local_agy_cli_credential() -> Option<(String, Option<String>)> {
+    let auth_state_raw = dirs::home_dir().and_then(|home| {
+        fs::read_to_string(
+            home.join(".gemini")
+                .join("antigravity-acp")
+                .join("cache")
+                .join("acp-auth-state.json"),
+        )
+        .ok()
+    });
+    if let Some(keyring_raw) = read_os_keyring_agy_cli_credential() {
+        return Some((keyring_raw, auth_state_raw));
+    }
+    for path in local_agy_cli_token_paths() {
+        if path.is_file() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    return Some((content, auth_state_raw));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn local_agy_cli_token_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        let gemini = home.join(".gemini");
+        paths.push(gemini.join("antigravity-cli").join("antigravity-oauth-token"));
+        paths.push(gemini.join("antigravity-acp").join("antigravity-oauth-token"));
+    }
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        let p = PathBuf::from(xdg.trim());
+        if !p.as_os_str().is_empty() {
+            paths.push(p.join("antigravity-cli").join("antigravity-oauth-token"));
+        }
+    }
+    #[cfg(windows)]
+    {
+        for var in ["APPDATA", "LOCALAPPDATA"] {
+            if let Ok(dir) = std::env::var(var) {
+                let p = PathBuf::from(dir.trim());
+                if !p.as_os_str().is_empty() {
+                    paths.push(p.join("antigravity-cli").join("antigravity-oauth-token"));
+                }
+            }
+        }
+    }
+    paths
+}
+
+fn decode_credential_blob(bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
+    }
+    // 优先按 UTF-8 解析（Go keyring / agy 默认写入 UTF-8 JSON）；若包含 UTF-16LE 特征则按 UTF-16LE 解码。
+    let looks_utf16le = bytes.len() >= 4
+        && bytes.len() % 2 == 0
+        && bytes.iter().skip(1).step_by(2).take(8).all(|&b| b == 0);
+    if looks_utf16le {
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        let s = String::from_utf16_lossy(&units)
+            .trim_matches(' ')
+            .trim()
+            .to_string();
+        if !s.is_empty() {
+            return Some(s);
+        }
+    }
+    let s = String::from_utf8_lossy(bytes)
+        .trim_matches(' ')
+        .trim()
+        .to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+#[cfg(windows)]
+fn read_os_keyring_agy_cli_credential() -> Option<String> {
+    #[repr(C)]
+    struct CredentialW {
+        flags: u32,
+        cred_type: u32,
+        target_name: *mut u16,
+        comment: *mut u16,
+        last_written: [u32; 2],
+        credential_blob_size: u32,
+        credential_blob: *mut u8,
+        persist: u32,
+        attribute_count: u32,
+        attributes: *mut std::ffi::c_void,
+        target_alias: *mut u16,
+        user_name: *mut u16,
+    }
+    const CRED_TYPE_GENERIC: u32 = 1;
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn CredReadW(
+            target_name: *const u16,
+            cred_type: u32,
+            flags: u32,
+            credential: *mut *mut CredentialW,
+        ) -> i32;
+        fn CredFree(buffer: *const std::ffi::c_void);
+    }
+
+    const TARGETS: &[&str] = &[
+        "LegacyGeneric:target=gemini:antigravity",
+        "gemini:antigravity",
+        "LegacyGeneric:target=antigravity-cli:antigravity",
+        "antigravity-cli:antigravity",
+    ];
+    for target in TARGETS {
+        let wide: Vec<u16> = target.encode_utf16().chain(Some(0)).collect();
+        let mut cred_ptr: *mut CredentialW = std::ptr::null_mut();
+        let ok = unsafe { CredReadW(wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut cred_ptr) };
+        if ok != 0 && !cred_ptr.is_null() {
+            let bytes = unsafe {
+                let cred = &*cred_ptr;
+                let len = cred.credential_blob_size as usize;
+                let data = if len > 0 && !cred.credential_blob.is_null() {
+                    std::slice::from_raw_parts(cred.credential_blob, len).to_vec()
+                } else {
+                    Vec::new()
+                };
+                CredFree(cred_ptr as *const std::ffi::c_void);
+                data
+            };
+            if let Some(decoded) = decode_credential_blob(&bytes) {
+                return Some(decoded);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn read_os_keyring_agy_cli_credential() -> Option<String> {
+    for (service, account) in [("gemini", "antigravity"), ("antigravity-cli", "antigravity")] {
+        if let Ok(output) = Command::new("/usr/bin/security")
+            .args(["find-generic-password", "-s", service, "-a", account, "-w"])
+            .output()
+        {
+            if output.status.success() {
+                if let Some(decoded) = decode_credential_blob(&output.stdout) {
+                    return Some(decoded);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn read_os_keyring_agy_cli_credential() -> Option<String> {
+    for (service, account) in [("gemini", "antigravity"), ("antigravity-cli", "antigravity")] {
+        if let Ok(output) = Command::new("secret-tool")
+            .args(["lookup", "service", service, "account", account])
+            .output()
+        {
+            if output.status.success() {
+                if let Some(decoded) = decode_credential_blob(&output.stdout) {
+                    return Some(decoded);
+                }
+            }
         }
     }
     None

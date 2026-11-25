@@ -221,11 +221,11 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
             className="claude-segment-btn"
             disabled={busy}
             onClick={() =>
-              void mutate('import', importLocalAntigravityAccount, '已导入本机当前 Antigravity 账号')
+              void mutate('import', importLocalAntigravityAccount, '已导入本机 Antigravity CLI 登录账号')
             }
-            title="从 ~/.gemini/antigravity-cli/antigravity-oauth-token 导入"
+            title="从本机 Antigravity CLI（agy）的系统凭据管理器或 ~/.gemini/antigravity-cli 导入"
           >
-            <Download size={14} /> 导入本机登录
+            <Download size={14} /> 导入本机 CLI 登录
           </button>
           <button
             type="button"
