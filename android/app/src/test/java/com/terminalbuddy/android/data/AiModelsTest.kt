@@ -78,6 +78,7 @@ class AiModelsTest {
         val project = decode<AiProject>("""{"name":"p","path":"/p"}""")
         assertTrue(project.enabledAgents.claude)
         assertTrue(project.enabledAgents.codex)
+        assertTrue(project.enabledAgents.antigravity)
     }
 
     @Test
@@ -122,5 +123,21 @@ class AiModelsTest {
         )
         assertNull(session.slashCatalog)
         assertTrue(slashCompletions(session.slashCatalog, "/").isEmpty())
+    }
+
+    @Test
+    fun `antigravity session decodes provider label and acp config options`() {
+        val session = decode<AiSession>(
+            """
+            {"id":"s2","title":"ACP 对话","provider":"antigravity","projectPath":"/p","providerId":"default:antigravity",
+             "providerName":"Google 账号（ACP）","model":"gemini-4-neon","status":"idle","messages":[],"approvals":[],
+             "error":null,"updatedAt":10,"revision":2,
+             "configOptions":[{"id":"model","name":"模型","category":"model","currentValue":"gemini-4-neon",
+             "options":[{"value":"gemini-4-neon","name":"Gemini 4 Neon"}]}]}
+            """.trimIndent()
+        )
+        assertEquals("Antigravity", session.providerLabel)
+        assertEquals(1, session.configOptions.size)
+        assertEquals("gemini-4-neon", session.configOptions[0].currentValue)
     }
 }

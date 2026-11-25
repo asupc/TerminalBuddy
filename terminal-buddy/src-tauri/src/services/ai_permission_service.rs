@@ -6,11 +6,14 @@ use serde_json::{json, Value};
 type Result<T> = std::result::Result<T, String>;
 const DEFAULT_CLAUDE_COMMAND: &str = "claude --dangerously-skip-permissions";
 const DEFAULT_CODEX_COMMAND: &str = "codex --dangerously-bypass-approvals-and-sandbox";
+const DEFAULT_ANTIGRAVITY_COMMAND: &str = "agy --dangerously-skip-permissions";
 
 #[derive(Default)]
 pub(crate) struct NativePermissions {
     pub claude_args: Vec<String>,
     pub codex_args: Vec<String>,
+    /// Antigravity ACP 会话是否按基础命令自动跳过工具授权确认。
+    pub antigravity_bypass: bool,
     approval_policy: Option<&'static str>,
     sandbox: Option<&'static str>,
 }
@@ -80,9 +83,11 @@ impl NativePermissions {
 
 pub(crate) fn for_agent(agent: &str) -> Result<NativePermissions> {
     let settings = SettingsService::get_settings();
-    let (configured, fallback) = if agent == "claude" {
-        (settings.agent_commands.claude, DEFAULT_CLAUDE_COMMAND)
-    } else { (settings.agent_commands.codex, DEFAULT_CODEX_COMMAND) };
+    let (configured, fallback) = match agent {
+        "claude" => (settings.agent_commands.claude, DEFAULT_CLAUDE_COMMAND),
+        "antigravity" => (settings.agent_commands.antigravity, DEFAULT_ANTIGRAVITY_COMMAND),
+        _ => (settings.agent_commands.codex, DEFAULT_CODEX_COMMAND),
+    };
     let command = if configured.trim().is_empty() { fallback } else { configured.trim() };
     let tokens = shell_words::split(command).map_err(|_| "Agent 基础启动命令的引号不匹配，请修正后重试")?;
     let mut permissions = NativePermissions::default();
@@ -107,6 +112,11 @@ pub(crate) fn for_agent(agent: &str) -> Result<NativePermissions> {
                         }
                     }
                 }
+                _ => {}
+            }
+        } else if agent == "antigravity" {
+            match flag {
+                "--dangerously-skip-permissions" | "--yolo" => permissions.antigravity_bypass = true,
                 _ => {}
             }
         } else {

@@ -2216,3 +2216,21 @@
     animation: none;
   }
 }
+
+.agent-acp-configs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.agent-acp-config-select {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  max-width: 160px;
+  cursor: pointer;
+}

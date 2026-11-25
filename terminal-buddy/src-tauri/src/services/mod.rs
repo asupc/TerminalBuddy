@@ -86,6 +86,7 @@ pub use web_service::*;
 pub use workspace_service::*;
 
 pub mod ai_chat_service;
+mod ai_chat_acp;
 mod ai_chat_approval;
 pub(crate) mod ai_chat_claude_hooks;
 mod ai_chat_usage;

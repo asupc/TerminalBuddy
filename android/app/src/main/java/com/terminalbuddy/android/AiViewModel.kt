@@ -85,7 +85,7 @@ data class AiUiState(
      * 兼容两种环境：服务端版本较旧（catalog 不返回 `default:<agent>`），
      * 或服务端尚未给该助手配置任何供应商。创建会话时会省略 providerId，走服务端默认 CLI 配置。
      */
-    private val fallbackProviders get() = listOf("claude", "codex")
+    private val fallbackProviders get() = listOf("claude", "codex", "antigravity")
         .filter { agent -> providers.none { it.agent == agent } }
         .map { agent -> AiProvider("default:$agent", agent, "服务端默认配置",
             models = listOf(AiModel("")), localDefault = true) }
@@ -96,7 +96,7 @@ data class AiUiState(
         .filter { agent == null || it.agent == agent }
         .flatMap { provider -> provider.models.map { AiLaunchModel(provider, it) } }
     val availableProviders get() = launchProject?.let(::projectProviders).orEmpty()
-    val availableAgents get() = listOf("claude", "codex").filter { agent -> availableProviders.any { it.agent == agent } }
+    val availableAgents get() = listOf("claude", "codex", "antigravity").filter { agent -> availableProviders.any { it.agent == agent } }
     val launchProvider get() = availableProviders.find { it.id == providerId }
     /** 汇总当前 Agent 的全部模型，启动时仍使用模型所属的供应商。 */
     val availableModels get() = availableProviders.filter { it.agent == launchProvider?.agent }.flatMap { provider ->
@@ -685,7 +685,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadServerHistory(agent: String, projectPath: String) {
         val ui = mutable.value
-        if (!store.loggedIn || ui.authenticating || agent !in listOf("claude", "codex") ||
+        if (!store.loggedIn || ui.authenticating || agent !in listOf("claude", "codex", "antigravity") ||
             ui.projects.none { it.path == projectPath }) return
         val key = AiServerHistoryKey(agent, projectPath)
         if (serverHistoryJobs[key]?.isActive == true) return
@@ -721,7 +721,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     /** 按历史模型及其供应商直接续接，独立于快速开始的选择。 */
     fun resumeServerHistory(agent: String, project: AiProject, item: AiHistorySession) {
         val ui = mutable.value
-        if (ui.working || ui.authenticating || !ui.authenticated || agent !in listOf("claude", "codex")) return
+        if (ui.working || ui.authenticating || !ui.authenticated || agent !in listOf("claude", "codex", "antigravity")) return
         val models = ui.projectModels(project, agent)
         val historyModels = item.model?.trim()?.takeIf(String::isNotBlank)?.let { model ->
             models.filter { it.model.id.equals(model, ignoreCase = true) }

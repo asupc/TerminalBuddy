@@ -21,7 +21,7 @@ const versionCache = new Map<string, Promise<string | null>>();
 function loadCliVersion(provider: string): Promise<string | null> {
   const cached = versionCache.get(provider);
   if (cached) return cached;
-  const request = getAgentCliStatus(provider as 'claude' | 'codex', false)
+  const request = getAgentCliStatus(provider as 'claude' | 'codex' | 'antigravity', false)
     .then(status => status.version)
     .catch(() => null);
   versionCache.set(provider, request);
@@ -179,7 +179,7 @@ export const SessionStatusBar = memo(function SessionStatusBar({ session, runnin
   if (active.skills.length > 0) items.push({ key: 'skill', text: `Skill: ${active.skills.join(', ')}`, title: '本轮调用过的 Skill' });
   if (cliVersion) items.push({
     key: 'version',
-    text: `${session.provider === 'codex' ? 'Codex' : 'Claude Code'} ${cliVersion}`,
+    text: `${session.provider === 'codex' ? 'Codex' : session.provider === 'antigravity' ? 'Antigravity' : 'Claude Code'} ${cliVersion}`,
     title: 'CLI 版本',
   });
   if (mcpCount != null && mcpCount > 0) items.push({ key: 'mcp-count', text: `MCP 服务器 ${mcpCount}`, title: '已配置的 MCP 服务器数量' });

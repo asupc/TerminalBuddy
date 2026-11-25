@@ -367,5 +367,6 @@ private fun ServerOptionRow(
 
 private fun providerLabel(provider: String?): String = when (provider) {
     "codex" -> "Codex"
+    "antigravity" -> "Antigravity"
     else -> "Claude Code"
 }

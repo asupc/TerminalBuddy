@@ -16,6 +16,7 @@ import {
   aiSessionSend,
   aiSessionStop,
   aiSessionSwitchModel,
+  aiSessionSetConfigOption,
   aiCatalog,
   listenTauri,
   type AiAgent,
@@ -505,6 +506,16 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   }, [tab.sessionId, stripAnswered]);
 
   // 空闲时切换供应商与模型：后端结束常驻进程并写入切换分段，下一条消息以新配置 --resume 续接。
+  const setConfigOption = useCallback(async (configId: string, value: string) => {
+    setError(null);
+    try {
+      const snapshot = await aiSessionSetConfigOption(tab.sessionId, configId, value);
+      setSession(stripAnswered(snapshot));
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }, [tab.sessionId, stripAnswered]);
+
   const switchModel = useCallback(async (providerId: string, model: string) => {
     setError(null);
     try {
@@ -630,6 +641,24 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
                   disabledReason={busy ? '执行中无法切换模型，请等待完成或先中断' : '有排队消息，请等待发出后再切换'}
                   onPick={(providerId, model) => { void switchModel(providerId, model); }}
                 />
+              ) : session?.configOptions && session.configOptions.length > 0 ? (
+                <span className="agent-acp-configs">
+                  {session.configOptions.map(opt => (
+                    <select
+                      key={opt.id}
+                      className="agent-acp-config-select"
+                      aria-label={opt.name}
+                      title={`${opt.name}（ACP 热切换）`}
+                      value={opt.currentValue}
+                      disabled={session == null}
+                      onChange={event => { void setConfigOption(opt.id, event.target.value); }}
+                    >
+                      {opt.options.map(choice => (
+                        <option key={choice.value} value={choice.value}>{choice.name}</option>
+                      ))}
+                    </select>
+                  ))}
+                </span>
               ) : (
                 session?.model && <span className="agent-chat-meta">{session.model}</span>
               )}

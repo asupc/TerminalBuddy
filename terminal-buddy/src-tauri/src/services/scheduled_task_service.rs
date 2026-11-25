@@ -718,9 +718,9 @@ fn try_admit(
 fn agent_run_mode(task: &ScheduledTask) -> Option<AgentRunMode> {
     match &task.target {
         TaskTarget::ProjectProfile { .. } => None,
-        // Antigravity CLI 没有原生会话协议，始终走终端接力。
-        TaskTarget::AgentPrompt { agent, .. } => {
-            Some(if agent == "antigravity" || !SettingsService::get_settings().native_chat_sessions {
+        // 原生会话开启时，Claude / Codex / Antigravity（ACP）均走原生会话。
+        TaskTarget::AgentPrompt { .. } => {
+            Some(if !SettingsService::get_settings().native_chat_sessions {
                 AgentRunMode::Terminal
             } else {
                 AgentRunMode::Native

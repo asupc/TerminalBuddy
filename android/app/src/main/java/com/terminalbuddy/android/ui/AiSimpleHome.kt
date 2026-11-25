@@ -437,7 +437,7 @@ private fun SimpleComposer(
     terminalUi: ServerTerminalUiState, terminalVm: ServerTerminalViewModel,
     onStart: () -> Unit,
 ) {
-    val agents = if (ui.initialLoading) listOf("claude", "codex")
+    val agents = if (ui.initialLoading) listOf("claude", "codex", "antigravity")
         else ui.availableAgents
     // 同步完成后只剩一个助手时无需选择：隐藏助手行，标志直接并入开始按钮。
     val singleAgent = !ui.initialLoading && agents.size == 1

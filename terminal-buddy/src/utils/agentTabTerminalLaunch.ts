@@ -1,6 +1,6 @@
 import { aiSessionGet, buildClaudeRefCommand, type AiSession } from '../services/tauri';
 import { buildCodexRefCommand } from './codexLaunch';
-import { currentClaudeCommand, currentCodexCommand } from './agentCommands';
+import { currentAntigravityCommand, currentClaudeCommand, currentCodexCommand } from './agentCommands';
 import { inheritableClaudeArgs } from './claudeLaunch';
 import { openTerminalInDir } from './openTerminalInDir';
 import { projectForDirectory } from './projectPath';
@@ -37,8 +37,13 @@ export function describeAgentLaunchConfig(session: AiSession | null): { exact: b
 }
 
 /** Agent 管理里配置的基础启动命令（未配置时是内置默认命令）。 */
-function baseAgentCommand(provider: 'claude' | 'codex'): string | undefined {
-  const command = (provider === 'codex' ? currentCodexCommand() : currentClaudeCommand()).trim();
+function baseAgentCommand(provider: 'claude' | 'codex' | 'antigravity'): string | undefined {
+  const raw = provider === 'codex'
+    ? currentCodexCommand()
+    : provider === 'antigravity'
+      ? currentAntigravityCommand()
+      : currentClaudeCommand();
+  const command = raw.trim();
   return command || undefined;
 }
 
@@ -62,7 +67,7 @@ export async function launchTerminalFromAgentTab(tab: NativeAgentTab): Promise<v
   try {
     await openTerminalInDir(projectPath || undefined, {
       command,
-      name: project?.name || (provider === 'codex' ? 'Codex' : 'Claude Code'),
+      name: project?.name || (provider === 'codex' ? 'Codex' : provider === 'antigravity' ? 'Antigravity' : 'Claude Code'),
       groupName: project?.name,
     });
   } catch (error) {

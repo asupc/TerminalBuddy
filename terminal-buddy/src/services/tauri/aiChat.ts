@@ -121,6 +121,22 @@ export interface AiUsage {
 }
 
 /** `system/init` 提供的命令清单，随会话启动刷新。Codex 无此机制。 */
+/** ACP 动态配置项的可选值（模型、模式、推理强度等）。 */
+export interface AiConfigOptionChoice {
+  value: string;
+  name: string;
+  description?: string | null;
+}
+
+/** ACP 会话下发的动态配置项，前端据此渲染热切换下拉。 */
+export interface AiConfigOption {
+  id: string;
+  name: string;
+  category?: string | null;
+  currentValue: string;
+  options: AiConfigOptionChoice[];
+}
+
 export interface SlashCatalog {
   skills: string[];
   slashCommands: string[];
@@ -130,7 +146,7 @@ export interface SlashCatalog {
 export interface AiSession {
   id: string;
   title: string;
-  provider: 'claude' | 'codex';
+  provider: 'claude' | 'codex' | 'antigravity';
   providerId?: string | null;
   providerName?: string | null;
   projectPath: string;
@@ -157,11 +173,13 @@ export interface AiSession {
   compactions?: number;
   /** 桌面端是否正打开着该会话（服务端运行时标记，不落盘）；手机端「已打开」据此展示。 */
   desktopOpen?: boolean;
+  /** ACP 动态配置项（模型、模式、推理强度等）。 */
+  configOptions?: AiConfigOption[];
 }
 
 export interface AiProviderOption {
   id: string;
-  agent: 'claude' | 'codex' | string;
+  agent: 'claude' | 'codex' | 'antigravity' | string;
   name: string;
   isDefault: boolean;
   models: { id: string; label: string; effort: string }[];
@@ -172,7 +190,7 @@ export interface AiCatalog {
 }
 
 export interface CreateAiSession {
-  provider: 'claude' | 'codex';
+  provider: 'claude' | 'codex' | 'antigravity';
   providerId?: string | null;
   projectPath: string;
   model?: string | null;
@@ -250,6 +268,9 @@ export const aiSessionForceStop = (id: string) => invoke<AiSession>('ai_session_
 /** 空闲时切换供应商与模型（仅 Claude）；下一条消息以新配置 --resume 续接。 */
 export const aiSessionSwitchModel = (id: string, providerId: string, model: string) =>
   invoke<AiSession>('ai_session_switch_model', { id, providerId, model });
+/** ACP 会话内动态切换配置项（模型、模式、推理强度等），不重启进程。 */
+export const aiSessionSetConfigOption = (id: string, configId: string, value: string) =>
+  invoke<AiSession>('ai_session_set_config_option', { id, configId, value });
 export const aiSessionAnswer = (id: string, input: AnswerAiApproval) => invoke<void>('ai_session_answer', { id, input });
 export const aiSessionDelete = (id: string) => invoke<void>('ai_session_delete', { id });
 export const aiSessionPendingUpdate = (id: string, requestId: string, text: string) =>

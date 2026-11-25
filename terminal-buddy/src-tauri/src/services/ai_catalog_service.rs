@@ -30,6 +30,18 @@ pub fn catalog() -> Result<AiCatalog> {
         providers.push(AiProviderOption { id: format!("default:{agent}"), agent: agent.into(), name: "服务端默认配置".into(),
             is_default: false, models: vec![AiModelOption { id: String::new(), label: "服务端默认模型".into(), effort: String::new() }] });
     }
+    // Antigravity 通过官方 ACP（agy acp）和 Google 账号运行，不经过第三方中转供应商表。
+    providers.push(AiProviderOption {
+        id: "default:antigravity".into(),
+        agent: "antigravity".into(),
+        name: "Google 账号（ACP）".into(),
+        is_default: true,
+        models: vec![AiModelOption {
+            id: String::new(),
+            label: "Antigravity 默认模型".into(),
+            effort: String::new(),
+        }],
+    });
     Ok(AiCatalog { providers })
 }
 
@@ -50,7 +62,9 @@ pub fn selection(agent: &str, id: Option<&str>, model: Option<&str>) -> Result<O
     let Some(id) = id else { return Ok(None); }; // 兼容旧版客户端的默认 CLI 配置。
     let providers = catalog()?.providers;
     let target = find_target(&providers, agent, id).ok_or("所选供应商已不存在，请刷新后重新选择")?;
-    if !target.models.iter().any(|candidate| candidate.id == model.unwrap_or_default()) {
+    // ACP Agent（如 Antigravity）的模型列表由会话启动后通过 configOptions 动态下发，
+    // 目录中只有默认空模型占位；允许携带具体模型 ID 以便后续透传给 ACP。
+    if agent != "antigravity" && !target.models.iter().any(|candidate| candidate.id == model.unwrap_or_default()) {
         return Err("所选模型已被移除或停用，请刷新后重新选择".into());
     }
     Ok(Some((target.id.clone(), target.name.clone())))

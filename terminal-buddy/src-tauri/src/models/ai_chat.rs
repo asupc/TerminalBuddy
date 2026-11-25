@@ -149,6 +149,37 @@ pub struct ModelSwitch {
     pub to_model: Option<String>,
 }
 
+/// ACP 动态配置项的可选值（模型、模式、推理强度等）。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConfigOptionChoice {
+    pub value: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// ACP 会话下发的动态配置项，客户端据此渲染热切换下拉。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConfigOption {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    pub current_value: String,
+    #[serde(default)]
+    pub options: Vec<AiConfigOptionChoice>,
+}
+
+/// 会话内通过 ACP `session/set_config_option` 热更新配置项。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAiConfigOption {
+    pub config_id: String,
+    pub value: String,
+}
+
 /// `system/init` 提供的命令清单，随会话启动刷新。Codex 无此机制，为 None。
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
@@ -238,6 +269,9 @@ pub struct AiSession {
     /// 生产路径由 `ai_chat_service::list` / `get` 按桌面端上报的集合实时填充。
     #[serde(default)]
     pub desktop_open: bool,
+    /// ACP 动态配置项（模型、模式、推理强度等），非 ACP 会话为空。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_options: Vec<AiConfigOption>,
 }
 
 fn is_zero_u32(value: &u32) -> bool { *value == 0 }
@@ -283,6 +317,7 @@ impl AiSession {
             thinking: self.thinking.clone(),
             compactions: self.compactions,
             desktop_open: self.desktop_open,
+            config_options: self.config_options.clone(),
         }
     }
 }

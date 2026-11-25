@@ -61,7 +61,7 @@ export interface NativeAgentTab {
 	shape: 'native';
 	sessionId: string;
 	title: string;
-	provider: 'claude' | 'codex';
+	provider: 'claude' | 'codex' | 'antigravity';
 	projectPath: string;
 	model?: string | null;
 	status?: string;
@@ -84,7 +84,7 @@ export interface SavedNativeAgentTab {
 	key: string;
 	sessionId: string;
 	title: string;
-	provider: 'claude' | 'codex';
+	provider: 'claude' | 'codex' | 'antigravity';
 	projectPath: string;
 	model?: string | null;
 	openedAt: number;
@@ -304,7 +304,7 @@ function normalizeSavedAgentTab(raw: unknown): SavedNativeAgentTab | null {
 		key: typeof tab.key === "string" && tab.key ? tab.key : nativeAgentTabKey(sessionId),
 		sessionId,
 		title: typeof tab.title === "string" && tab.title ? tab.title : "新对话",
-		provider: tab.provider === "codex" ? "codex" : "claude",
+		provider: tab.provider === "codex" ? "codex" : tab.provider === "antigravity" ? "antigravity" : "claude",
 		projectPath: typeof tab.projectPath === "string" ? tab.projectPath : "",
 		model: typeof tab.model === "string" ? tab.model : null,
 		openedAt: typeof tab.openedAt === "number" && Number.isFinite(tab.openedAt) ? tab.openedAt : Date.now(),

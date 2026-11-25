@@ -42,6 +42,7 @@ pub(super) fn ensure_agent_project(path: &str, agent: &str) -> Result<String, Ap
     let enabled = match agent {
         "claude" => project.enabled_agents.claude,
         "codex" => project.enabled_agents.codex,
+        "antigravity" => project.enabled_agents.antigravity,
         _ => false,
     };
     if !enabled { return Err(ApiError::Forbidden("该项目未启用所选 Agent，请先在服务端配置并刷新工作台".into())); }
@@ -158,6 +159,10 @@ pub struct SwitchAiModel {
 /// 空闲时切换供应商与模型（仅 Claude）：常驻进程退出，下一条消息以新配置续接。
 pub async fn switch_model(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<SwitchAiModel>) -> Result<Json<AiSession>, ApiError> {
     blocking(move || service::switch_model(&id, &claims.0.sub, &input.provider_id, &input.model)).await
+}
+/// ACP 会话动态配置热切换（模型、模式、推理强度等）。
+pub async fn set_config_option(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<SetAiConfigOption>) -> Result<Json<AiSession>, ApiError> {
+    blocking(move || service::set_config_option(&id, &claims.0.sub, &input.config_id, &input.value)).await
 }
 pub async fn answer(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<AnswerAiApproval>) -> Result<Json<()>, ApiError> {
     blocking(move || service::answer(&id, &claims.0.sub, input)).await

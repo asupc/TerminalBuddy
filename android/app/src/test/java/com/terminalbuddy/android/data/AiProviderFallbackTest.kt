@@ -8,12 +8,12 @@ import org.junit.Test
 class AiProviderFallbackTest {
     @Test
     fun `enabled agent without provider falls back to server default`() {
-        val project = AiProject("项目", "/p", AiAgents(claude = true, codex = true))
+        val project = AiProject("项目", "/p", AiAgents(claude = true, codex = true, antigravity = true))
         val state = AiUiState(
             projects = listOf(project), projectPath = project.path,
             providers = listOf(AiProvider("claude", "claude", "Claude", models = listOf(AiModel("m1")))),
         )
-        assertEquals(listOf("claude", "codex"), state.availableAgents)
+        assertEquals(listOf("claude", "codex", "antigravity"), state.availableAgents)
         val codex = state.availableProviders.single { it.agent == "codex" }
         assertTrue(codex.localDefault)
         assertEquals("default:codex", codex.id)
@@ -23,7 +23,7 @@ class AiProviderFallbackTest {
 
     @Test
     fun `disabled agent does not get a fallback provider`() {
-        val project = AiProject("项目", "/p", AiAgents(claude = true, codex = false))
+        val project = AiProject("项目", "/p", AiAgents(claude = true, codex = false, antigravity = false))
         val state = AiUiState(
             projects = listOf(project), projectPath = project.path,
             providers = listOf(AiProvider("claude", "claude", "Claude", models = listOf(AiModel("m1")))),
@@ -34,7 +34,7 @@ class AiProviderFallbackTest {
 
     @Test
     fun `server provided codex provider is never replaced by fallback`() {
-        val project = AiProject("项目", "/p", AiAgents(claude = true, codex = true))
+        val project = AiProject("项目", "/p", AiAgents(claude = true, codex = true, antigravity = true))
         val state = AiUiState(
             projects = listOf(project), projectPath = project.path,
             providers = listOf(

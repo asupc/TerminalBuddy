@@ -315,6 +315,15 @@ class AiRepository(context: Context) {
             )
         )
 
+    /** ACP 会话动态配置热切换（模型、模式、推理强度等）。 */
+    suspend fun setConfigOption(id: String, configId: String, value: String): AiSession =
+        ApiJson.decodeFromJsonElement(
+            request("POST", listOf("ai", "sessions", id, "config"), jsonBody {
+                put("configId", configId)
+                put("value", value)
+            })
+        )
+
     /** 展开历史列表前的增量索引：本批同步返回，剩余由服务端后台补齐。 */
     suspend fun rescanHistory(agent: String) {
         request("POST", listOf("ai", "history", "rescan"), query = mapOf("agent" to agent))

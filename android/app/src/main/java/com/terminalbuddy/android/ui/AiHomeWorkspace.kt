@@ -77,7 +77,7 @@ private fun AiWorkspaceRecent(ui: AiUiState, vm: AiViewModel, sessions: () -> Un
     }
 }
 
-internal fun agentTitle(agent: String) = when (agent) { "codex" -> "Codex"; else -> "Claude Code" }
+internal fun agentTitle(agent: String) = when (agent) { "codex" -> "Codex"; "antigravity" -> "Antigravity"; else -> "Claude Code" }
 
 internal fun modelChoices(models: List<AiLaunchModel>) = models.map { target ->
     val details = buildList {
@@ -91,7 +91,7 @@ internal fun modelChoices(models: List<AiLaunchModel>) = models.map { target ->
 @Composable
 private fun AiQuickStart(ui: AiUiState, vm: AiViewModel, more: () -> Unit) {
     // 同步期间以常见助手占位；完成后只保留项目已启用且服务端 Agent 管理中已安装的助手。
-    val agents = if (ui.initialLoading) listOf("claude", "codex")
+    val agents = if (ui.initialLoading) listOf("claude", "codex", "antigravity")
         else ui.availableAgents
     // 只剩一个助手时不再提供选择，标志直接并入开始按钮。
     val singleAgent = !ui.initialLoading && agents.size == 1

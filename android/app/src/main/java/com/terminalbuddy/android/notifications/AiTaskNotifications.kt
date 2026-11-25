@@ -460,6 +460,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     private fun providerLabel(provider: String?): String? = when (provider) {
         "codex" -> "Codex"
         "claude" -> "Claude Code"
+        "antigravity" -> "Antigravity"
         else -> null
     }
 

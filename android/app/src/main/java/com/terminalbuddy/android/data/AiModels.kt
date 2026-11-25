@@ -96,6 +96,26 @@ data class AiSendResult(
     val status: String? = null,
 )
 
+/** ACP 动态配置项的可选值（模型、模式、推理强度等）。 */
+@Serializable
+data class AiConfigOptionChoice(
+    val value: String,
+    val name: String = "",
+    val description: String? = null,
+) {
+    val label get() = name.ifBlank { value }
+}
+
+/** ACP 会话下发的动态配置项，客户端据此渲染热切换选项。 */
+@Serializable
+data class AiConfigOption(
+    val id: String,
+    val name: String = "",
+    val category: String? = null,
+    val currentValue: String = "",
+    val options: List<AiConfigOptionChoice> = emptyList(),
+)
+
 @Serializable
 data class AiSession(
     val id: String, val title: String, val provider: String, val projectPath: String,
@@ -111,6 +131,8 @@ data class AiSession(
     val thinking: AiThinking? = null,
     /** 桌面端是否正打开着该会话（服务端运行时标记）；手机「已打开」据此与服务端同步。 */
     val desktopOpen: Boolean = false,
+    /** ACP 动态配置项（模型、模式、推理强度等）。 */
+    val configOptions: List<AiConfigOption> = emptyList(),
 ) {
     /** 服务端仍在该会话执行任务（含等待用户确认）。 */
     val running get() = status == "running" || status == "approval" || status == "background" || status == "stopping"
@@ -137,6 +159,7 @@ data class AiSession(
     }
     val providerLabel get() = when (provider) {
         "codex" -> "Codex"
+        "antigravity" -> "Antigravity"
         else -> "Claude"
     }
     val modelLabel get() = model?.takeIf(String::isNotBlank) ?: "服务端默认模型"
@@ -145,13 +168,14 @@ data class AiSession(
 
 /** `/api/projects` 返回的已登记项目，enabledAgents 决定首页可选哪些 Agent。 */
 @Serializable
-data class AiAgents(val claude: Boolean = true, val codex: Boolean = true) {
+data class AiAgents(val claude: Boolean = true, val codex: Boolean = true, val antigravity: Boolean = true) {
     fun enabled(agent: String): Boolean = when (agent) {
         "claude" -> claude
         "codex" -> codex
+        "antigravity" -> antigravity
         else -> false
     }
-    val names get() = listOf("claude", "codex").filter(::enabled)
+    val names get() = listOf("claude", "codex", "antigravity").filter(::enabled)
 }
 
 @Serializable
@@ -180,6 +204,7 @@ data class AiProvider(
 ) {
     val agentLabel get() = when (agent) {
         "codex" -> "Codex"
+        "antigravity" -> "Antigravity"
         else -> "Claude"
     }
     val label get() = "$agentLabel · $name"

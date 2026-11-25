@@ -73,6 +73,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/ai/sessions/{id}/stop", post(handlers::ai_chat_handler::stop))
         .route("/api/ai/sessions/{id}/force-stop", post(handlers::ai_chat_handler::force_stop))
         .route("/api/ai/sessions/{id}/model", post(handlers::ai_chat_handler::switch_model))
+        .route("/api/ai/sessions/{id}/config", post(handlers::ai_chat_handler::set_config_option))
         .route("/api/ai/sessions/{id}/approvals", post(handlers::ai_chat_handler::answer))
         .route("/ws/ai", get(handlers::ai_chat_handler::notifications_socket))
         .route("/ws/ai/{id}", get(handlers::ai_chat_handler::socket))

@@ -61,6 +61,12 @@ pub async fn ai_session_switch_model(id: String, provider_id: String, model: Str
     claude_task(move || service::switch_model(&id, &desktop_owner(), &provider_id, &model)).await
 }
 
+/// ACP 会话内动态切换配置项（模型、模式、推理强度等）。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn ai_session_set_config_option(id: String, config_id: String, value: String) -> Result<AiSession, String> {
+    claude_task(move || service::set_config_option(&id, &desktop_owner(), &config_id, &value)).await
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn ai_session_answer(id: String, input: AnswerAiApproval) -> Result<(), String> {
     claude_task(move || service::answer(&id, &desktop_owner(), input)).await
@@ -115,6 +121,10 @@ pub async fn ai_session_resume_history(agent: String, session_id: String, provid
             service::resume_codex_history(&owner, &session_id, project_dir,
                 ResumeCodexHistory { provider_id, model }, history)
         }
-        _ => Err("未知 Agent，请选择 Claude 或 Codex".into()),
+        "antigravity" => service::create(&owner, CreateAiSession {
+            provider: "antigravity".into(), provider_id, project_path: String::new(), model,
+            resume_session_id: Some(session_id),
+        }),
+        _ => Err("未知 Agent，请选择 Claude、Codex 或 Antigravity".into()),
     }).await
 }

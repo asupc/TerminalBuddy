@@ -76,7 +76,7 @@ internal fun AiConnection(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(if (adding) "连接新的工作空间" else "欢迎回来", style = MaterialTheme.typography.headlineLarge)
-                    Text("登录你的服务，继续 Claude 与 Codex 会话。",
+                    Text("登录你的服务，继续 Claude、Codex 与 Antigravity 会话。",
                         style = MaterialTheme.typography.bodyMedium, color = TbColors.TextSoft)
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {

@@ -35,7 +35,7 @@ private val SERVER_SESSION_TIME_FORMATTER = DateTimeFormatter.ofPattern("MM-dd H
 /** 助手按服务端安装状态展示；项目默认收起，展开后按项目懒加载，历史记录由外层惰性列表承载。 */
 @Composable
 internal fun AiServerSessionsScreen(ui: AiUiState, vm: AiViewModel) {
-    val agents = listOf("claude", "codex")
+    val agents = listOf("claude", "codex", "antigravity")
     var selectedAgent by rememberSaveable(ui.activeAccountId) { mutableStateOf("claude") }
     val agent = selectedAgent.takeIf { it in agents } ?: agents.first()
     var resumingId by remember(ui.activeAccountId) { mutableStateOf<String?>(null) }

@@ -1,6 +1,6 @@
 import { FC, useEffect } from 'react';
 import { useAppStore } from '../../stores/appStore';
-import { openProjectAntigravityTerminal, openTerminalInDir } from '../../utils/openTerminalInDir';
+import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { openNewAgentSession } from '../../utils/openAgentChat';
 import { projectEnabledAgents, projectModelSources, type Project } from '../../types';
 import { useAgentAvailability } from '../../hooks/useAgentAvailability';
@@ -79,7 +79,9 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
             onClick={() => {
               useAppStore.getState().setLastClickRegion('tab');
               onLaunched();
-              void openProjectAntigravityTerminal(project);
+              void openNewAgentSession(project, 'antigravity', 'default:antigravity', '').catch(error => {
+                useAppStore.getState().showToast(`创建 Antigravity 会话失败：${String(error)}`, 'error');
+              });
             }}
           >
             <span className="claude-model-menu-icon">

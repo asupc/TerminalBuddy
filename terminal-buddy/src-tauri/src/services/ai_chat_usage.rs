@@ -374,6 +374,7 @@ mod tests {
             usage_checkpoint: None, owner: "o".into(), thread_id: None, request_ids: Vec::new(),
             pending_inputs: Vec::new(), slash_catalog: None, todos: Vec::new(), agents: Vec::new(), thinking: None,
             compactions: 0, desktop_open: false,
+            config_options: Vec::new(),
         }
     }
 

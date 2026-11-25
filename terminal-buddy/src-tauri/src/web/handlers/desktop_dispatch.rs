@@ -64,6 +64,11 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
             let (provider_id, model) = (argument::<String>(&args, "providerId")?, argument::<String>(&args, "model")?);
             run(move || crate::services::ai_chat_service::switch_model(&id, &owner, &provider_id, &model)).await
         }
+        "ai_session_set_config_option" => {
+            let (owner, id) = (owner.to_string(), argument::<String>(&args, "id")?);
+            let (config_id, value) = (argument::<String>(&args, "configId")?, argument::<String>(&args, "value")?);
+            run(move || crate::services::ai_chat_service::set_config_option(&id, &owner, &config_id, &value)).await
+        }
         "ai_session_answer" => {
             let (owner, id) = (owner.to_string(), argument::<String>(&args, "id")?);
             let input: crate::models::ai_chat::AnswerAiApproval = argument(&args, "input")?;

@@ -5,6 +5,7 @@
 ## 运行方式
 
 - Claude：会话首次执行时启动 `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio`，用户消息以 JSON 行写入 stdin。回合结束后**保持 stdin 与进程存活**：排队消息在当前回合任务（含后台任务与待确认请求）全部结算后直接写入同一个进程，不需要重启或 `--resume`；只在服务重启、历史恢复或中断/异常后的冷启动使用 `--resume`。运行中插话同样写入该 stdin，由 CLI 自行选择接收节点。空闲会话删除或服务退出时回收进程树。
+- Antigravity（ACP）：每个会话复用一个驻留的 `agy acp`（ACP v1 stdio JSON-RPC 2.0），经 `initialize`、`session/new` / `session/load`、`session/prompt` 与 `session/cancel` 驱动；实时将 `agent_message_chunk`、`agent_thought_chunk`、`plan`、`tool_call`、`available_commands_update`、`config_option_update`、`usage_update` 与 `session/request_permission` 投影回统一 `AiSession`（支持通过 `POST /api/ai/sessions/{id}/config` 热切换动态配置项而不重启进程）。
 - Codex：每个会话复用一个驻留的 `codex app-server`，通过 stdio JSON-RPC 完成初始化、thread 创建/恢复和 turn 提交。`turn/completed` 仅结束主回合，保留进程继续接收后台命令、子代理和自动唤醒回合的事件；后续用户消息送入同一进程，避免恢复历史时丢失仍在运行的任务。中断、删除会话和服务退出时回收进程树，删除后的迟到事件不能重建会话文件。
 - `GET /api/ai/catalog` 汇总服务器 Claude 通用供应商、容器 Claude 配置及 Codex 供应商的可用模型，供手机首页选择；目录不包含密钥。
 - 创建会话可指定 `providerId` 与模型；服务端保存所选供应商名称及标识。Claude 通过受限权限的临时 settings 应用对应地址、认证和模型配置，CLI 进程退出后删除；Codex 复用供应商注册与参数生成，按会话选择供应商与模型，不改变全局默认供应商。
@@ -49,6 +50,7 @@ REST 均要求现有 `ClaimsFromRequest` 鉴权，会话按登录用户名隔离
 | `DELETE /api/ai/sessions/{id}/pending/{requestId}` | 删除尚未发送的排队消息并返回最新会话，保留请求去重记录，避免旧发送请求重试时重新入队；已出队的消息拒绝删除 |
 | `POST /api/ai/sessions/{id}/stop` | 请求中断执行：向 worker 发送停止信号，等待 CLI 收尾 |
 | `POST /api/ai/sessions/{id}/force-stop` | 强制结束：立即摘除旧 worker、终止整棵进程树并清空审批与排队消息，返回 `status=forceStopped` 的最新会话；旧 worker 迟到退出不会覆盖状态，下一条消息会新建续接回合 |
+| `POST /api/ai/sessions/{id}/config` | `{ "configId": "model", "value": "..." }`——ACP 会话内热切换模型、模式或推理强度，不重启进程 |
 | `POST /api/ai/sessions/{id}/approvals` | `{ "approvalId": "...", "decision": "accept 或 decline", "answers": {} }` |
 | `DELETE /api/ai/sessions/{id}` | 删除空闲会话 |
 | `/ws/ai/{id}?token=...` | 实时状态与消息 |

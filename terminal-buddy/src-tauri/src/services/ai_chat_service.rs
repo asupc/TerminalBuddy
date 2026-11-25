@@ -3,7 +3,7 @@
 //! spawn_blocking 或专用工作线程承载；用户文本只进入 stdin，不拼进 shell 命令。
 use crate::models::ai_chat::*;
 use crate::runtime::Emitter;
-use super::{ai_chat_approval::{self as approval, ClaudeApproval}, ai_chat_usage as usage};
+use super::{ai_chat_acp::{self as acp, AcpPermissionRequest}, ai_chat_approval::{self as approval, ClaudeApproval}, ai_chat_usage as usage};
 use super::ai_chat_claude_hooks::{NativeClaudeHooks, NativeHookEvent};
 use super::{atomic_file::atomic_write_private, process_tree::ProcessTree, terminal_task_service::SessionSummaryTracker, PathService, SettingsService};
 use base64::Engine;
@@ -70,7 +70,7 @@ fn is_desktop_open(id: &str) -> bool {
 struct RunningTask;
 impl Drop for RunningTask { fn drop(&mut self) { RUNNING.fetch_sub(1, Ordering::Relaxed); } }
 
-enum Control { Stop, ForceStop, Retire, Message { text: String, request_id: String, images: Vec<AiImage> }, Approval(AnswerAiApproval) }
+enum Control { Stop, ForceStop, Retire, Message { text: String, request_id: String, images: Vec<AiImage> }, Approval(AnswerAiApproval), SetConfigOption { config_id: String, value: String } }
 /// worker 的控制通道及所属代次。强制结束后旧通道会被移出会话，
 /// worker 收尾时据此识别自己已经失效，不能覆盖强制结束状态或重新启动队列。
 type WorkerControl = Arc<mpsc::Sender<Control>>;
@@ -401,6 +401,8 @@ struct PersistedAiSession<'a> {
     agents: &'a [AiAgent],
     #[serde(skip_serializing_if = "is_zero_u32_ref")]
     compactions: u32,
+    #[serde(skip_serializing_if = "is_empty_slice")]
+    config_options: &'a [AiConfigOption],
 }
 impl<'a> From<&'a AiSession> for PersistedAiSession<'a> {
     fn from(data: &'a AiSession) -> Self {
@@ -430,6 +432,7 @@ impl<'a> From<&'a AiSession> for PersistedAiSession<'a> {
             todos: &data.todos,
             agents: &data.agents,
             compactions: data.compactions,
+            config_options: &data.config_options,
         }
     }
 }
@@ -709,7 +712,7 @@ fn new_session(owner: &str, input: CreateAiSession) -> Result<AiSession> {
     // canonicalize 也可能带 `\\?\` 前缀。CLI 经 cmd.exe 启动时这些形式会被当成 UNC，
     // 回落到 C:\Windows，因此统一还原成普通盘符路径。
     input.project_path = PathService::normalize_child_process_path_str(&input.project_path);
-    if !matches!(input.provider.as_str(), "claude" | "codex") { return Err("请选择 Claude 或 Codex".into()); }
+    if !matches!(input.provider.as_str(), "claude" | "codex" | "antigravity") { return Err("请选择 Claude、Codex 或 Antigravity".into()); }
     if input.model.as_ref().is_some_and(|v| !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/[]@+".contains(c))) { return Err("模型名称无效".into()); }
     if let Some(resume_id) = input.resume_session_id.clone().filter(|id| !id.trim().is_empty()) {
         return resume_from_history(owner, input, &resume_id);
@@ -723,7 +726,7 @@ fn new_session(owner: &str, input: CreateAiSession) -> Result<AiSession> {
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
         created_at: now, updated_at: now, revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new(),
-        slash_catalog: None, todos: Vec::new(), agents: Vec::new(), thinking: None, compactions: 0, desktop_open: false };
+        slash_catalog: None, todos: Vec::new(), agents: Vec::new(), thinking: None, compactions: 0, desktop_open: false, config_options: Vec::new() };
     Ok(data)
 }
 /// 创建/恢复会话时就把配置里已知的上下文窗口写进用量：首条消息发出前，
@@ -763,6 +766,7 @@ pub fn list_history(agent: &str, include_archived: bool, project_dir: Option<&st
     match agent {
         "claude" => super::claude_history_service::list_sessions(include_archived, project_dir),
         "codex" => super::codex_history_service::list_sessions(include_archived, project_dir),
+        "antigravity" => super::antigravity_history_service::list_sessions(include_archived, project_dir),
         _ => Err("未知 Agent，请选择 Claude 或 Codex".into()),
     }
 }
@@ -772,6 +776,7 @@ pub fn rescan_history(app: &crate::runtime::AppHandle, agent: &str) -> Result<cr
     match agent {
         "claude" => super::claude_history_service::scan_and_index(app),
         "codex" => super::codex_history_service::scan_and_index(app),
+        "antigravity" => super::antigravity_history_service::scan_and_index(app),
         _ => Err("未知 Agent，请选择 Claude 或 Codex".into()),
     }
 }
@@ -781,6 +786,7 @@ pub fn replay_page(agent: &str, session_id: &str, offset: usize, limit: usize) -
     match agent {
         "claude" => super::claude_history_service::get_replay(session_id, offset, limit),
         "codex" => super::codex_history_service::get_replay(session_id, offset, limit),
+        "antigravity" => super::antigravity_history_service::get_replay(session_id, offset, limit),
         _ => Err("未知 Agent，请选择 Claude 或 Codex".into()),
     }
 }
@@ -854,7 +860,7 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
         usage: Some(usage::initial()), usage_checkpoint: None,
         created_at: chrono::Utc::now().timestamp_millis(), updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0,
         owner: owner.into(), thread_id: Some(resume_id.to_string()), request_ids: Vec::new(), pending_inputs: Vec::new(),
-        slash_catalog: None, todos, agents: Vec::new(), thinking: None, compactions: 0, desktop_open: false };
+        slash_catalog: None, todos, agents: Vec::new(), thinking: None, compactions: 0, desktop_open: false, config_options: Vec::new() };
     seed_context_window(&mut data);
     let cell = Cell::new(data.clone(), path);
     persist(&cell)?;
@@ -1204,6 +1210,43 @@ pub fn switch_model(id: &str, owner: &str, provider_id: &str, model: &str) -> Re
     data.model = Some(model.to_string());
     touch(&mut data);
     if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+    let snapshot = data.clone();
+    drop(data);
+    drop(control);
+    emit_update(&cell);
+    Ok(snapshot)
+}
+
+/// 会话内热更新 ACP 动态配置项（模型、模式、推理强度等），不重启常驻进程。
+pub fn set_config_option(id: &str, owner: &str, config_id: &str, value: &str) -> Result<AiSession> {
+    let config_id = config_id.trim();
+    let value = value.trim();
+    if config_id.is_empty() || value.is_empty() {
+        return Err("配置项标识与目标值不能为空".into());
+    }
+    let cell = load(id, owner)?;
+    let control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
+    let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    if data.provider != "antigravity" {
+        return Err("当前会话不支持 ACP 动态配置热切换".into());
+    }
+    let before = data.clone();
+    let mut is_model = config_id == "model";
+    if let Some(opt) = data.config_options.iter_mut().find(|item| item.id == config_id) {
+        if opt.category.as_deref() == Some("model") { is_model = true; }
+        opt.current_value = value.to_string();
+    }
+    if is_model {
+        data.model = Some(value.to_string());
+    }
+    touch(&mut data);
+    if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+    if let Some(worker) = control.as_ref() {
+        let _ = worker.tx.send(Control::SetConfigOption {
+            config_id: config_id.to_string(),
+            value: value.to_string(),
+        });
+    }
     let snapshot = data.clone();
     drop(data);
     drop(control);
@@ -2058,13 +2101,16 @@ impl Drop for Process {
     }
 }
 fn cli_command(provider: &str) -> Command {
-    let configured = std::env::var_os(match provider {
-        "claude" => "TERMINAL_BUDDY_CLAUDE_BIN", _ => "TERMINAL_BUDDY_CODEX_BIN",
-    });
-    let mut path = configured.map(PathBuf::from).unwrap_or_else(|| PathBuf::from(provider));
+    let (env_key, bin_name) = match provider {
+        "claude" => ("TERMINAL_BUDDY_CLAUDE_BIN", "claude"),
+        "antigravity" => ("TERMINAL_BUDDY_ANTIGRAVITY_BIN", "agy"),
+        _ => ("TERMINAL_BUDDY_CODEX_BIN", "codex"),
+    };
+    let configured = std::env::var_os(env_key);
+    let mut path = configured.map(PathBuf::from).unwrap_or_else(|| PathBuf::from(bin_name));
     if path.components().count() == 1 {
         if let Some(home) = dirs::home_dir() {
-            let candidate = home.join(".local/bin").join(if cfg!(windows) { format!("{provider}.exe") } else { provider.into() });
+            let candidate = home.join(".local/bin").join(if cfg!(windows) { format!("{bin_name}.exe") } else { bin_name.into() });
             if candidate.is_file() { path = candidate; }
         }
     }
@@ -2156,6 +2202,8 @@ fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control
             "--forward-subagent-text"]);
         if let Some(id) = &session.thread_id { command.arg("--resume").arg(id); }
         if let Some(model) = &session.model { command.arg("--model").arg(model); }
+    } else if session.provider == "antigravity" {
+        command.arg("acp");
     } else {
         // 新旧对话均优先使用普通模式的标准提问工具；动态工具仅作补充。
         command.args(&permissions.codex_args).args(["-c", "features.default_mode_request_user_input=true"]).arg("app-server");
@@ -2206,6 +2254,9 @@ fn run_turn(cell: &Cell, prompt: &PendingInput, controls: mpsc::Receiver<Control
     if session.provider == "claude" {
         write_claude_user(&mut stdin, session.thread_id.as_deref().unwrap_or(""), &prompt.text, &prompt.images)?;
         run_claude(cell, &process, stdin, controls, output, errors, hooks.as_ref().ok_or("Claude 决策 Hook 未初始化")?, worker_id, signal)
+    } else if session.provider == "antigravity" {
+        write_json(&mut stdin, acp::initialize_request(1))?;
+        run_acp(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors, worker_id, signal)
     } else {
         write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"},"capabilities":{"experimentalApi":true}}}))?;
         run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors, worker_id, signal)
@@ -2982,6 +3033,7 @@ fn run_claude(cell: &Cell, process: &Mutex<Process>, stdin: ChildStdin, controls
                     last_event = now;
                     turn_progress = now;
                 }
+                Control::SetConfigOption { .. } => {}
                 Control::Approval(answer) => {
                     if let Some(request) = pending.remove(&answer.approval_id) {
                         let stdin = input.as_mut().ok_or("Claude 输入通道已关闭，请重新发送消息")?;
@@ -3450,6 +3502,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &PendingInput, permission
                     }
                     turn_progress = Instant::now();
                 }
+                Control::SetConfigOption { .. } => {}
                 Control::Approval(answer) => {
                     if let Some((id, method)) = pending.remove(&answer.approval_id) {
                         let result = approval::codex_response(&method, &answer);
@@ -3646,6 +3699,386 @@ pub fn shutdown_all() {
     while RUNNING.load(Ordering::Relaxed) > 0 && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+
+/// ACP（Agent Client Protocol）v1 常驻会话循环：
+/// 完成 initialize → session/load（或 session/new）→ session/prompt，
+/// 回合结束后保持子进程存活，继续接收后续排队消息与 `session/set_config_option` 热切请求。
+fn run_acp(
+    cell: &Cell,
+    session: &AiSession,
+    prompt: &PendingInput,
+    permissions: &super::ai_permission_service::NativePermissions,
+    stdin: &mut impl Write,
+    controls: mpsc::Receiver<Control>,
+    output: mpsc::Receiver<Result<Value>>,
+    errors: Arc<Mutex<String>>,
+    worker_id: u64,
+    signal: &WorkerSignal,
+) -> Result<WorkerExit> {
+    let mut next_id: u64 = 2;
+    let mut load_request: Option<u64> = None;
+    let mut new_request: Option<u64> = None;
+    let mut prompt_request: Option<u64> = None;
+    let mut session_id: Option<String> = None;
+    let mut queued_prompt: Option<PendingInput> = Some(prompt.clone());
+    let mut turn = Uuid::new_v4().to_string();
+    let mut pending_approvals: HashMap<String, AcpPermissionRequest> = HashMap::new();
+    let mut checkpoint = Instant::now();
+    let mut last_persisted = session.revision;
+    let mut replaying_load = false;
+    let mut desired_model = session.model.clone();
+    let mut idle_since: Option<Instant> = None;
+    let mut turn_progress = Instant::now();
+
+    let mut alloc_id = || {
+        let id = next_id;
+        next_id += 1;
+        id
+    };
+
+    if let Ok(mut data) = cell.data.lock() {
+        usage::begin_turn(&mut data);
+    }
+
+    loop {
+        signal.check()?;
+        while let Ok(control) = controls.try_recv() {
+            match control {
+                Control::Stop => {
+                    if let Some(sid) = session_id.as_deref() {
+                        let _ = write_json(stdin, acp::session_cancel_notification(sid));
+                    }
+                    return Err("已中断".into());
+                }
+                Control::ForceStop => return Ok(WorkerExit::Forced),
+                Control::Retire => return Ok(WorkerExit::Retired),
+                Control::SetConfigOption { config_id, value } => {
+                    if let Some(sid) = session_id.as_deref() {
+                        let req_id = alloc_id();
+                        write_json(stdin, acp::session_set_config_option_request(req_id, sid, &config_id, &value))?;
+                    } else if config_id == "model" {
+                        desired_model = Some(value);
+                    }
+                }
+                Control::Message { text, request_id, images } => {
+                    if session_id.is_some() && prompt_request.is_none() {
+                        turn = Uuid::new_v4().to_string();
+                        if let Ok(mut data) = cell.data.lock() {
+                            usage::begin_turn(&mut data);
+                        }
+                        let sid = session_id.as_deref().unwrap_or_default();
+                        let req_id = alloc_id();
+                        write_json(stdin, acp::session_prompt_request(req_id, sid, &text, &images)?)?;
+                        prompt_request = Some(req_id);
+                        idle_since = None;
+                        turn_progress = Instant::now();
+                    } else {
+                        queued_prompt = Some(PendingInput { text, request_id, images });
+                    }
+                }
+                Control::Approval(answer) => {
+                    if let Some(req) = pending_approvals.remove(&answer.approval_id) {
+                        write_json(stdin, req.response(&answer))?;
+                        update(cell, |data| {
+                            data.approvals.retain(|item| item.id != answer.approval_id);
+                            if data.status == "approval" && data.approvals.is_empty() {
+                                data.status = "running".into();
+                            }
+                        });
+                        turn_progress = Instant::now();
+                    }
+                }
+            }
+        }
+
+        if session_id.is_some() && load_request.is_none() && new_request.is_none() && prompt_request.is_none() {
+            if let Some(next) = take_pending_if_idle(cell)? {
+                turn = Uuid::new_v4().to_string();
+                let sid = session_id.as_deref().unwrap_or_default();
+                let req_id = alloc_id();
+                write_json(stdin, acp::session_prompt_request(req_id, sid, &next.text, &next.images)?)?;
+                prompt_request = Some(req_id);
+                idle_since = None;
+                turn_progress = Instant::now();
+            } else if idle_since.is_none() {
+                idle_since = Some(Instant::now());
+            }
+        }
+
+        if checkpoint.elapsed() >= Duration::from_secs(2) {
+            let current_rev = cell.data.lock().map(|d| d.revision).unwrap_or(last_persisted);
+            if current_rev > last_persisted {
+                persist(cell)?;
+                last_persisted = current_rev;
+            }
+            checkpoint = Instant::now();
+        }
+
+        let Some(value) = next_output(&output, &errors)? else {
+            if idle_since.is_some_and(|since| since.elapsed() >= Duration::from_secs(300)) {
+                return Ok(WorkerExit::Retired);
+            }
+            let _ = (worker_id, turn_progress);
+            continue;
+        };
+        turn_progress = Instant::now();
+
+        let resp_id = value["id"].as_u64();
+        let method = value["method"].as_str().unwrap_or("");
+
+        if method.is_empty() && resp_id.is_some() {
+            let id = resp_id.unwrap();
+            if id == 1 {
+                if let Some(err) = value.get("error") {
+                    return Err(err["message"].as_str().unwrap_or("ACP initialize 失败").into());
+                }
+                let result = &value["result"];
+                if let Some(existing_tid) = session.thread_id.as_deref().filter(|s| !s.trim().is_empty()) {
+                    if acp::supports_load_session(result) {
+                        let req_id = alloc_id();
+                        replaying_load = true;
+                        load_request = Some(req_id);
+                        write_json(stdin, acp::session_load_request(req_id, existing_tid, &session.project_path))?;
+                        continue;
+                    }
+                }
+                let req_id = alloc_id();
+                new_request = Some(req_id);
+                write_json(stdin, acp::session_new_request(req_id, &session.project_path))?;
+                continue;
+            }
+
+            if Some(id) == load_request {
+                load_request = None;
+                replaying_load = false;
+                if value.get("error").is_some() {
+                    let req_id = alloc_id();
+                    new_request = Some(req_id);
+                    write_json(stdin, acp::session_new_request(req_id, &session.project_path))?;
+                    continue;
+                }
+                let sid = session.thread_id.clone().unwrap_or_default();
+                let options = acp::parse_config_options(&value["result"]);
+                apply_acp_session_ready(cell, &sid, &options);
+                session_id = Some(sid.clone());
+                if let Some(ref model) = desired_model.take() {
+                    if acp::current_model_from_options(&options).as_deref() != Some(model.as_str()) {
+                        let cfg_req = alloc_id();
+                        let _ = write_json(stdin, acp::session_set_config_option_request(cfg_req, &sid, "model", model));
+                    }
+                }
+                if let Some(pending) = queued_prompt.take() {
+                    let req_id = alloc_id();
+                    write_json(stdin, acp::session_prompt_request(req_id, &sid, &pending.text, &pending.images)?)?;
+                    prompt_request = Some(req_id);
+                }
+                continue;
+            }
+
+            if Some(id) == new_request {
+                new_request = None;
+                if let Some(err) = value.get("error") {
+                    return Err(err["message"].as_str().unwrap_or("ACP session/new 失败").into());
+                }
+                let sid = value["result"]["sessionId"]
+                    .as_str()
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or("ACP Agent 未返回 sessionId")?
+                    .to_string();
+                let options = acp::parse_config_options(&value["result"]);
+                apply_acp_session_ready(cell, &sid, &options);
+                persist(cell)?;
+                session_id = Some(sid.clone());
+                if let Some(ref model) = desired_model.take() {
+                    if acp::current_model_from_options(&options).as_deref() != Some(model.as_str()) {
+                        let cfg_req = alloc_id();
+                        let _ = write_json(stdin, acp::session_set_config_option_request(cfg_req, &sid, "model", model));
+                    }
+                }
+                if let Some(pending) = queued_prompt.take() {
+                    let req_id = alloc_id();
+                    write_json(stdin, acp::session_prompt_request(req_id, &sid, &pending.text, &pending.images)?)?;
+                    prompt_request = Some(req_id);
+                }
+                continue;
+            }
+
+            if Some(id) == prompt_request {
+                prompt_request = None;
+                thinking_finish(cell);
+                if let Some(err) = value.get("error") {
+                    let detail = err["message"].as_str().unwrap_or("ACP 执行失败");
+                    if is_interrupt_notice(detail) {
+                        update(cell, |data| {
+                            usage::finish_turn(data);
+                            data.status = "interrupted".into();
+                            data.result_revision = data.revision.saturating_add(1);
+                        });
+                    } else {
+                        return Err(detail.into());
+                    }
+                } else {
+                    let stop_reason = value["result"]["stopReason"].as_str().unwrap_or("end_turn");
+                    let next_status = if stop_reason == "cancelled" { "interrupted" } else { "idle" };
+                    update(cell, |data| {
+                        usage::finish_turn(data);
+                        data.approvals.clear();
+                        data.status = next_status.into();
+                        data.result_revision = data.revision.saturating_add(1);
+                    });
+                }
+                pending_approvals.clear();
+                persist(cell)?;
+                last_persisted = cell.data.lock().map(|d| d.revision).unwrap_or(last_persisted);
+                idle_since = Some(Instant::now());
+                continue;
+            }
+
+            if let Some(result) = value.get("result") {
+                let options = acp::parse_config_options(result);
+                if !options.is_empty() {
+                    update(cell, |data| {
+                        data.config_options = options.clone();
+                        if let Some(model) = acp::current_model_from_options(&options) {
+                            data.model = Some(model);
+                        }
+                    });
+                }
+            }
+            continue;
+        }
+
+        let params = &value["params"];
+        if value.get("id").is_some() && !method.is_empty() {
+            if method == "session/request_permission" {
+                if let Some(req) = AcpPermissionRequest::from_request(value["id"].clone(), params) {
+                    if permissions.antigravity_bypass {
+                        write_json(stdin, req.auto_allow_response())?;
+                    } else {
+                        let approval = req.approval.clone();
+                        pending_approvals.insert(approval.id.clone(), req);
+                        update(cell, |data| {
+                            data.status = "approval".into();
+                            data.approvals.push(approval);
+                        });
+                    }
+                } else {
+                    write_json(stdin, acp::method_not_found_response(value["id"].clone(), method))?;
+                }
+            } else {
+                write_json(stdin, acp::method_not_found_response(value["id"].clone(), method))?;
+            }
+            continue;
+        }
+
+        if method == "session/update" {
+            let update_obj = &params["update"];
+            let kind = update_obj["sessionUpdate"].as_str().unwrap_or("");
+            match kind {
+                "agent_message_chunk" => {
+                    if replaying_load { continue; }
+                    thinking_finish(cell);
+                    let text = acp::extract_content_text(&update_obj["content"]);
+                    if !text.is_empty() {
+                        message(cell, &format!("{turn}:assistant"), "assistant", &text, true);
+                    }
+                }
+                "agent_thought_chunk" => {
+                    if replaying_load { continue; }
+                    let text = acp::extract_content_text(&update_obj["content"]);
+                    if !text.is_empty() {
+                        thinking_append_quiet(cell, &text);
+                        emit_update(cell);
+                    }
+                }
+                "plan" => {
+                    let todos = acp::parse_plan_entries(&update_obj["entries"]);
+                    update(cell, |data| data.todos = todos);
+                }
+                "tool_call" | "tool_call_update" => {
+                    if replaying_load { continue; }
+                    thinking_finish(cell);
+                    let tool_id = update_obj["toolCallId"]
+                        .as_str()
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or("tool");
+                    let text = acp::format_tool_call_text(update_obj);
+                    if !text.is_empty() {
+                        message(cell, &format!("{turn}:tool:{tool_id}"), "tool", &text, false);
+                    }
+                }
+                "available_commands_update" => {
+                    if let Some(catalog) = acp::parse_available_commands(&update_obj["availableCommands"]) {
+                        update(cell, |data| data.slash_catalog = Some(catalog));
+                    }
+                }
+                "config_option_update" => {
+                    let options = acp::parse_config_options(update_obj);
+                    if !options.is_empty() {
+                        update(cell, |data| {
+                            data.config_options = options.clone();
+                            if let Some(model) = acp::current_model_from_options(&options) {
+                                data.model = Some(model);
+                            }
+                        });
+                    }
+                }
+                "current_mode_update" => {
+                    if let Some(mode_id) = update_obj["currentModeId"].as_str() {
+                        update(cell, |data| {
+                            if let Some(opt) = data.config_options.iter_mut()
+                                .find(|o| o.category.as_deref() == Some("mode") || o.id == "mode")
+                            {
+                                opt.current_value = mode_id.to_string();
+                            }
+                        });
+                    }
+                }
+                "usage_update" => {
+                    let (used, size) = acp::parse_usage_update(update_obj);
+                    update_usage(cell, |data| {
+                        let usage_state = data.usage.get_or_insert_with(usage::initial);
+                        let mut changed = false;
+                        if let Some(u) = used {
+                            if usage_state.context.used_tokens != Some(u) {
+                                usage_state.context.used_tokens = Some(u);
+                                usage_state.context.used_source = Some("cliUsage".into());
+                                usage_state.context.updating = false;
+                                changed = true;
+                            }
+                        }
+                        if let Some(w) = size {
+                            if usage_state.context.window_tokens != Some(w) {
+                                usage_state.context.window_tokens = Some(w);
+                                usage_state.context.window_source = Some("cli".into());
+                                changed = true;
+                            }
+                        }
+                        changed
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn apply_acp_session_ready(cell: &Cell, session_id: &str, options: &[AiConfigOption]) {
+    update(cell, |data| {
+        if !session_id.is_empty() {
+            data.thread_id = Some(session_id.to_string());
+        }
+        if !options.is_empty() {
+            data.config_options = options.to_vec();
+            if data.model.as_deref().unwrap_or_default().is_empty() {
+                if let Some(model) = acp::current_model_from_options(options) {
+                    data.model = Some(model);
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -5040,6 +5473,7 @@ mod todo_agent_tests {
             }),
             compactions: 2,
             desktop_open: true,
+            config_options: Vec::new(),
         };
         let bytes = serialize_persisted_session(&original).unwrap();
         let value: Value = serde_json::from_slice(&bytes).unwrap();
@@ -5112,5 +5546,128 @@ mod interrupt_notice_tests {
             Some("s-1")
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_acp_streams_updates_permissions_and_config_options() {
+        use crate::services::ai_chat_service::*;
+        let dir = std::env::temp_dir().join(format!("tb-acp-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sess.json");
+        let session = AiSession {
+            id: "acp-1".into(),
+            title: "新对话".into(),
+            provider: "antigravity".into(),
+            provider_id: Some("default:antigravity".into()),
+            provider_name: Some("Google 账号（ACP）".into()),
+            project_path: dir.to_string_lossy().into_owned(),
+            model: None,
+            status: "running".into(),
+            messages: Vec::new(),
+            approvals: Vec::new(),
+            error: None,
+            created_at: 1,
+            updated_at: 1,
+            revision: 1,
+            result_revision: 0,
+            usage: Some(usage::initial()),
+            usage_checkpoint: None,
+            owner: "tester".into(),
+            thread_id: None,
+            request_ids: Vec::new(),
+            pending_inputs: Vec::new(),
+            slash_catalog: None,
+            todos: Vec::new(),
+            agents: Vec::new(),
+            thinking: None,
+            compactions: 0,
+            desktop_open: false,
+            config_options: Vec::new(),
+        };
+        let cell = Cell::new(session.clone(), path);
+        persist(&cell).unwrap();
+
+        let (ctrl_tx, ctrl_rx) = mpsc::channel();
+        let (out_tx, out_rx) = mpsc::channel();
+        let errors = Arc::new(Mutex::new(String::new()));
+        let signal = WorkerSignal::default();
+        let mut stdin_buf: Vec<u8> = Vec::new();
+        let mut perms = crate::services::ai_permission_service::NativePermissions::default();
+        perms.antigravity_bypass = true;
+
+        out_tx.send(Ok(json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": { "protocolVersion": 1, "agentCapabilities": { "loadSession": true } }
+        }))).unwrap();
+        out_tx.send(Ok(json!({
+            "jsonrpc": "2.0", "id": 2,
+            "result": {
+                "sessionId": "agy-sess-99",
+                "configOptions": [{
+                    "id": "model", "name": "Model", "category": "model",
+                    "currentValue": "gemini-4-neon",
+                    "options": [{ "value": "gemini-4-neon", "name": "Gemini 4 Neon" }]
+                }]
+            }
+        }))).unwrap();
+        out_tx.send(Ok(json!({
+            "jsonrpc": "2.0", "method": "session/update",
+            "params": { "sessionId": "agy-sess-99", "update": {
+                "sessionUpdate": "agent_thought_chunk",
+                "content": { "type": "text", "text": "分析代码中..." }
+            }}
+        }))).unwrap();
+        out_tx.send(Ok(json!({
+            "jsonrpc": "2.0", "method": "session/update",
+            "params": { "sessionId": "agy-sess-99", "update": {
+                "sessionUpdate": "plan",
+                "entries": [{ "content": "修复构建", "status": "in_progress" }]
+            }}
+        }))).unwrap();
+        out_tx.send(Ok(json!({
+            "jsonrpc": "2.0", "method": "session/update",
+            "params": { "sessionId": "agy-sess-99", "update": {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": [{ "name": "/review", "description": "审查改动" }]
+            }}
+        }))).unwrap();
+        out_tx.send(Ok(json!({
+            "jsonrpc": "2.0", "id": 77, "method": "session/request_permission",
+            "params": {
+                "toolCall": { "title": "cargo test", "kind": "execute" },
+                "options": [{ "optionId": "allow-once", "name": "Allow", "kind": "allow_once" }]
+            }
+        }))).unwrap();
+        out_tx.send(Ok(json!({
+            "jsonrpc": "2.0", "method": "session/update",
+            "params": { "sessionId": "agy-sess-99", "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": { "type": "text", "text": "已完成 ACP 联调。" }
+            }}
+        }))).unwrap();
+        out_tx.send(Ok(json!({
+            "jsonrpc": "2.0", "id": 3,
+            "result": { "stopReason": "end_turn" }
+        }))).unwrap();
+        thread::spawn(move || { thread::sleep(Duration::from_millis(60)); let _ = ctrl_tx.send(Control::Retire); });
+
+        let prompt = PendingInput { text: "测试 ACP".into(), request_id: "req-1".into(), images: Vec::new() };
+        let exit = run_acp(&cell, &session, &prompt, &perms, &mut stdin_buf, ctrl_rx, out_rx, errors, 1, &signal).unwrap();
+        assert!(matches!(exit, WorkerExit::Retired));
+
+        let written = String::from_utf8(stdin_buf).unwrap();
+        assert!(written.contains("\"method\":\"session/new\""));
+        assert!(written.contains("\"method\":\"session/prompt\""));
+        assert!(written.contains("\"optionId\":\"allow-once\""));
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.thread_id.as_deref(), Some("agy-sess-99"));
+        assert_eq!(data.model.as_deref(), Some("gemini-4-neon"));
+        assert_eq!(data.config_options.len(), 1);
+        assert_eq!(data.todos.len(), 1);
+        assert_eq!(data.slash_catalog.as_ref().unwrap().slash_commands, vec!["review"]);
+        assert_eq!(data.status, "idle");
+        assert!(data.messages.iter().any(|m| m.role == "assistant" && m.text.contains("已完成 ACP 联调")));
+        drop(data);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

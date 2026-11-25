@@ -1,7 +1,7 @@
 import { aiSessionCreate, type AiSession } from '../services/tauri';
 import { nativeAgentTabKey, useAppStore } from '../stores/appStore';
 import { getAppSettings } from './settings';
-import { openProjectAgentTerminal } from './openTerminalInDir';
+import { openProjectAgentTerminal, openProjectAntigravityTerminal } from './openTerminalInDir';
 import type { Project } from '../types';
 
 /**
@@ -10,7 +10,8 @@ import type { Project } from '../types';
  * 直接透传原始 ID 会被后端 `ai_catalog_service::selection` 判为「供应商已不存在」，
  * 这里统一补齐前缀；已带前缀的值原样传递，便于将来菜单直接提供目录 ID。
  */
-function catalogProviderId(provider: 'claude' | 'codex', providerId: string): string | null {
+function catalogProviderId(provider: 'claude' | 'codex' | 'antigravity', providerId: string): string | null {
+  if (provider === 'antigravity') return 'default:antigravity';
   if (!providerId) return null;
   if (/^(?:llm|claude|codex|default):/.test(providerId)) return providerId;
   return `${provider === 'codex' ? 'codex' : 'llm'}:${providerId}`;
@@ -46,12 +47,16 @@ function openAgentTabForSession(session: AiSession, focusInput = false): void {
  */
 export async function openNewAgentSession(
   project: Project,
-  provider: 'claude' | 'codex',
+  provider: 'claude' | 'codex' | 'antigravity',
   providerId: string,
   modelId: string,
 ): Promise<void> {
   if (!getAppSettings().nativeChatSessions) {
-    await openProjectAgentTerminal(project, provider, providerId, modelId);
+    if (provider === 'antigravity') {
+      await openProjectAntigravityTerminal(project);
+    } else {
+      await openProjectAgentTerminal(project, provider, providerId, modelId);
+    }
     return;
   }
   const session = await aiSessionCreate({

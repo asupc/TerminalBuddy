@@ -32,6 +32,9 @@ internal fun AiAgentLogo(
         "claude", "claude code" -> Icon(
             painterResource(R.drawable.ai_logo_claude), contentDescription, modifier.size(20.dp), tint = tint,
         )
+        "antigravity", "agy" -> Icon(
+            painterResource(R.drawable.ai_logo_antigravity), contentDescription, modifier.size(20.dp), tint = tint,
+        )
         else -> Icon(Icons.Outlined.AutoAwesome, contentDescription, modifier.size(20.dp), tint = tint)
     }
 }
