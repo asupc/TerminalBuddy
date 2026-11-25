@@ -93,3 +93,24 @@ pub struct AntigravityOAuthCompleteInput {
     #[serde(default)]
     pub alias: Option<String>,
 }
+
+/// 单个配额周期窗口（例如 5 小时窗口 / 7 天周额度）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AntigravityQuotaWindow {
+    pub label: String,
+    pub remaining_percent: Option<u8>,
+    pub reset_text: Option<String>,
+}
+
+/// 账号 Gemini 模型用量摘要（通过官方 `agy -p /usage --output-format json` 采集，零 LLM 调用）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AntigravityQuotaSummary {
+    pub account_id: Option<String>,
+    /// Gemini 组中最紧缺窗口的剩余百分比（0..=100），供底部状态栏紧凑展示。
+    pub gemini_percent: Option<u8>,
+    pub gemini_windows: Vec<AntigravityQuotaWindow>,
+    pub raw_summary: Option<String>,
+    pub fetched_at: i64,
+}

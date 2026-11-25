@@ -2,7 +2,7 @@
 use super::claude_task;
 use crate::models::antigravity_account::{
     AntigravityAccountState, AntigravityOAuthCompleteInput, AntigravityOAuthStartResult,
-    AntigravityTokenInput,
+    AntigravityQuotaSummary, AntigravityTokenInput,
 };
 use crate::services::antigravity_account_service;
 
@@ -58,4 +58,13 @@ pub async fn complete_antigravity_oauth_login(
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn cancel_antigravity_oauth_login(login_id: String) -> Result<(), String> {
     claude_task(move || antigravity_account_service::cancel_oauth_login(&login_id)).await
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn get_antigravity_account_quota(
+    account_id: Option<String>,
+    force_refresh: Option<bool>,
+) -> Result<AntigravityQuotaSummary, String> {
+    let force = force_refresh.unwrap_or(false);
+    claude_task(move || antigravity_account_service::get_account_quota(account_id.as_deref(), force)).await
 }

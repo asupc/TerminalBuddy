@@ -62,3 +62,13 @@ export function resumedAntigravitySessionId(command?: string): string | undefine
   }
   return sessionId?.trim() || undefined;
 }
+
+/** 从启动命令提取 `__tb_agy_account__:<accountId>`，未指定多账号时返回 null。 */
+export function antigravityAccountIdFromCommand(command?: string): string | null {
+  if (!command) return null;
+  const trimmed = command.trimStart();
+  if (!trimmed.startsWith(ANTIGRAVITY_ACCOUNT_REF_PREFIX)) return null;
+  const rest = trimmed.slice(ANTIGRAVITY_ACCOUNT_REF_PREFIX.length);
+  const id = rest.split(/\s+/, 1)[0]?.trim();
+  return id || null;
+}

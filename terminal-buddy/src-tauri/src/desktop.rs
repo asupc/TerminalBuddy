@@ -492,7 +492,7 @@ pub fn run(context: tauri::Context) {
             import_local_antigravity_account, set_default_antigravity_account,
             rename_antigravity_account, delete_antigravity_account,
             start_antigravity_oauth_login, complete_antigravity_oauth_login,
-            cancel_antigravity_oauth_login,
+            cancel_antigravity_oauth_login, get_antigravity_account_quota,
             list_claude_assets, deploy_claude_asset, undeploy_claude_asset, sync_claude_asset,
             import_claude_asset, list_importable_claude_assets, delete_claude_asset,
             create_claude_asset, read_claude_asset, write_claude_asset,

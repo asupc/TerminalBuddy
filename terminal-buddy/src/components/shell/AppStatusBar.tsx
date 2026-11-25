@@ -26,6 +26,7 @@ import type { AgentStatusView } from './agentStatusView';
 import { getWebApiStatus } from '../../services/tauri';
 import { isBrowserClient } from '../../services/platform';
 import { isClaudeLaunchProfile } from '../../utils/claudeLaunch';
+import { antigravityAccountIdFromCommand } from '../../utils/antigravityLaunch';
 import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
 import { effectiveProfilePath, projectForDirectory } from '../../utils/projectPath';
 import './AppStatusBar.css';
@@ -357,6 +358,32 @@ const StatusBarResources = memo(function StatusBarResources() {
     ?? (claudeSessionIds[session.id] ? 'claude' : undefined)
   ) : undefined;
   const terminalUsage = useTerminalAgentUsage(terminalAgentProvider && session ? session.id : null);
+  const antigravityAccountState = useAppStore(s => s.antigravityAccountState);
+  const refreshAntigravityAccounts = useAppStore(s => s.refreshAntigravityAccounts);
+  const isAntigravityActive = activeNativeAgentTab?.provider === 'antigravity'
+    || terminalUsage?.provider === 'antigravity'
+    || terminalAgentProvider === 'antigravity';
+  useEffect(() => {
+    if (isAntigravityActive && !antigravityAccountState) {
+      void refreshAntigravityAccounts();
+    }
+  }, [isAntigravityActive, antigravityAccountState, refreshAntigravityAccounts]);
+  const activeAntigravityAccountId = activeNativeAgentTab?.provider === 'antigravity'
+    ? (agentStats?.providerId?.startsWith('antigravity:')
+      ? agentStats.providerId.slice('antigravity:'.length)
+      : null)
+    : (isAntigravityActive ? antigravityAccountIdFromCommand(session?.extraParams) : null);
+  const activeAntigravityAlias = useMemo(() => {
+    if (!isAntigravityActive) return null;
+    if (activeAntigravityAccountId) {
+      const matched = antigravityAccountState?.accounts.find(a => a.id === activeAntigravityAccountId);
+      if (matched) return matched.alias;
+    }
+    if (activeNativeAgentTab?.provider === 'antigravity' && agentStats?.providerName) {
+      return agentStats.providerName.replace(/\s*\([^)]*\)$/, '');
+    }
+    return '系统默认';
+  }, [isAntigravityActive, activeAntigravityAccountId, antigravityAccountState, activeNativeAgentTab, agentStats]);
 
   // 原生会话与终端 Agent 都收敛成同一种视图，交给 StatusBarAgent 统一展示。
   const agentStatusView: AgentStatusView | null = activeNativeAgentTab ? {
@@ -371,10 +398,12 @@ const StatusBarResources = memo(function StatusBarResources() {
     lastTurn: agentStats?.usage?.lastTurn ?? null,
     source: 'native',
     updatedAt: null,
+    accountId: activeNativeAgentTab.provider === 'antigravity' ? activeAntigravityAccountId : undefined,
+    accountAlias: activeNativeAgentTab.provider === 'antigravity' ? activeAntigravityAlias : undefined,
   } : terminalUsage ? {
     provider: terminalUsage.provider,
     providerLabel: agentProviderLabel(terminalUsage.provider),
-    providerName: terminalProviderName(terminalUsage.provider),
+    providerName: terminalUsage.provider === 'antigravity' ? (activeAntigravityAlias ?? '系统默认') : terminalProviderName(terminalUsage.provider),
     model: terminalUsage.model ?? (terminalLaunch?.provider === terminalUsage.provider ? terminalLaunch.model ?? null : null),
     effort: terminalUsage.effort ?? (terminalLaunch?.provider === terminalUsage.provider ? terminalLaunch.effort ?? null : null),
     status: null,
@@ -388,10 +417,12 @@ const StatusBarResources = memo(function StatusBarResources() {
     lastTurn: null,
     source: 'terminal',
     updatedAt: terminalUsage.updatedAt,
+    accountId: terminalUsage.provider === 'antigravity' ? activeAntigravityAccountId : undefined,
+    accountAlias: terminalUsage.provider === 'antigravity' ? activeAntigravityAlias : undefined,
   } : terminalAgentProvider ? {
     provider: terminalAgentProvider,
     providerLabel: agentProviderLabel(terminalAgentProvider),
-    providerName: terminalProviderName(terminalAgentProvider),
+    providerName: terminalAgentProvider === 'antigravity' ? (activeAntigravityAlias ?? '系统默认') : terminalProviderName(terminalAgentProvider),
     model: terminalLaunch?.provider === terminalAgentProvider ? terminalLaunch.model ?? null : null,
     effort: terminalLaunch?.provider === terminalAgentProvider ? terminalLaunch.effort ?? null : null,
     status: null,
@@ -400,6 +431,8 @@ const StatusBarResources = memo(function StatusBarResources() {
     lastTurn: null,
     source: 'terminal',
     updatedAt: null,
+    accountId: terminalAgentProvider === 'antigravity' ? activeAntigravityAccountId : undefined,
+    accountAlias: terminalAgentProvider === 'antigravity' ? activeAntigravityAlias : undefined,
   } : null;
 
   // 状态栏的 Agent 历史入口：识别当前标签页背后的 Agent 与项目。

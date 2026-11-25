@@ -18,6 +18,10 @@ export interface AgentStatusView {
   source: 'native' | 'terminal';
   /** 终端来源最近一次读到 transcript 的时间。 */
   updatedAt: number | null;
+  /** Antigravity 账号 ID（null 表示系统默认登录）。 */
+  accountId?: string | null;
+  /** Antigravity 当前使用的账号别名。 */
+  accountAlias?: string | null;
 }
 
 /** 思考强度保持 CLI 原始英文枚举，避免不同来源的档位被二次翻译。 */

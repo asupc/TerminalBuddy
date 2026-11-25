@@ -213,6 +213,7 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle, owner: &str) -
         "start_antigravity_oauth_login" => result(crate::commands::antigravity_account::start_antigravity_oauth_login().await),
         "complete_antigravity_oauth_login" => result(crate::commands::antigravity_account::complete_antigravity_oauth_login(argument(&args, "input")?).await),
         "cancel_antigravity_oauth_login" => result(crate::commands::antigravity_account::cancel_antigravity_oauth_login(argument(&args, "loginId")?).await),
+        "get_antigravity_account_quota" => result(crate::commands::antigravity_account::get_antigravity_account_quota(argument(&args, "accountId")?, argument(&args, "forceRefresh")?).await),
         "claude_history_rescan" => result(crate::commands::claude_history::claude_history_rescan(app.clone()).await),
         "claude_history_list" => result(crate::commands::claude_history::claude_history_list(argument(&args, "includeArchived")?, argument(&args, "projectDir")?).await),
         "claude_history_search" => result(crate::commands::claude_history::claude_history_search(argument(&args, "query")?, argument(&args, "projectDir")?).await),

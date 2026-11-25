@@ -131,7 +131,8 @@ pub fn prepare(agent: &str, provider_id: Option<&str>, model: Option<&str>) -> R
     let (source, id) = id.split_once(':').ok_or("供应商配置无效，请重新选择")?;
     if source == "antigravity" && agent == "antigravity" {
         let (profile_dir, env) = antigravity_account_service::prepare_isolated_env(id)?;
-        let dir_str = super::path_service::PathService::normalize_child_process_path_str(&profile_dir.to_string_lossy());
+        let gemini_dir = profile_dir.join(".gemini");
+        let dir_str = super::path_service::PathService::normalize_child_process_path_str(&gemini_dir.to_string_lossy());
         return Ok(NativeLaunch {
             args: vec!["--gemini-dir".into(), dir_str, "--app-data-dir".into(), "antigravity-acp".into()],
             env,

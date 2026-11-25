@@ -83,3 +83,24 @@ export function completeAntigravityOAuthLogin(
 export function cancelAntigravityOAuthLogin(loginId: string): Promise<void> {
   return invoke('cancel_antigravity_oauth_login', { loginId });
 }
+
+export interface AntigravityQuotaWindow {
+  label: string;
+  remainingPercent: number | null;
+  resetText: string | null;
+}
+
+export interface AntigravityQuotaSummary {
+  accountId: string | null;
+  geminiPercent: number | null;
+  geminiWindows: AntigravityQuotaWindow[];
+  rawSummary: string | null;
+  fetchedAt: number;
+}
+
+export function getAntigravityAccountQuota(
+  accountId: string | null,
+  forceRefresh = false,
+): Promise<AntigravityQuotaSummary> {
+  return invoke('get_antigravity_account_quota', { accountId, forceRefresh });
+}

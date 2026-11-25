@@ -1,8 +1,9 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Coins, Gauge } from 'lucide-react';
+import { Coins, Gauge, Sparkles, User } from 'lucide-react';
 import { AgentIcon } from '../agent-chat/AgentIcon';
 import { cacheHitRate, compact, contextPercent } from '../agent-chat/UsagePanel';
+import { getAntigravityAccountQuota, type AntigravityQuotaSummary } from '../../services/tauri';
 import { AgentStatsPopover } from './AgentStatsPopover';
 import { agentEffortLabel, contextLevel, type AgentStatusView } from './agentStatusView';
 import './StatusBarAgent.css';
@@ -15,6 +16,26 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const [agyQuota, setAgyQuota] = useState<AntigravityQuotaSummary | null>(null);
+  const [agyQuotaLoading, setAgyQuotaLoading] = useState(false);
+
+  const isAntigravity = view.provider === 'antigravity';
+  const loadAgyQuota = useCallback((forceRefresh = false) => {
+    if (!isAntigravity) return;
+    setAgyQuotaLoading(true);
+    getAntigravityAccountQuota(view.accountId ?? null, forceRefresh)
+      .then(res => setAgyQuota(res))
+      .catch(() => setAgyQuota(null))
+      .finally(() => setAgyQuotaLoading(false));
+  }, [isAntigravity, view.accountId]);
+
+  useEffect(() => {
+    if (!isAntigravity) {
+      setAgyQuota(null);
+      return;
+    }
+    loadAgyQuota(false);
+  }, [isAntigravity, view.accountId, loadAgyQuota]);
 
   const percent = contextPercent(view.context);
   const level = contextLevel(percent);
@@ -49,8 +70,17 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
   // 先显示 Agent 名称，避免状态栏在会话最初几秒里整条消失。
   if (!view.model && !effortLabel && !contextText && !tokenText && !view.providerLabel) return null;
 
+  const geminiLevel = agyQuota?.geminiPercent != null
+    ? (agyQuota.geminiPercent <= 10 ? 'critical' : agyQuota.geminiPercent <= 30 ? 'warn' : null)
+    : null;
+  const geminiQuotaText = agyQuota?.geminiPercent != null
+    ? `${agyQuota.geminiPercent}%`
+    : agyQuotaLoading ? '…' : null;
+
   const title = [
-    `${view.providerLabel}${view.model ? ` · ${view.model}` : ''}`,
+    `${view.providerLabel}${view.accountAlias ? ` · 账号：${view.accountAlias}` : ''}${view.model ? ` · ${view.model}` : ''}`,
+    agyQuota?.geminiPercent != null ? `Gemini 剩余额度：${agyQuota.geminiPercent}%` : '',
+    ...(agyQuota?.geminiWindows.map(w => `${w.label}：${w.remainingPercent != null ? `${w.remainingPercent}%` : '—'}${w.resetText ? `（重置 ${w.resetText}）` : ''}`) ?? []),
     effortLabel ? `思考强度：${effortLabel}` : '',
     percent != null
       ? `上下文 ${percent}%（${compact(view.context?.usedTokens)} / ${compact(view.context?.windowTokens)} token）`
@@ -75,10 +105,23 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
           provider={view.provider}
           className={`app-statusbar-agent-logo provider-${view.provider}`}
         />
+        {isAntigravity && view.accountAlias && (
+          <span className="app-statusbar-agent-metric">
+            <User className="app-statusbar-icon" aria-hidden="true" />
+            <span className="app-statusbar-label">{view.accountAlias}</span>
+          </span>
+        )}
         {view.model ? (
           <span className="app-statusbar-label app-statusbar-agent-model">{view.model}</span>
-        ) : (
+        ) : !isAntigravity ? (
           <span className="app-statusbar-label">{view.providerLabel}</span>
+        ) : null}
+        {isAntigravity && geminiQuotaText && (
+          <span className={`app-statusbar-agent-metric${geminiLevel ? ` ${geminiLevel}` : ''}`}>
+            <Sparkles className="app-statusbar-icon" aria-hidden="true" />
+            <span className="app-statusbar-label">Gemini</span>
+            <span className="app-statusbar-mono">{geminiQuotaText}</span>
+          </span>
         )}
         {effortLabel && (
           <span className="app-statusbar-agent-effort">思考 {effortLabel}</span>
@@ -104,6 +147,9 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
           anchor={anchor}
           anchorRef={buttonRef}
           onClose={closePopover}
+          agyQuota={agyQuota}
+          agyQuotaLoading={agyQuotaLoading}
+          onRefreshAgyQuota={() => loadAgyQuota(true)}
         />,
         document.body,
       )}

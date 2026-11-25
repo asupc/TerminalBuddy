@@ -1,6 +1,6 @@
 import { useEffect, useRef, type RefObject } from 'react';
-import { X } from 'lucide-react';
-import type { AiTokenUsage } from '../../services/tauri';
+import { RefreshCw, X } from 'lucide-react';
+import type { AiTokenUsage, AntigravityQuotaSummary } from '../../services/tauri';
 import { AgentIcon } from '../agent-chat/AgentIcon';
 import { cacheHitRate, contextPercent, precise } from '../agent-chat/UsagePanel';
 import { agentEffortLabel, contextLevel, type AgentStatusView } from './agentStatusView';
@@ -59,13 +59,16 @@ interface AgentStatsPopoverProps {
   anchor: { left: number; bottom: number };
   anchorRef: RefObject<HTMLElement | null>;
   onClose: () => void;
+  agyQuota?: AntigravityQuotaSummary | null;
+  agyQuotaLoading?: boolean;
+  onRefreshAgyQuota?: () => void;
 }
 
 /**
  * 状态栏 Agent 详情浮层：在用的模型 / 思考强度 / 上下文占用与累计 Token。
  * 数据与状态栏条目同源，只是把窄条里省略的明细完整展开。
  */
-export function AgentStatsPopover({ view, anchor, anchorRef, onClose }: AgentStatsPopoverProps) {
+export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, agyQuotaLoading, onRefreshAgyQuota }: AgentStatsPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
 
   // 点外部 / Esc / 窗口尺寸变化时关闭；点击状态栏条目本身交给外层做开合切换。
@@ -136,12 +139,50 @@ export function AgentStatsPopover({ view, anchor, anchorRef, onClose }: AgentSta
         <div className="agent-stats-grid">
           <StatRow label="模型" value={view.model ?? '未提供'} />
           <StatRow label="思考强度" value={effortLabel ?? '跟随服务端'} />
-          <StatRow label="供应商" value={view.providerName ?? '默认供应商'} />
+          <StatRow
+            label={view.provider === 'antigravity' ? '使用账号' : '供应商'}
+            value={view.provider === 'antigravity'
+              ? (view.accountAlias || view.providerName || '系统默认')
+              : (view.providerName ?? '默认供应商')}
+          />
           <StatRow
             label="数据来源"
             value={view.source === 'native' ? '原生会话 · 实时同步' : '终端 Agent · 定时读取'}
           />
         </div>
+
+        {view.provider === 'antigravity' && (
+          <section className="agent-stats-section">
+            <h4 className="agent-stats-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Gemini 模型用量</span>
+              {onRefreshAgyQuota && (
+                <button
+                  type="button"
+                  className="agent-stats-close"
+                  disabled={agyQuotaLoading}
+                  onClick={onRefreshAgyQuota}
+                  title="刷新 Gemini 用量"
+                >
+                  <RefreshCw size={12} />
+                </button>
+              )}
+            </h4>
+            {agyQuotaLoading && !agyQuota ? (
+              <p className="agent-stats-empty">正在查询账号 Gemini 用量…</p>
+            ) : agyQuota && agyQuota.geminiWindows.length > 0 ? (
+              agyQuota.geminiWindows.map((w, idx) => (
+                <StatRow
+                  key={`${w.label}-${idx}`}
+                  label={w.label}
+                  value={w.remainingPercent != null ? `剩余 ${w.remainingPercent}%` : '—'}
+                  hint={w.resetText ? `重置 ${w.resetText}` : undefined}
+                />
+              ))
+            ) : (
+              <p className="agent-stats-empty">{agyQuota?.rawSummary || '暂未获取到 Gemini 额度信息'}</p>
+            )}
+          </section>
+        )}
 
         <section className="agent-stats-section">
           <h4 className="agent-stats-section-title">上下文</h4>

@@ -9,7 +9,7 @@
 use crate::models::antigravity_account::{
     AntigravityAccountRecord, AntigravityAccountState, AntigravityAccountStoreFile,
     AntigravityAccountView, AntigravityOAuthCompleteInput, AntigravityOAuthStartResult,
-    AntigravityTokenInput,
+    AntigravityQuotaSummary, AntigravityQuotaWindow, AntigravityTokenInput,
 };
 use super::agent_cli_service::{self, CliTool};
 use super::atomic_file::atomic_write_private;
@@ -202,13 +202,19 @@ pub fn prepare_isolated_env(account_id: &str) -> Result<(PathBuf, Vec<(String, S
 }
 
 pub fn isolated_env_for_dir(profile_dir: &Path) -> Vec<(String, String)> {
-    let dir_str = PathService::normalize_child_process_path_str(&profile_dir.to_string_lossy());
+    let home_str = PathService::normalize_child_process_path_str(&profile_dir.to_string_lossy());
+    let gemini_str = PathService::normalize_child_process_path_str(
+        &profile_dir.join(".gemini").to_string_lossy(),
+    );
     let mut env = vec![
-        ("GEMINI_HOME".into(), dir_str),
+        ("HOME".into(), home_str.clone()),
+        ("GEMINI_HOME".into(), gemini_str),
         ("AGY_ACP_FORCE_FILE_STORAGE".into(), "1".into()),
         ("SSH_CONNECTION".into(), ISOLATED_SSH_CONNECTION.into()),
         ("AGY_CLI_DISABLE_AUTO_UPDATE".into(), "1".into()),
     ];
+    #[cfg(windows)]
+    env.push(("USERPROFILE".into(), home_str));
     #[cfg(not(windows))]
     env.push(("WSL_INTEROP".into(), "1".into()));
     env
@@ -219,24 +225,27 @@ fn materialize_profile_dir(
     token_raw: &str,
     auth_state_raw: Option<&str>,
 ) -> Result<()> {
-    for sub in ["antigravity-acp", "antigravity-cli"] {
-        let app_dir = profile_dir.join(sub);
-        let cache_dir = app_dir.join("cache");
-        fs::create_dir_all(&cache_dir)
-            .map_err(|e| format!("创建 Antigravity 账号隔离目录失败：{e}"))?;
-        let token_path = app_dir.join("antigravity-oauth-token");
-        atomic_write_private(&token_path, token_raw.as_bytes())
-            .map_err(|e| format!("写入 Antigravity 账号凭据失败：{e}"))?;
-        let marker = cache_dir.join("antigravity-keyring-unavailable");
-        if !marker.exists() {
+    // 同时物化 `<profile>/.gemini/...`（agy CLI 通过 USERPROFILE/HOME/GEMINI_HOME 查找）
+    // 与 `<profile>/...`（兼容直接指向根路径的调用），并每次刷新 keyring-unavailable 标记以防 TTL 过期。
+    let roots = [profile_dir.join(".gemini"), profile_dir.to_path_buf()];
+    for base in &roots {
+        for sub in ["antigravity-acp", "antigravity-cli"] {
+            let app_dir = base.join(sub);
+            let cache_dir = app_dir.join("cache");
+            fs::create_dir_all(&cache_dir)
+                .map_err(|e| format!("创建 Antigravity 账号隔离目录失败：{e}"))?;
+            let token_path = app_dir.join("antigravity-oauth-token");
+            atomic_write_private(&token_path, token_raw.as_bytes())
+                .map_err(|e| format!("写入 Antigravity 账号凭据失败：{e}"))?;
+            let marker = cache_dir.join("antigravity-keyring-unavailable");
             let _ = fs::write(&marker, b"1");
-        }
-        if sub == "antigravity-acp" {
-            if let Some(state_json) = auth_state_raw {
-                let _ = atomic_write_private(
-                    &cache_dir.join("acp-auth-state.json"),
-                    state_json.as_bytes(),
-                );
+            if sub == "antigravity-acp" {
+                if let Some(state_json) = auth_state_raw {
+                    let _ = atomic_write_private(
+                        &cache_dir.join("acp-auth-state.json"),
+                        state_json.as_bytes(),
+                    );
+                }
             }
         }
     }
@@ -280,18 +289,20 @@ pub fn expand_leading_antigravity_ref(command: &str) -> Result<String> {
 fn format_isolated_cli_command(profile_dir: &str, launch_cmd: &str) -> String {
     #[cfg(windows)]
     {
-        let escaped = profile_dir.replace('\'', "''");
+        let home_escaped = profile_dir.replace('\'', "''");
+        let gemini_escaped = format!("{}\\.gemini", profile_dir.trim_end_matches(['\\', '/'])).replace('\'', "''");
         format!(
-            "$env:GEMINI_HOME='{}'; $env:AGY_ACP_FORCE_FILE_STORAGE='1'; $env:SSH_CONNECTION='{}'; $env:AGY_CLI_DISABLE_AUTO_UPDATE='1'; {}",
-            escaped, ISOLATED_SSH_CONNECTION, launch_cmd
+            "$env:USERPROFILE='{}'; $env:HOME='{}'; $env:GEMINI_HOME='{}'; $env:AGY_ACP_FORCE_FILE_STORAGE='1'; $env:SSH_CONNECTION='{}'; $env:AGY_CLI_DISABLE_AUTO_UPDATE='1'; {}",
+            home_escaped, home_escaped, gemini_escaped, ISOLATED_SSH_CONNECTION, launch_cmd
         )
     }
     #[cfg(not(windows))]
     {
-        let escaped = profile_dir.replace('\'', "'\\''");
+        let home_escaped = profile_dir.replace('\'', "'\\''");
+        let gemini_escaped = format!("{}/.gemini", profile_dir.trim_end_matches('/')).replace('\'', "'\\''");
         format!(
-            "GEMINI_HOME='{}' AGY_ACP_FORCE_FILE_STORAGE='1' SSH_CONNECTION='{}' WSL_INTEROP='1' AGY_CLI_DISABLE_AUTO_UPDATE='1' {}",
-            escaped, ISOLATED_SSH_CONNECTION, launch_cmd
+            "HOME='{}' GEMINI_HOME='{}' AGY_ACP_FORCE_FILE_STORAGE='1' SSH_CONNECTION='{}' WSL_INTEROP='1' AGY_CLI_DISABLE_AUTO_UPDATE='1' {}",
+            home_escaped, gemini_escaped, ISOLATED_SSH_CONNECTION, launch_cmd
         )
     }
 }
@@ -549,13 +560,14 @@ pub fn start_oauth_login() -> Result<AntigravityOAuthStartResult> {
     let binary = resolve_agy_binary();
     let login_id = Uuid::new_v4().to_string();
     let staging_dir = std::env::temp_dir().join(format!("tb-agy-oauth-{}", login_id));
-    let acp_cache = staging_dir.join("antigravity-acp").join("cache");
+    let staging_gemini = staging_dir.join(".gemini");
+    let acp_cache = staging_gemini.join("antigravity-acp").join("cache");
     fs::create_dir_all(&acp_cache)
         .map_err(|e| format!("创建临时 OAuth 登录目录失败：{e}"))?;
     let _ = fs::write(acp_cache.join("antigravity-keyring-unavailable"), b"1");
 
     let normalized_staging =
-        PathService::normalize_child_process_path_str(&staging_dir.to_string_lossy());
+        PathService::normalize_child_process_path_str(&staging_gemini.to_string_lossy());
     let mut cmd = Command::new(&binary);
     cmd.args([
         "acp",
@@ -709,16 +721,14 @@ pub async fn complete_oauth_login(
             while let Ok(line) = pending.output_rx.try_recv() {
                 logs.push(line);
             }
-            let token_path = staging_dir
-                .join("antigravity-acp")
-                .join("antigravity-oauth-token");
-            let fallback_path = staging_dir
-                .join("antigravity-cli")
-                .join("antigravity-oauth-token");
-            let actual_path = if token_path.is_file() {
-                token_path
-            } else if fallback_path.is_file() {
-                fallback_path
+            let candidates = [
+                staging_dir.join(".gemini").join("antigravity-acp").join("antigravity-oauth-token"),
+                staging_dir.join(".gemini").join("antigravity-cli").join("antigravity-oauth-token"),
+                staging_dir.join("antigravity-acp").join("antigravity-oauth-token"),
+                staging_dir.join("antigravity-cli").join("antigravity-oauth-token"),
+            ];
+            let actual_path = if let Some(found) = candidates.into_iter().find(|p| p.is_file()) {
+                found
             } else {
                 let tail = logs.join(" ");
                 return Err(format!(
@@ -730,10 +740,19 @@ pub async fn complete_oauth_login(
                 .map_err(|e| format!("读取授权生成的凭据文件失败：{e}"))?;
             let auth_state_raw = fs::read_to_string(
                 staging_dir
+                    .join(".gemini")
                     .join("antigravity-acp")
                     .join("cache")
                     .join("acp-auth-state.json"),
             )
+            .or_else(|_| {
+                fs::read_to_string(
+                    staging_dir
+                        .join("antigravity-acp")
+                        .join("cache")
+                        .join("acp-auth-state.json"),
+                )
+            })
             .ok();
             Ok(OAuthCapturedFiles {
                 token_raw,
@@ -1324,6 +1343,286 @@ fn upsert_account_record(
     Ok(to_state(&store))
 }
 
+
+struct CachedQuota {
+    summary: AntigravityQuotaSummary,
+    fetched_at: Instant,
+}
+
+fn quota_cache() -> &'static Mutex<HashMap<String, CachedQuota>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedQuota>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const QUOTA_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// 通过官方 `agy -p /usage --output-format json` 查询指定账号的 Gemini 模型额度。
+/// 不使用 OAuth Token 直接请求任何 LLM 接口。
+pub fn get_account_quota(
+    account_id: Option<&str>,
+    force_refresh: bool,
+) -> Result<AntigravityQuotaSummary> {
+    let normalized_id = account_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "default:antigravity")
+        .map(|s| s.strip_prefix("antigravity:").unwrap_or(s).to_string());
+    let cache_key = normalized_id
+        .clone()
+        .unwrap_or_else(|| "__default__".to_string());
+
+    if !force_refresh {
+        if let Ok(cache) = quota_cache().lock() {
+            if let Some(entry) = cache.get(&cache_key) {
+                if entry.fetched_at.elapsed() < QUOTA_CACHE_TTL {
+                    return Ok(entry.summary.clone());
+                }
+            }
+        }
+    }
+
+    let env_vars = if let Some(ref id) = normalized_id {
+        let (_dir, env) = prepare_isolated_env(id)?;
+        env
+    } else {
+        Vec::new()
+    };
+
+    let binary = resolve_agy_binary();
+    let mut cmd = Command::new(&binary);
+    cmd.args(["-p", "/usage", "--output-format", "json"]);
+    for (k, v) in env_vars {
+        cmd.env(k, v);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("启动 agy 查询用量失败：{e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if child
+            .try_wait()
+            .map_err(|e| format!("等待 agy 用量查询失败：{e}"))?
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("查询 Antigravity 额度超时".into());
+        }
+        thread::sleep(Duration::from_millis(80));
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("读取 agy 用量输出失败：{e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let combined = if stdout.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
+
+    let summary = parse_gemini_quota_output(normalized_id, &combined);
+    if let Ok(mut cache) = quota_cache().lock() {
+        cache.insert(
+            cache_key,
+            CachedQuota {
+                summary: summary.clone(),
+                fetched_at: Instant::now(),
+            },
+        );
+    }
+    Ok(summary)
+}
+
+fn parse_gemini_quota_output(account_id: Option<String>, raw: &str) -> AntigravityQuotaSummary {
+    let now = Utc::now().timestamp_millis();
+    let mut windows = Vec::new();
+
+    if let Some(json_val) = extract_json_value(raw) {
+        collect_gemini_windows_from_json(&json_val, &mut windows);
+    }
+    if windows.is_empty() {
+        collect_gemini_windows_from_text(raw, &mut windows);
+    }
+
+    let gemini_percent = windows
+        .iter()
+        .filter_map(|w| w.remaining_percent)
+        .min();
+
+    let raw_summary = if windows.is_empty() {
+        let first_line = raw
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty() && !l.starts_with('{'))
+            .map(|l| l.chars().take(80).collect::<String>());
+        first_line
+    } else {
+        None
+    };
+
+    AntigravityQuotaSummary {
+        account_id,
+        gemini_percent,
+        gemini_windows: windows,
+        raw_summary,
+        fetched_at: now,
+    }
+}
+
+fn extract_json_value(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim();
+    if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
+        return Some(val);
+    }
+    for line in trimmed.lines().rev() {
+        let l = line.trim();
+        if l.starts_with('{') || l.starts_with('[') {
+            if let Ok(val) = serde_json::from_str::<Value>(l) {
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
+fn fraction_or_percent_to_u8(val: &Value) -> Option<u8> {
+    let n = val.as_f64()?;
+    if !n.is_finite() || n < 0.0 {
+        return None;
+    }
+    let pct = if n <= 1.0 { n * 100.0 } else { n };
+    Some(pct.round().clamp(0.0, 100.0) as u8)
+}
+
+fn collect_gemini_windows_from_json(value: &Value, out: &mut Vec<AntigravityQuotaWindow>) {
+    match value {
+        Value::Object(map) => {
+            let name = map
+                .get("displayName")
+                .or_else(|| map.get("name"))
+                .or_else(|| map.get("group"))
+                .or_else(|| map.get("family"))
+                .or_else(|| map.get("model"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let is_gemini = name.to_ascii_lowercase().contains("gemini");
+            if is_gemini {
+                if let Some(buckets) = map.get("buckets").or_else(|| map.get("windows")).and_then(Value::as_array) {
+                    for bucket in buckets {
+                        let label = bucket
+                            .get("displayName")
+                            .or_else(|| bucket.get("cadence"))
+                            .or_else(|| bucket.get("window"))
+                            .or_else(|| bucket.get("label"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("Gemini")
+                            .trim()
+                            .to_string();
+                        let pct = bucket
+                            .get("remainingFraction")
+                            .or_else(|| bucket.get("remainingPercent"))
+                            .or_else(|| bucket.get("remaining"))
+                            .and_then(fraction_or_percent_to_u8);
+                        let reset_text = bucket
+                            .get("resetTime")
+                            .or_else(|| bucket.get("resetsAt"))
+                            .or_else(|| bucket.get("resetDescription"))
+                            .and_then(Value::as_str)
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty());
+                        if pct.is_some() || reset_text.is_some() {
+                            out.push(AntigravityQuotaWindow {
+                                label,
+                                remaining_percent: pct,
+                                reset_text,
+                            });
+                        }
+                    }
+                    if !out.is_empty() {
+                        return;
+                    }
+                }
+                let direct_pct = map
+                    .get("remainingFraction")
+                    .or_else(|| map.get("remainingPercent"))
+                    .or_else(|| map.get("remaining"))
+                    .and_then(fraction_or_percent_to_u8);
+                if let Some(pct) = direct_pct {
+                    let reset_text = map
+                        .get("resetTime")
+                        .or_else(|| map.get("resetsAt"))
+                        .and_then(Value::as_str)
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty());
+                    out.push(AntigravityQuotaWindow {
+                        label: name.trim().to_string(),
+                        remaining_percent: Some(pct),
+                        reset_text,
+                    });
+                    return;
+                }
+            }
+            for child in map.values() {
+                collect_gemini_windows_from_json(child, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_gemini_windows_from_json(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_gemini_windows_from_text(raw: &str, out: &mut Vec<AntigravityQuotaWindow>) {
+    for line in raw.lines() {
+        let lower = line.to_ascii_lowercase();
+        if !lower.contains("gemini") {
+            continue;
+        }
+        if let Some(pct_pos) = line.find('%') {
+            let prefix = &line[..pct_pos];
+            let num_str: String = prefix
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            if let Ok(val) = num_str.parse::<f64>() {
+                let label = if lower.contains("week") || line.contains("周") || lower.contains("7d") {
+                    "Gemini 周额度"
+                } else if lower.contains("5h") || lower.contains("session") || line.contains("5 小时") {
+                    "Gemini 5h 窗口"
+                } else {
+                    "Gemini"
+                };
+                out.push(AntigravityQuotaWindow {
+                    label: label.to_string(),
+                    remaining_percent: Some(val.round().clamp(0.0, 100.0) as u8),
+                    reset_text: None,
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1397,7 +1696,24 @@ mod tests {
         assert!(dir.join("antigravity-acp/cache/antigravity-keyring-unavailable").is_file());
         assert!(dir.join("antigravity-cli/cache/antigravity-keyring-unavailable").is_file());
         assert!(dir.join("antigravity-acp/cache/acp-auth-state.json").is_file());
+        assert!(dir.join(".gemini/antigravity-cli/antigravity-oauth-token").is_file());
+        assert!(dir.join(".gemini/antigravity-cli/cache/antigravity-keyring-unavailable").is_file());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parses_gemini_quota_from_json_and_text() {
+        let json_sample = r#"{"groups":[{"displayName":"Gemini Models","buckets":[{"displayName":"5h","remainingFraction":0.82,"resetTime":"2026-11-25T12:00:00Z"},{"displayName":"Weekly","remainingFraction":0.64}]},{"displayName":"Claude","buckets":[{"displayName":"5h","remainingFraction":0.10}]}]}"#;
+        let parsed = parse_gemini_quota_output(Some("acc-1".into()), json_sample);
+        assert_eq!(parsed.gemini_percent, Some(64));
+        assert_eq!(parsed.gemini_windows.len(), 2);
+
+        let text_sample = "Gemini 5h: 75% remaining
+Gemini Weekly: 90% remaining
+Claude 5h: 20%";
+        let parsed_text = parse_gemini_quota_output(None, text_sample);
+        assert_eq!(parsed_text.gemini_percent, Some(75));
+        assert_eq!(parsed_text.gemini_windows.len(), 2);
     }
 
     #[test]
