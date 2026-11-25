@@ -1634,9 +1634,10 @@ impl TerminalService {
         // 引用展开（apply 后 / build 前）：`__TB_CLAUDE_REF__` 开头的命令在这里
         // 生成一次性临时 --settings 文件并替换为新路径。不含引用的命令原样返回。
         // 展开失败即拒绝启动，并清理本 terminal_id 已登记的临时文件。
-        let startup_commands = match crate::services::llm_provider_service::expand_claude_refs_in_commands(
+        let startup_commands = match crate::services::llm_provider_service::expand_claude_refs_in_commands_with_cwd(
             startup_commands,
             &terminal_id,
+            startup_path.as_deref(),
         ) {
             Ok(commands) => commands,
             Err(error) => {
@@ -2036,9 +2037,10 @@ impl TerminalService {
             .filter(|command| !command.is_empty())
         {
             // 引用展开先于校验：展开后的最终命令再过 reject，防注入。
-            let command = match crate::services::llm_provider_service::expand_leading_claude_ref(
+            let command = match crate::services::llm_provider_service::expand_leading_claude_ref_with_cwd(
                 command,
                 &terminal_id,
+                startup_path.as_deref(),
             ) {
                 Ok(expanded) => expanded,
                 Err(error) => {

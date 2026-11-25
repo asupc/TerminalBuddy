@@ -255,6 +255,142 @@ fn materialize_profile_dir(
     Ok(())
 }
 
+const TRUSTED_PATH_ARRAY_KEYS: &[&str] = &["trustedWorkspaces", "trustedFolders"];
+
+fn is_settings_json_rel(rel: &str) -> bool {
+    matches!(
+        rel,
+        "settings.json" | "antigravity-cli/settings.json" | "antigravity-acp/settings.json"
+    )
+}
+
+/// 同步本机 `settings.json` 到隔离目录时，合并保留隔离目录中已记录的 `trustedWorkspaces` / `trustedFolders`，
+/// 避免每次启动都被本机默认配置覆盖清空，导致 `agy` 反复弹出目录信任确认。
+fn merge_settings_preserving_trusted(src_bytes: &[u8], dst_bytes: &[u8]) -> Vec<u8> {
+    let (Ok(Value::Object(mut src_obj)), Ok(Value::Object(dst_obj))) = (
+        serde_json::from_slice::<Value>(src_bytes),
+        serde_json::from_slice::<Value>(dst_bytes),
+    ) else {
+        return src_bytes.to_vec();
+    };
+    let mut merged_any = false;
+    for key in TRUSTED_PATH_ARRAY_KEYS {
+        let Some(dst_arr) = dst_obj.get(*key).and_then(Value::as_array) else {
+            continue;
+        };
+        let dst_paths: Vec<String> = dst_arr
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        if dst_paths.is_empty() {
+            continue;
+        }
+        let mut combined: Vec<String> = src_obj
+            .get(*key)
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let initial_len = combined.len();
+        for path in dst_paths {
+            if !combined.iter().any(|existing| existing == &path) {
+                combined.push(path);
+            }
+        }
+        if combined.len() > initial_len || !src_obj.contains_key(*key) {
+            src_obj.insert(
+                (*key).to_string(),
+                Value::Array(combined.into_iter().map(Value::String).collect()),
+            );
+            merged_any = true;
+        }
+    }
+    if !merged_any {
+        return src_bytes.to_vec();
+    }
+    serde_json::to_vec_pretty(&Value::Object(src_obj)).unwrap_or_else(|_| src_bytes.to_vec())
+}
+
+fn normalize_trusted_workspace_path(workspace_path: &str) -> Option<String> {
+    let normalized = PathService::normalize_child_process_path_str(workspace_path.trim());
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let cleaned = if trimmed.len() == 1 && (trimmed == "/" || trimmed == "\\") {
+        trimmed.to_string()
+    } else if trimmed.len() == 3
+        && trimmed.as_bytes()[0].is_ascii_alphabetic()
+        && trimmed.as_bytes()[1] == b':'
+        && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/')
+    {
+        trimmed.to_string()
+    } else {
+        trimmed.trim_end_matches(['\\', '/']).to_string()
+    };
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+/// 将本次终端工作目录预先写入隔离 profile 的 `antigravity-cli/settings.json` 的 `trustedWorkspaces`，
+/// 避免首次或重复打开工作目录时弹出 `Do you trust the contents of this project?`。
+fn ensure_trusted_workspace(profile_dir: &Path, workspace_path: &str) {
+    let Some(normalized) = normalize_trusted_workspace_path(workspace_path) else {
+        return;
+    };
+    let target_roots = [profile_dir.join(".gemini"), profile_dir.to_path_buf()];
+    for base in &target_roots {
+        let settings_path = base.join("antigravity-cli").join("settings.json");
+        if let Some(parent) = settings_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let mut obj: Map<String, Value> = match fs::read(&settings_path) {
+            Ok(bytes) if !bytes.iter().all(|b| b.is_ascii_whitespace()) => {
+                match serde_json::from_slice::<Value>(&bytes) {
+                    Ok(Value::Object(map)) => map,
+                    _ => continue,
+                }
+            }
+            _ => Map::new(),
+        };
+        let mut list: Vec<String> = obj
+            .get("trustedWorkspaces")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if list.iter().any(|existing| existing == &normalized) {
+            continue;
+        }
+        list.push(normalized.clone());
+        obj.insert(
+            "trustedWorkspaces".to_string(),
+            Value::Array(list.into_iter().map(Value::String).collect()),
+        );
+        if let Ok(bytes) = serde_json::to_vec_pretty(&Value::Object(obj)) {
+            let _ = fs::write(&settings_path, bytes);
+        }
+    }
+}
+
 /// 从本机默认 `~/.gemini` 同步非凭据类用户配置（如 Rendering Mode / altscreen、主题、MCP 配置等）
 /// 到账号隔离目录，确保切换多账号时仍沿用本机默认 `agy` 偏好，且不串用任何登录凭据。
 fn sync_default_agy_user_configs(source_gemini_dir: &Path, profile_dir: &Path) {
@@ -282,8 +418,13 @@ fn sync_default_agy_user_configs(source_gemini_dir: &Path, profile_dir: &Path) {
             if let Some(parent) = dst.parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            if fs::read(&dst).ok().as_deref() != Some(bytes.as_slice()) {
-                let _ = fs::write(&dst, &bytes);
+            let existing = fs::read(&dst).ok();
+            let final_bytes = match (is_settings_json_rel(rel), existing.as_deref()) {
+                (true, Some(dst_bytes)) => merge_settings_preserving_trusted(&bytes, dst_bytes),
+                _ => bytes.clone(),
+            };
+            if existing.as_deref() != Some(final_bytes.as_slice()) {
+                let _ = fs::write(&dst, &final_bytes);
             }
         }
     }
@@ -298,6 +439,14 @@ fn sanitize_account_dir_name(id: &str) -> String {
 /// 展开终端命令开头的 `__tb_agy_account__:<accountId> <agy command>`。
 /// 只注入隔离目录路径环境变量，不在命令行中包含任何 Token 明文。
 pub fn expand_leading_antigravity_ref(command: &str) -> Result<String> {
+    expand_leading_antigravity_ref_with_cwd(command, None)
+}
+
+/// 展开 `__tb_agy_account__:<accountId> <agy command>`，并在提供工作目录时预先写入 `trustedWorkspaces`。
+pub fn expand_leading_antigravity_ref_with_cwd(
+    command: &str,
+    working_dir: Option<&str>,
+) -> Result<String> {
     let trimmed = command.trim_start();
     let Some(rest) = trimmed.strip_prefix(ANTIGRAVITY_REF_PREFIX) else {
         return Ok(command.to_string());
@@ -314,6 +463,9 @@ pub fn expand_leading_antigravity_ref(command: &str) -> Result<String> {
         return Err("Antigravity 账号引用格式无效".into());
     }
     let (profile_dir, _env) = prepare_isolated_env(account_id)?;
+    if let Some(cwd) = working_dir.map(str::trim).filter(|s| !s.is_empty()) {
+        ensure_trusted_workspace(&profile_dir, cwd);
+    }
     let dir_str = PathService::normalize_child_process_path_str(&profile_dir.to_string_lossy());
     let launch_cmd = if tail.is_empty() {
         "agy --dangerously-skip-permissions"
@@ -2045,6 +2197,64 @@ mod tests {
         assert_eq!(
             fs::read_to_string(profile.join(".gemini/antigravity-cli/antigravity-oauth-token")).unwrap(),
             r#"{"access_token":"ACCOUNT_A"}"#
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn sync_default_agy_user_configs_preserves_profile_trusted_workspaces() {
+        let base = std::env::temp_dir().join(format!("tb-agy-trust-{}", Uuid::new_v4()));
+        let src_gemini = base.join("src_home/.gemini");
+        let profile = base.join("profile_a");
+        fs::create_dir_all(src_gemini.join("antigravity-cli")).unwrap();
+        fs::create_dir_all(profile.join(".gemini/antigravity-cli")).unwrap();
+        fs::write(
+            src_gemini.join("antigravity-cli/settings.json"),
+            r#"{"renderingMode":"altscreen","trustedWorkspaces":["C:\\host-project"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            profile.join(".gemini/antigravity-cli/settings.json"),
+            r#"{"renderingMode":"inline","trustedWorkspaces":["C:\\isolated-project","C:\\host-project"]}"#,
+        )
+        .unwrap();
+
+        sync_default_agy_user_configs(&src_gemini, &profile);
+
+        let merged: Value = serde_json::from_str(
+            &fs::read_to_string(profile.join(".gemini/antigravity-cli/settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(merged["renderingMode"], "altscreen");
+        assert_eq!(
+            merged["trustedWorkspaces"],
+            serde_json::json!(["C:\\host-project", "C:\\isolated-project"])
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn ensure_trusted_workspace_adds_normalized_path_idempotently() {
+        let base = std::env::temp_dir().join(format!("tb-agy-ensure-{}", Uuid::new_v4()));
+        let profile = base.join("profile_a");
+        fs::create_dir_all(profile.join(".gemini/antigravity-cli")).unwrap();
+        fs::write(
+            profile.join(".gemini/antigravity-cli/settings.json"),
+            r#"{"renderingMode":"altscreen"}"#,
+        )
+        .unwrap();
+
+        ensure_trusted_workspace(&profile, r"C:\work\repo\");
+        ensure_trusted_workspace(&profile, r"C:\work\repo");
+
+        let parsed: Value = serde_json::from_str(
+            &fs::read_to_string(profile.join(".gemini/antigravity-cli/settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(parsed["renderingMode"], "altscreen");
+        assert_eq!(
+            parsed["trustedWorkspaces"],
+            serde_json::json!([r"C:\work\repo"])
         );
         let _ = fs::remove_dir_all(&base);
     }

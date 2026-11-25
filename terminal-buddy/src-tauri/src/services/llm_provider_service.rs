@@ -875,6 +875,14 @@ fn expand_leading_claude_provider_ref(command: &str, terminal_id: &str) -> Resul
 }
 
 pub fn expand_leading_claude_ref(command: &str, terminal_id: &str) -> Result<String, String> {
+    expand_leading_claude_ref_with_cwd(command, terminal_id, None)
+}
+
+pub fn expand_leading_claude_ref_with_cwd(
+    command: &str,
+    terminal_id: &str,
+    working_dir: Option<&str>,
+) -> Result<String, String> {
     if command.trim_start().starts_with(CLAUDE_PROVIDER_REF_PREFIX) {
         return expand_leading_claude_provider_ref(command, terminal_id);
     }
@@ -882,7 +890,10 @@ pub fn expand_leading_claude_ref(command: &str, terminal_id: &str) -> Result<Str
         return super::codex_provider_service::expand_leading_codex_ref(command);
     }
     if command.trim_start().starts_with(super::antigravity_account_service::ANTIGRAVITY_REF_PREFIX) {
-        return super::antigravity_account_service::expand_leading_antigravity_ref(command);
+        return super::antigravity_account_service::expand_leading_antigravity_ref_with_cwd(
+            command,
+            working_dir,
+        );
     }
     let Some((provider_id, model_id, token_end)) = parse_claude_ref(command) else {
         // 旧路径兜底：含旧版绝对路径形态且文件已不存在 → 拒绝，不静默降级；
@@ -931,9 +942,17 @@ pub fn expand_claude_refs_in_commands(
     commands: Vec<String>,
     terminal_id: &str,
 ) -> Result<Vec<String>, String> {
+    expand_claude_refs_in_commands_with_cwd(commands, terminal_id, None)
+}
+
+pub fn expand_claude_refs_in_commands_with_cwd(
+    commands: Vec<String>,
+    terminal_id: &str,
+    working_dir: Option<&str>,
+) -> Result<Vec<String>, String> {
     commands
         .into_iter()
-        .map(|command| expand_leading_claude_ref(&command, terminal_id))
+        .map(|command| expand_leading_claude_ref_with_cwd(&command, terminal_id, working_dir))
         .collect()
 }
 
