@@ -249,7 +249,44 @@ fn materialize_profile_dir(
             }
         }
     }
+    if let Some(home) = dirs::home_dir() {
+        sync_default_agy_user_configs(&home.join(".gemini"), profile_dir);
+    }
     Ok(())
+}
+
+/// 从本机默认 `~/.gemini` 同步非凭据类用户配置（如 Rendering Mode / altscreen、主题、MCP 配置等）
+/// 到账号隔离目录，确保切换多账号时仍沿用本机默认 `agy` 偏好，且不串用任何登录凭据。
+fn sync_default_agy_user_configs(source_gemini_dir: &Path, profile_dir: &Path) {
+    if !source_gemini_dir.is_dir() {
+        return;
+    }
+    const CONFIG_FILES: &[&str] = &[
+        "settings.json",
+        "GEMINI.md",
+        "AGENTS.md",
+        "antigravity-cli/settings.json",
+        "antigravity-acp/settings.json",
+        "config/config.json",
+        "config/mcp_config.json",
+    ];
+    let target_roots = [profile_dir.join(".gemini"), profile_dir.to_path_buf()];
+    for rel in CONFIG_FILES {
+        let src = source_gemini_dir.join(rel);
+        if !src.is_file() {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&src) else { continue };
+        for base in &target_roots {
+            let dst = base.join(rel);
+            if let Some(parent) = dst.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            if fs::read(&dst).ok().as_deref() != Some(bytes.as_slice()) {
+                let _ = fs::write(&dst, &bytes);
+            }
+        }
+    }
 }
 
 fn sanitize_account_dir_name(id: &str) -> String {
@@ -1699,6 +1736,44 @@ mod tests {
         assert!(dir.join(".gemini/antigravity-cli/antigravity-oauth-token").is_file());
         assert!(dir.join(".gemini/antigravity-cli/cache/antigravity-keyring-unavailable").is_file());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn syncs_default_agy_settings_without_leaking_credentials() {
+        let base = std::env::temp_dir().join(format!("tb-agy-cfg-{}", Uuid::new_v4()));
+        let src_gemini = base.join("src_home/.gemini");
+        let profile = base.join("profile_a");
+        fs::create_dir_all(src_gemini.join("antigravity-cli")).unwrap();
+        fs::create_dir_all(src_gemini.join("config")).unwrap();
+        fs::write(
+            src_gemini.join("antigravity-cli/settings.json"),
+            r#"{"renderingMode":"altscreen"}"#,
+        )
+        .unwrap();
+        fs::write(src_gemini.join("config/mcp_config.json"), r#"{"mcpServers":{}}"#).unwrap();
+        fs::write(
+            src_gemini.join("antigravity-cli/antigravity-oauth-token"),
+            r#"{"access_token":"SHOULD_NOT_COPY"}"#,
+        )
+        .unwrap();
+
+        materialize_profile_dir(&profile, r#"{"access_token":"ACCOUNT_A"}"#, None).unwrap();
+        sync_default_agy_user_configs(&src_gemini, &profile);
+
+        assert_eq!(
+            fs::read_to_string(profile.join(".gemini/antigravity-cli/settings.json")).unwrap(),
+            r#"{"renderingMode":"altscreen"}"#
+        );
+        assert_eq!(
+            fs::read_to_string(profile.join(".gemini/config/mcp_config.json")).unwrap(),
+            r#"{"mcpServers":{}}"#
+        );
+        // 账号凭据必须保持隔离，不能被默认目录覆盖
+        assert_eq!(
+            fs::read_to_string(profile.join(".gemini/antigravity-cli/antigravity-oauth-token")).unwrap(),
+            r#"{"access_token":"ACCOUNT_A"}"#
+        );
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
