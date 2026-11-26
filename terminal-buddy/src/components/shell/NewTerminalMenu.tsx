@@ -1,4 +1,5 @@
 import { FC, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { saveEnableTabNavigation } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
@@ -53,6 +54,7 @@ export const ConfiguredTerminalMenuItem: FC<ConfiguredTerminalMenuItemProps> = (
   const [submenuPos, setSubmenuPos] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
   const [hoveredProject, setHoveredProject] = useState<{ project: Project; pos: HoverMenuPos } | null>(null);
   const hoverTimerRef = useRef<number | null>(null);
+  const submenuCloseTimerRef = useRef<number | null>(null);
 
   // 三级浮动菜单延迟展开：鼠标只是扫过配置行时不要立刻弹层，
   // 也避免鼠标从行移向浮层途中经过其它行导致面板来回跳动。
@@ -74,19 +76,30 @@ export const ConfiguredTerminalMenuItem: FC<ConfiguredTerminalMenuItemProps> = (
     setHoveredProject(null);
   };
 
+  const cancelSubmenuClose = () => {
+    if (submenuCloseTimerRef.current !== null) {
+      window.clearTimeout(submenuCloseTimerRef.current);
+      submenuCloseTimerRef.current = null;
+    }
+  };
+
+  // 浮层挂在 body 下，留出鼠标从入口移向子菜单的时间。
+  const scheduleSubmenuClose = (event: React.MouseEvent) => {
+    cancelSubmenuClose();
+    if (event.relatedTarget instanceof Element && event.relatedTarget.closest(
+      '.configured-terminal-menu-item, .new-terminal-profile-menu, .new-terminal-project-menu, .claude-model-submenu',
+    )) return;
+    submenuCloseTimerRef.current = window.setTimeout(() => {
+      submenuCloseTimerRef.current = null;
+      clearHoverMenus();
+      setSubmenuPos(null);
+    }, 120);
+  };
+
   useEffect(() => () => {
     if (hoverTimerRef.current !== null) window.clearTimeout(hoverTimerRef.current);
+    if (submenuCloseTimerRef.current !== null) window.clearTimeout(submenuCloseTimerRef.current);
   }, []);
-
-  useEffect(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
-    const clearOutsideHover = (event: MouseEvent) => {
-      if (!(event.target as HTMLElement).closest('.has-submenu')) setHoveredProject(null);
-    };
-    menu.addEventListener('mouseover', clearOutsideHover);
-    return () => menu.removeEventListener('mouseover', clearOutsideHover);
-  }, [menuRef]);
 
   const handleSelect = (item: TreeItem) => {
     if (item.data) {
@@ -99,6 +112,7 @@ export const ConfiguredTerminalMenuItem: FC<ConfiguredTerminalMenuItemProps> = (
 
   /** 「新建配置终端」子菜单的锚点：顶部与所在行对齐，右侧空间不足时翻到左侧。 */
   const handleSubmenuAnchor = (event: React.MouseEvent<HTMLDivElement>) => {
+    cancelSubmenuClose();
     const rowBounds = event.currentTarget.getBoundingClientRect();
     // .context-submenu 的 max-width 为 320，按上限估算是否需要水平翻转。
     const width = 322;
@@ -165,61 +179,78 @@ export const ConfiguredTerminalMenuItem: FC<ConfiguredTerminalMenuItemProps> = (
   };
 
   return (
-    <div
-      className={`context-menu-item has-submenu${hoveredProject ? ' submenu-active' : ''}`}
-      onMouseEnter={handleSubmenuAnchor}
-      onMouseLeave={event => {
-        if (event.relatedTarget instanceof Element && event.relatedTarget.closest('.claude-model-submenu')) {
-          return;
-        }
-        clearHoverMenus();
-      }}
-    >
-      <span>新建配置终端</span>
-      <span className="submenu-arrow">›</span>
+    <>
       <div
-        className="context-submenu new-terminal-profile-menu"
-        ref={submenuRef}
-        style={submenuPos ? { left: submenuPos.left, top: submenuPos.top } : undefined}
+        className="context-menu-item has-submenu configured-terminal-menu-item"
+        aria-haspopup="menu"
+        aria-expanded={submenuPos !== null}
+        onMouseEnter={handleSubmenuAnchor}
+        onMouseLeave={scheduleSubmenuClose}
+        onClick={event => {
+          event.stopPropagation();
+          handleSubmenuAnchor(event);
+        }}
       >
-        <div
-          className="new-terminal-profile-scroll"
-          style={submenuPos ? { maxHeight: submenuPos.maxHeight } : undefined}
-          onMouseOver={handleTargetHover}
-          onScroll={clearHoverMenus}
-        >
-          <TreeView
-            items={submenuTree}
-            expandedIds={expandedGroups}
-            onToggle={onToggleGroup}
-            selectedId={highlightedIndex >= 0 ? visibleSubmenuItems[highlightedIndex]?.id : undefined}
-            onSelect={handleSelect}
-            renderEnd={item => {
-              // 项目分组行：标记可展开与项目右键同步的启动菜单（Agent 启动入口）。
-              if (item.isGroup) {
-                const project = projects.find(p => p.name === item.id);
-                return project?.path ? (
-                  <span data-project-id={project.name} className="submenu-profile-end">
-                    <span className="submenu-arrow">›</span>
-                  </span>
-                ) : null;
-              }
-              return null;
-            }}
-            className="submenu-tree"
-            indent={12}
-          />
-        </div>
+        <span>新建配置终端</span>
+        <span className="submenu-arrow">›</span>
       </div>
-      {hoveredProject && (
+      {submenuPos && createPortal(
+        <div
+          className="context-submenu new-terminal-profile-menu"
+          ref={submenuRef}
+          style={{ left: submenuPos.left, top: submenuPos.top }}
+          onMouseEnter={cancelSubmenuClose}
+          onMouseLeave={scheduleSubmenuClose}
+          onMouseDown={event => event.stopPropagation()}
+          onClick={event => event.stopPropagation()}
+          onWheel={event => event.stopPropagation()}
+        >
+          <div
+            className="new-terminal-profile-scroll"
+            style={{ maxHeight: submenuPos.maxHeight }}
+            onMouseOver={handleTargetHover}
+            onScroll={clearHoverMenus}
+          >
+            <TreeView
+              items={submenuTree}
+              expandedIds={expandedGroups}
+              onToggle={onToggleGroup}
+              selectedId={highlightedIndex >= 0 ? visibleSubmenuItems[highlightedIndex]?.id : undefined}
+              onSelect={handleSelect}
+              renderEnd={item => {
+                // 项目分组行：标记可展开与项目右键同步的启动菜单（Agent 启动入口）。
+                if (item.isGroup) {
+                  const project = projects.find(p => p.name === item.id);
+                  return project?.path ? (
+                    <span data-project-id={project.name} className="submenu-profile-end">
+                      <span className="submenu-arrow">›</span>
+                    </span>
+                  ) : null;
+                }
+                return null;
+              }}
+              className="submenu-tree"
+              indent={12}
+            />
+          </div>
+        </div>,
+        document.body,
+      )}
+      {submenuPos && hoveredProject && createPortal(
         <div
           className="new-terminal-project-menu"
           style={{ left: hoveredProject.pos.left, top: hoveredProject.pos.top, bottom: hoveredProject.pos.bottom, maxHeight: hoveredProject.pos.maxHeight }}
+          onMouseEnter={cancelSubmenuClose}
+          onMouseLeave={scheduleSubmenuClose}
+          onMouseDown={event => event.stopPropagation()}
+          onClick={event => event.stopPropagation()}
+          onWheel={event => event.stopPropagation()}
         >
           <ProjectLaunchMenuItems project={hoveredProject.project} onLaunched={onClose} />
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 };
 

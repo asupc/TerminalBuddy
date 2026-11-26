@@ -698,7 +698,13 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       )}
 
       {blankContextMenu && (
-        <div ref={contextMenuRef} className="context-menu" style={{ left: blankContextMenu.x, top: blankContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <div
+          ref={contextMenuRef}
+          className="context-menu"
+          style={{ left: blankContextMenu.x, top: blankContextMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="context-menu-item" onClick={() => { onAddProfile(projects[0]?.name); closeContextMenu(); }}>
             添加配置
           </div>

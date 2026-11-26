@@ -404,15 +404,12 @@
 
 /* 「新建配置终端」子菜单：顶部与所在行对齐（left/top 由 JS 按行 rect 与视口计算），
    不再使用垂直居中，避免鼠标一进入子菜单就落到某个配置/项目行上误触三级菜单。 */
-.new-terminal-profile-menu {
+.context-submenu.new-terminal-profile-menu {
+  display: block;
   position: fixed;
-  z-index: 260;
+  z-index: 1100;
   overflow: visible;
   max-height: none;
-}
-
-.context-menu-item.submenu-active > .new-terminal-profile-menu {
-  display: block;
 }
 
 .new-terminal-profile-scroll {
@@ -439,7 +436,7 @@
 /* 项目启动悬停菜单：内容含模型名，宽度按内容自适应。 */
 .new-terminal-project-menu {
   position: fixed;
-  z-index: 270;
+  z-index: 1200;
   width: auto;
   min-width: 200px;
   max-width: 340px;
