@@ -4,6 +4,8 @@ import { listen } from './../../services/remoteWorkspace/events';
 import { Play, RefreshCw, Star, X } from 'lucide-react';
 import { AgentIcon } from '../agent-chat/AgentIcon';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
+import { AntigravityAccountMenuSection } from '../shared/AntigravityAccountMenuSection';
+import { resumeAntigravitySession } from '../claude-history/resumeAntigravitySession';
 import { AGENT_HISTORY_AUTO_ARCHIVED_EVENT, sessionHistory } from '../../services/sessionHistory';
 import {
   aiSessionResumeHistory,
@@ -286,7 +288,7 @@ export function AgentHistoryPopover({
         const session = await aiSessionResumeHistory(provider, item.sessionId, null, null);
         openExistingAgentSession(session);
       } else {
-        await history.resume({ sessionId: item.sessionId, title, projectDir: item.projectDir });
+        await history.resume({ sessionId: item.sessionId, title, projectDir: item.projectDir, filePath: item.filePath });
       }
       // 恢复后焦点转到新会话 / 聊天标签，状态栏不再跟随面板选中项。
       useAppStore.getState().setLastClickRegion('tab');
@@ -295,6 +297,23 @@ export function AgentHistoryPopover({
       showToast(`恢复会话失败: ${String(resumeError)}`, 'error');
     }
   }, [history, liveSessionIds, onClose, provider, showToast]);
+
+  const resumeAntigravityWithAccount = useCallback(async (
+    item: ClaudeSessionItem,
+    accountId: string | null,
+  ) => {
+    const title = item.customTitle || item.title;
+    try {
+      await resumeAntigravitySession(
+        { sessionId: item.sessionId, title, projectDir: item.projectDir, filePath: item.filePath },
+        { accountId },
+      );
+      useAppStore.getState().setLastClickRegion('tab');
+      onClose();
+    } catch (resumeError) {
+      showToast(`恢复会话失败: ${String(resumeError)}`, 'error');
+    }
+  }, [onClose, showToast]);
 
   /**
    * 指定供应商/模型恢复：原生会话把型号直接交给续接接口；
@@ -490,7 +509,7 @@ export function AgentHistoryPopover({
       </div>
 
       <div className="agent-history-footer">
-        <span>{provider === 'antigravity' ? `${visibleItems.length} 条 · 双击恢复` : `${visibleItems.length} 条 · 双击恢复 · 右键选模型`}</span>
+        <span>{provider === 'antigravity' ? `${visibleItems.length} 条 · 双击恢复 · 右键选账号` : `${visibleItems.length} 条 · 双击恢复 · 右键选模型`}</span>
       </div>
 
       {contextMenu && contextMenuItem && createPortal(
@@ -530,6 +549,24 @@ export function AgentHistoryPopover({
                 setContextMenu(null);
                 onClose();
                 useAppStore.getState().setProviderSettingsTab(provider);
+                useAppStore.getState().openSettingsDialog('llm-providers');
+              }}
+            />
+          )}
+          {provider === 'antigravity' && (
+            <AntigravityAccountMenuSection
+              itemClassName="agent-history-context-item"
+              separatorClassName="agent-history-context-sep"
+              title="指定账号恢复"
+              onPickAccount={(accountId) => {
+                const item = contextMenuItem;
+                setContextMenu(null);
+                void resumeAntigravityWithAccount(item, accountId);
+              }}
+              onManageAccounts={() => {
+                setContextMenu(null);
+                onClose();
+                useAppStore.getState().setProviderSettingsTab('antigravity');
                 useAppStore.getState().openSettingsDialog('llm-providers');
               }}
             />

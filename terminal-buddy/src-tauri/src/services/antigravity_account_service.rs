@@ -250,7 +250,9 @@ fn materialize_profile_dir(
         }
     }
     if let Some(home) = dirs::home_dir() {
-        sync_default_agy_user_configs(&home.join(".gemini"), profile_dir);
+        let host_gemini = home.join(".gemini");
+        sync_default_agy_user_configs(&host_gemini, profile_dir);
+        sync_agy_history_into_profile(&host_gemini, profile_dir);
     }
     Ok(())
 }
@@ -427,6 +429,146 @@ fn sync_default_agy_user_configs(source_gemini_dir: &Path, profile_dir: &Path) {
                 let _ = fs::write(&dst, &final_bytes);
             }
         }
+    }
+}
+
+fn copy_file_if_newer(src: &Path, dst: &Path) {
+    let Ok(src_meta) = fs::metadata(src) else { return; };
+    if !src_meta.is_file() {
+        return;
+    }
+    if let Ok(dst_meta) = fs::metadata(dst) {
+        if dst_meta.is_file() {
+            let src_mtime = src_meta.modified().ok();
+            let dst_mtime = dst_meta.modified().ok();
+            if dst_mtime >= src_mtime && dst_meta.len() == src_meta.len() {
+                return;
+            }
+            if dst_mtime > src_mtime {
+                return;
+            }
+        }
+    }
+    if let Some(parent) = dst.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::copy(src, dst);
+}
+
+fn sync_dir_if_newer(src_dir: &Path, dst_dir: &Path) {
+    if !src_dir.is_dir() {
+        return;
+    }
+    let mut stack = vec![(src_dir.to_path_buf(), dst_dir.to_path_buf())];
+    while let Some((cur_src, cur_dst)) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&cur_src) else { continue; };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else { continue; };
+            if kind.is_symlink() {
+                continue;
+            }
+            let src_path = entry.path();
+            let dst_path = cur_dst.join(entry.file_name());
+            if kind.is_dir() {
+                stack.push((src_path, dst_path));
+            } else if kind.is_file() {
+                copy_file_if_newer(&src_path, &dst_path);
+            }
+        }
+    }
+}
+
+fn merge_conversation_summaries_db(src_db: &Path, dst_db: &Path) {
+    if !src_db.is_file() {
+        return;
+    }
+    if !dst_db.is_file() {
+        copy_file_if_newer(src_db, dst_db);
+        return;
+    }
+    let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+        src_db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return;
+    };
+    let _ = src_conn.busy_timeout(Duration::from_secs(1));
+    let Ok(dst_conn) = rusqlite::Connection::open(dst_db) else {
+        return;
+    };
+    let _ = dst_conn.busy_timeout(Duration::from_secs(1));
+    let Ok(mut stmt) = src_conn.prepare(
+        "SELECT conversation_id, title, last_modified_time, workspace_uris, parent_conversation_id, nesting_depth
+         FROM conversation_summaries",
+    ) else {
+        return;
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+        ))
+    }) else {
+        return;
+    };
+    for row in rows.flatten() {
+        let (id, title, modified, uris, parent_id, depth) = row;
+        let _ = dst_conn.execute(
+            "INSERT OR IGNORE INTO conversation_summaries
+             (conversation_id, title, last_modified_time, workspace_uris, parent_conversation_id, nesting_depth)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, title, modified, uris, parent_id, depth],
+        );
+    }
+}
+
+/// 将本机默认 `~/.gemini/antigravity-cli` 及其他隔离账号目录中的对话历史（`brain/`、`conversations/`、
+/// `annotations/`、`conversation_summaries.db`、`cache/conversation_metadata.json`）增量同步到当前隔离账号目录，
+/// 使右键选择任意 TerminalBuddy 账号启动或切换账号恢复历史时，都能正常加载已有 `agy` 会话，且不触碰任何登录凭据。
+fn sync_agy_history_into_profile(source_gemini_dir: &Path, profile_dir: &Path) {
+    let target_cli = profile_dir.join(".gemini").join("antigravity-cli");
+    let _ = fs::create_dir_all(&target_cli);
+
+    let mut source_cli_roots: Vec<PathBuf> = Vec::new();
+    let host_cli = source_gemini_dir.join("antigravity-cli");
+    if host_cli.is_dir() && host_cli != target_cli {
+        source_cli_roots.push(host_cli);
+    }
+    if let Some(profiles_parent) = profile_dir.parent() {
+        if let Ok(entries) = fs::read_dir(profiles_parent) {
+            for entry in entries.flatten() {
+                let Ok(kind) = entry.file_type() else { continue; };
+                if !kind.is_dir() {
+                    continue;
+                }
+                let sibling_dir = entry.path();
+                if sibling_dir == profile_dir {
+                    continue;
+                }
+                let sibling_cli = sibling_dir.join(".gemini").join("antigravity-cli");
+                if sibling_cli.is_dir() && sibling_cli != target_cli {
+                    source_cli_roots.push(sibling_cli);
+                }
+            }
+        }
+    }
+
+    for src_cli in source_cli_roots {
+        for sub in ["brain", "conversations", "annotations"] {
+            sync_dir_if_newer(&src_cli.join(sub), &target_cli.join(sub));
+        }
+        copy_file_if_newer(
+            &src_cli.join("cache").join("conversation_metadata.json"),
+            &target_cli.join("cache").join("conversation_metadata.json"),
+        );
+        merge_conversation_summaries_db(
+            &src_cli.join("conversation_summaries.db"),
+            &target_cli.join("conversation_summaries.db"),
+        );
     }
 }
 

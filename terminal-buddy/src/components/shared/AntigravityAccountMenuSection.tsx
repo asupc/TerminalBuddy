@@ -7,6 +7,8 @@ import './ClaudeModelMenuSection.css';
 interface AntigravityAccountMenuSectionProps {
   itemClassName: string;
   separatorClassName: string;
+  /** 分组标题，默认 Antigravity (agy)，历史恢复场景可传「指定账号恢复」。 */
+  title?: string;
   /** 选择某个账号启动：`null` 表示系统当前默认登录态，否则为已录入账号 ID。 */
   onPickAccount: (accountId: string | null) => void;
   /** 跳转到设置页管理 Antigravity 多账号。 */
@@ -20,6 +22,7 @@ interface AntigravityAccountMenuSectionProps {
 export const AntigravityAccountMenuSection: FC<AntigravityAccountMenuSectionProps> = ({
   itemClassName,
   separatorClassName,
+  title = 'Antigravity (agy)',
   onPickAccount,
   onManageAccounts,
 }) => {
@@ -30,7 +33,7 @@ export const AntigravityAccountMenuSection: FC<AntigravityAccountMenuSectionProp
     <>
       <div className={separatorClassName} />
       <div className={`${itemClassName} claude-model-menu-head`}>
-        Antigravity (agy)
+        {title}
       </div>
       {accounts.map(account => (
         <div

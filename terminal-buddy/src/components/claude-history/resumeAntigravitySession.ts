@@ -4,6 +4,7 @@ import { clientTerminalOwner, defaultShellType } from '../../services/platform';
 import { effectiveProfilePath, normalizeProjectPath, projectForDirectory } from '../../utils/projectPath';
 import { isModelRefLocalType } from '../../utils/claudeLaunch';
 import {
+  ANTIGRAVITY_ACCOUNT_REF_PREFIX,
   antigravityAccountIdFromCommand,
   buildAntigravityLaunchCommand,
   buildAntigravityResumeCommand,
@@ -33,24 +34,43 @@ export function pickAntigravityProfile(profiles: Profile[], projectDir: string):
   return candidates.sort((a, b) => score(b) - score(a))[0];
 }
 
+export interface AntigravityResumeOptions {
+  /** 显式指定恢复账号：string 为 TerminalBuddy 管理的账号 ID，null 为系统默认登录；未传则按历史来源目录自动判断。 */
+  accountId?: string | null;
+}
+
+function stripAntigravityAccountRef(command: string): string {
+  const trimmed = command.trimStart();
+  if (!trimmed.startsWith(ANTIGRAVITY_ACCOUNT_REF_PREFIX)) return command;
+  const rest = trimmed.slice(ANTIGRAVITY_ACCOUNT_REF_PREFIX.length);
+  const spaceIdx = rest.search(/\s/);
+  return spaceIdx >= 0 ? rest.slice(spaceIdx).trimStart() : '';
+}
+
 export async function resumeAntigravitySession(
   session: ResumableClaudeSession,
+  options?: AntigravityResumeOptions,
 ): Promise<void> {
   const store = useAppStore.getState();
-  const live = store.sessions.find(item =>
-    item.extraParamMode === 'independent' && resumedAntigravitySessionId(item.extraParams) === session.sessionId);
-  if (live) {
-    focusTerminalById(live.id);
-    return;
+  const explicitAccount = options !== undefined && 'accountId' in options;
+  if (!explicitAccount) {
+    const live = store.sessions.find(item =>
+      item.extraParamMode === 'independent' && resumedAntigravitySessionId(item.extraParams) === session.sessionId);
+    if (live) {
+      focusTerminalById(live.id);
+      return;
+    }
   }
   if (!session.projectDir) throw new Error('该会话缺少工作目录，无法恢复');
   const profile = pickAntigravityProfile(store.profiles, session.projectDir);
   const project = projectForDirectory(store.projects, session.projectDir);
   const accountFromFile = session.filePath?.match(/[\\/]antigravity-profiles[\\/]([A-Za-z0-9_-]+)[\\/]/i)?.[1] ?? null;
   const rawBaseCommand = profile?.startupCommands.find(cmd => isAntigravityCommand(cmd)) ?? currentAntigravityCommand();
-  const baseCommand = accountFromFile && !antigravityAccountIdFromCommand(rawBaseCommand)
-    ? buildAntigravityLaunchCommand(rawBaseCommand, accountFromFile)
-    : rawBaseCommand;
+  const baseCommand = explicitAccount
+    ? buildAntigravityLaunchCommand(stripAntigravityAccountRef(rawBaseCommand), options?.accountId ?? null)
+    : (accountFromFile && !antigravityAccountIdFromCommand(rawBaseCommand)
+      ? buildAntigravityLaunchCommand(rawBaseCommand, accountFromFile)
+      : rawBaseCommand);
   const command = buildAntigravityResumeCommand(
     session.sessionId,
     baseCommand,

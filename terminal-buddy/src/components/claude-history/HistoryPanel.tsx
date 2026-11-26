@@ -37,6 +37,8 @@ import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { supportsSystemExplorerOpen } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
+import { AntigravityAccountMenuSection } from '../shared/AntigravityAccountMenuSection';
+import { resumeAntigravitySession } from './resumeAntigravitySession';
 import { ClaudeExportDialog } from './ClaudeExportDialog';
 import { type ClaudeVendorRef } from './resumeClaudeSession';
 import type { Project, SessionHistoryProvider } from '../../types';
@@ -484,6 +486,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
       sessionId: item.sessionId,
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
+      filePath: item.filePath,
     }).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
   }, [history, liveTerminalBySession, provider, resumeNative, showToast]);
 
@@ -498,6 +501,15 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
       projectDir: item.projectDir,
     }, vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
   }, [history, liveTerminalBySession, provider, resumeNative, showToast]);
+
+  const handleResumeAntigravityWithAccount = useCallback((item: ClaudeSessionItem, accountId: string | null) => {
+    void resumeAntigravitySession({
+      sessionId: item.sessionId,
+      title: item.customTitle || item.title,
+      projectDir: item.projectDir,
+      filePath: item.filePath,
+    }, { accountId }).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
+  }, [showToast]);
 
   const handleReplay = useCallback((sessionId: string, title: string, projectDir: string, focusSeq?: number) => {
     openClaudeReplayTab({ sessionId, title, projectDir, focusSeq, provider });
@@ -902,6 +914,19 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
                 handleResumeWithModel(item, { providerId, modelId });
               }}
               onGotoProviders={() => { setContextMenu(null); useAppStore.getState().setProviderSettingsTab(provider); openSettingsDialog('llm-providers'); }}
+            />
+          )}
+          {provider === 'antigravity' && (
+            <AntigravityAccountMenuSection
+              itemClassName="claude-hist-context-item"
+              separatorClassName="claude-hist-context-sep"
+              title="指定账号恢复"
+              onPickAccount={(accountId) => {
+                const item = contextMenuItem;
+                setContextMenu(null);
+                handleResumeAntigravityWithAccount(item, accountId);
+              }}
+              onManageAccounts={() => { setContextMenu(null); useAppStore.getState().setProviderSettingsTab('antigravity'); openSettingsDialog('llm-providers'); }}
             />
           )}
           <MenuItem
