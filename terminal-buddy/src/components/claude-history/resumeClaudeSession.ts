@@ -11,6 +11,7 @@ export interface ResumableClaudeSession {
   sessionId: string;
   title: string;
   projectDir: string;
+  filePath?: string;
 }
 
 /** 指定模型恢复：引用标记指向的供应商与模型。 */

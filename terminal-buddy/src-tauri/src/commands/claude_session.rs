@@ -157,6 +157,23 @@ pub fn get_agent_sessions_for_terminals(
         .into_iter()
         .filter(|(id, record)| requested.contains(id) && matches!(record.provider.as_str(), "claude" | "codex" | "antigravity"))
         .collect();
+    // 退出前保存或刚启动不久时，后台 4 秒轮询可能尚未完成 agy / codex 会话发现；
+    // 对仍存活且尚未绑定的目标终端补做一次即时扫描，确保关闭前能拿到最新 sessionId。
+    let unbound_live_ids: Vec<String> = terminal_ids
+        .iter()
+        .filter(|id| live.contains(*id) && !sessions.contains_key(*id))
+        .cloned()
+        .collect();
+    if !unbound_live_ids.is_empty() {
+        let pids = terminal_processes(&unbound_live_ids, &service);
+        if !pids.is_empty() {
+            let _ = crate::services::terminal_task_service::summaries(pids);
+            sessions = crate::services::terminal_task_service::session_bindings()
+                .into_iter()
+                .filter(|(id, record)| requested.contains(id) && matches!(record.provider.as_str(), "claude" | "codex" | "antigravity"))
+                .collect();
+        }
+    }
     let missing: Vec<String> = terminal_ids
         .into_iter()
         // 存活终端只信任当前绑定，避免用户退出 Codex 回到 shell 后又被旧登记表误恢复。

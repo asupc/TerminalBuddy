@@ -4,6 +4,8 @@ import { clientTerminalOwner, defaultShellType } from '../../services/platform';
 import { effectiveProfilePath, normalizeProjectPath, projectForDirectory } from '../../utils/projectPath';
 import { isModelRefLocalType } from '../../utils/claudeLaunch';
 import {
+  antigravityAccountIdFromCommand,
+  buildAntigravityLaunchCommand,
   buildAntigravityResumeCommand,
   isAntigravityCommand,
   resumedAntigravitySessionId,
@@ -44,7 +46,11 @@ export async function resumeAntigravitySession(
   if (!session.projectDir) throw new Error('该会话缺少工作目录，无法恢复');
   const profile = pickAntigravityProfile(store.profiles, session.projectDir);
   const project = projectForDirectory(store.projects, session.projectDir);
-  const baseCommand = profile?.startupCommands.find(cmd => isAntigravityCommand(cmd)) ?? currentAntigravityCommand();
+  const accountFromFile = session.filePath?.match(/[\\/]antigravity-profiles[\\/]([A-Za-z0-9_-]+)[\\/]/i)?.[1] ?? null;
+  const rawBaseCommand = profile?.startupCommands.find(cmd => isAntigravityCommand(cmd)) ?? currentAntigravityCommand();
+  const baseCommand = accountFromFile && !antigravityAccountIdFromCommand(rawBaseCommand)
+    ? buildAntigravityLaunchCommand(rawBaseCommand, accountFromFile)
+    : rawBaseCommand;
   const command = buildAntigravityResumeCommand(
     session.sessionId,
     baseCommand,

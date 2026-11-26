@@ -88,6 +88,33 @@ pub(super) fn resolve_antigravity_home() -> Result<PathBuf, String> {
         .ok_or_else(|| "无法确定 Antigravity CLI 数据目录".to_string())
 }
 
+/// 汇总本机默认 `~/.gemini/antigravity-cli` 与所有多账号隔离目录下的 `antigravity-cli`，
+/// 确保历史会话列表能加载多账号隔离启动产生的全部对话记录。
+fn resolve_antigravity_roots() -> Result<Vec<PathBuf>, String> {
+    let mut roots = Vec::new();
+    let default_root = resolve_antigravity_home()?;
+    roots.push(default_root);
+    if let Ok(data_dir) = crate::services::PathService::require_data_dir() {
+        let profiles_dir = data_dir.join("antigravity-profiles");
+        if let Ok(entries) = fs::read_dir(&profiles_dir) {
+            for entry in entries.flatten() {
+                let Ok(kind) = entry.file_type() else { continue; };
+                if !kind.is_dir() { continue; }
+                let profile_dir = entry.path();
+                for candidate in [
+                    profile_dir.join(".gemini").join("antigravity-cli"),
+                    profile_dir.join("antigravity-cli"),
+                ] {
+                    if candidate.join("brain").is_dir() && !roots.iter().any(|r| r == &candidate) {
+                        roots.push(candidate);
+                    }
+                }
+            }
+        }
+    }
+    Ok(roots)
+}
+
 #[derive(Debug, Clone, Default)]
 struct SummaryMeta {
     title: String,
@@ -394,9 +421,18 @@ fn collect_files(root: &Path, summaries: &HashMap<String, SummaryMeta>) -> Resul
     Ok(files)
 }
 
+#[allow(dead_code)]
 fn scan_root(
     conn: &Connection,
     root: &Path,
+    limit: usize,
+) -> Result<SessionHistoryScanResult, String> {
+    scan_roots(conn, &[root.to_path_buf()], limit)
+}
+
+fn scan_roots(
+    conn: &Connection,
+    roots: &[PathBuf],
     limit: usize,
 ) -> Result<SessionHistoryScanResult, String> {
     let version = conn
@@ -423,8 +459,24 @@ fn scan_root(
         transaction.commit().map_err(|error| error.to_string())?;
     }
 
-    let summaries = read_summary_metadata(root);
-    let files = collect_files(root, &summaries)?;
+    let mut summaries = HashMap::new();
+    let mut files_by_id: HashMap<String, SessionFile> = HashMap::new();
+    for root in roots {
+        let root_summaries = read_summary_metadata(root);
+        let root_files = collect_files(root, &root_summaries)?;
+        for (id, meta) in root_summaries {
+            summaries.entry(id).or_insert(meta);
+        }
+        for file in root_files {
+            match files_by_id.get(&file.id) {
+                Some(existing) if existing.mtime >= file.mtime => {}
+                _ => {
+                    files_by_id.insert(file.id.clone(), file);
+                }
+            }
+        }
+    }
+    let files: Vec<SessionFile> = files_by_id.into_values().collect();
     let existing = {
         let mut statement = conn
             .prepare("SELECT session_id, file_path, file_mtime, file_size FROM antigravity_sessions")
@@ -547,7 +599,7 @@ fn scan_root(
     }
 
     let seen: HashSet<_> = files.iter().map(|file| file.id.as_str()).collect();
-    let brain_root = root.join("brain");
+    let brain_roots: Vec<PathBuf> = roots.iter().map(|r| r.join("brain")).collect();
     let mut statement = conn
         .prepare("SELECT session_id, file_path FROM antigravity_sessions")
         .map_err(|error| error.to_string())?;
@@ -563,7 +615,7 @@ fn scan_root(
         .map_err(|error| error.to_string())?;
     for (id, path) in stored {
         let path = Path::new(&path);
-        let in_root = path.starts_with(&brain_root);
+        let in_root = brain_roots.iter().any(|brain_root| path.starts_with(brain_root));
         let is_subagent = summaries.get(&id).is_some_and(|meta| meta.is_subagent);
         if is_subagent || (!seen.contains(id.as_str()) && (!path.exists() || !in_root)) {
             delete_rows(&transaction, &id, false)?;
@@ -583,21 +635,21 @@ fn scan_root(
 }
 
 pub fn scan_and_index(app: &AppHandle) -> Result<SessionHistoryScanResult, String> {
-    let root = resolve_antigravity_home()?;
+    let roots = resolve_antigravity_roots()?;
     let conn = DatabaseService::open()?;
     let result = {
         let _guard = index_lock()?;
-        scan_root(&conn, &root, BATCH_SIZE)?
+        scan_roots(&conn, &roots, BATCH_SIZE)?
     };
     if result.pending > 0 {
-        spawn_backfill(app.clone(), conn, root);
+        spawn_backfill(app.clone(), conn, roots);
     } else {
         crate::services::session_auto_archive_service::run_and_emit(app);
     }
     Ok(result)
 }
 
-fn spawn_backfill(app: AppHandle, conn: Connection, root: PathBuf) {
+fn spawn_backfill(app: AppHandle, conn: Connection, roots: Vec<PathBuf>) {
     static BACKFILLING: AtomicBool = AtomicBool::new(false);
     if BACKFILLING.swap(true, Ordering::SeqCst) {
         return;
@@ -614,7 +666,7 @@ fn spawn_backfill(app: AppHandle, conn: Connection, root: PathBuf) {
         loop {
             let result = (|| {
                 let _guard = index_lock()?;
-                scan_root(&conn, &root, BATCH_SIZE)
+                scan_roots(&conn, &roots, BATCH_SIZE)
             })();
             match result {
                 Ok(result) => {
