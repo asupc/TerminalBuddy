@@ -10,9 +10,10 @@ import { createTransfersSlice } from "./slices/transfersSlice";
 import { createWindowSlice } from "./slices/windowSlice";
 import { createClaudeLaunchSlice } from "./slices/claudeLaunchSlice";
 import { createAgentChatSlice } from "./slices/agentChatSlice";
-import type { AntigravityAccountState, CodexProviderState, LlmLaunchTarget } from "../services/tauri";
+import type { AgentCliEnvironment, AntigravityAccountState, CodexProviderState, LlmLaunchTarget } from "../services/tauri";
 
 interface SavedTab {
+	pinned?: boolean;
 	profileId: string;
 	profileName: string;
 	terminalType: string;
@@ -57,6 +58,7 @@ export interface ClaudeReplayTab {
 export type AgentTabShape = 'native' | 'relay';
 
 export interface NativeAgentTab {
+	pinned?: boolean;
 	key: string;
 	shape: 'native';
 	sessionId: string;
@@ -81,6 +83,7 @@ export type AgentTab = NativeAgentTab | RelayAgentTab;
 
 /** 持久化的原生会话标签：只存恢复所需的最小元数据，标题/状态在恢复时用服务端快照刷新。 */
 export interface SavedNativeAgentTab {
+	pinned?: boolean;
 	key: string;
 	sessionId: string;
 	title: string;
@@ -149,6 +152,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 			claudeSessionId: claudeIds[s.id],
 			agentSession: bindings[s.id],
 			manualTitle: s.manualTitle,
+			pinned: s.pinned,
 		}));
 		const resolvedActiveIndex = activeSessionId ? persistedSessions.findIndex((s) => s.id === activeSessionId) : -1;
 		const activeIndex = resolvedActiveIndex >= 0 ? resolvedActiveIndex : 0;
@@ -157,8 +161,8 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 		const state = useAppStore.getState();
 		const agentTabs: SavedNativeAgentTab[] = state.agentTabs
 			.filter((tab): tab is NativeAgentTab => tab.shape === "native")
-			.map(({ key, sessionId, title, provider, projectPath, model, openedAt }) => ({
-				key, sessionId, title, provider, projectPath, model, openedAt,
+			.map(({ key, sessionId, title, provider, projectPath, model, openedAt, pinned }) => ({
+				key, sessionId, title, provider, projectPath, model, openedAt, pinned,
 			}));
 		const agentViewActive = state.activeSpecialTab === "agent-chat" && state.activeAgentTabKey != null;
 		const activeAgentTabKey = state.activeAgentTabKey && agentTabs.some(tab => tab.key === state.activeAgentTabKey)
@@ -231,6 +235,7 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 			};
 		})(),
 		manualTitle: tab.manualTitle === true ? true : undefined,
+		pinned: tab.pinned === true ? true : undefined,
 	};
 }
 
@@ -308,6 +313,7 @@ function normalizeSavedAgentTab(raw: unknown): SavedNativeAgentTab | null {
 		projectPath: typeof tab.projectPath === "string" ? tab.projectPath : "",
 		model: typeof tab.model === "string" ? tab.model : null,
 		openedAt: typeof tab.openedAt === "number" && Number.isFinite(tab.openedAt) ? tab.openedAt : Date.now(),
+		pinned: tab.pinned === true ? true : undefined,
 	};
 }
 
@@ -554,7 +560,9 @@ export interface AppState {
 	clearCompletedTransfers: (terminalId: string) => void;
 	clearCompletedTransfersByProfile: (profileId: string) => void;
 
-	// Claude 模型启动：右键菜单数据源（挂载 + 供应商变更时刷新，右键打开时用缓存）
+	// Agent 启动：启动时预加载，设置变更时刷新，右键打开时直接使用内存缓存。
+	agentCliEnvironment: AgentCliEnvironment | null;
+	setAgentCliEnvironment: (environment: AgentCliEnvironment) => void;
 	/** Agent 管理的基础启动命令（空串 = 内置默认），供项目模型启动与历史恢复继承参数。 */
 	agentCommands: { claude: string; codex: string; antigravity: string };
 	setAgentCommands: (commands: { claude: string; codex: string; antigravity: string }) => void;

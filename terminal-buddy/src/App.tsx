@@ -22,6 +22,7 @@ import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings
 import { useAppStore, initFileTreeNav } from './stores/appStore';
 import { flushPendingSaveTabs } from './stores/slices/sessionsSlice';
 import { defaultShellType } from './services/platform';
+import { getAgentCliEnvironment, type AgentCliEnvironment } from './services/agentCli';
 import { getAllProfiles, getProjects, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, getAgentSessionsForTerminals, checkAppUpdate, readClientData, type UpdateInfo } from './services/tauri';
 import { compareVersions } from './utils/version';
 import { APP_VERSION } from './version';
@@ -222,6 +223,27 @@ function App() {
       window.removeEventListener('app-settings-changed', apply);
       window.removeEventListener('app-theme-changed', apply);
     };
+  }, []);
+
+  // 启动时预加载菜单数据，右键菜单挂载时只读取全局缓存。
+  useEffect(() => {
+    const {
+      setAgentCliEnvironment,
+      refreshClaudeLaunchTargets,
+      refreshCodexLaunchTargets,
+      refreshAntigravityAccounts,
+    } = useAppStore.getState();
+    void getAgentCliEnvironment().then(setAgentCliEnvironment).catch(() => {});
+    void refreshClaudeLaunchTargets();
+    void refreshCodexLaunchTargets();
+    void refreshAntigravityAccounts();
+
+    const onChange = (event: Event) => {
+      const environment = (event as CustomEvent<AgentCliEnvironment>).detail;
+      if (environment) setAgentCliEnvironment(environment);
+    };
+    window.addEventListener('agent-cli-status-changed', onChange);
+    return () => window.removeEventListener('agent-cli-status-changed', onChange);
   }, []);
 
   useEffect(() => {
@@ -567,6 +589,7 @@ function App() {
       try {
         await startMstsc(profile.id);
         await updateProfileLastUsed(profile.id);
+        useAppStore.getState().updateProfile({ ...profile, lastUsedAt: new Date().toISOString() });
       } catch (err) {
         console.error('Failed to start mstsc:', err);
         import('./services/dialog').then(({ showAlert }) =>
@@ -597,6 +620,7 @@ function App() {
       }),
       start: (rows, cols) => startTerminal(profile.id, extraParams, rows, cols, resolvedTabName, undefined, extraParamMode),
       onStarted: (terminalId) => {
+        useAppStore.getState().updateProfile({ ...profile, lastUsedAt: new Date().toISOString() });
         void updateProfileLastUsed(profile.id).catch(err => console.error('Failed to update profile last used:', err));
         const path = effectiveProfilePath(profile, useAppStore.getState().projects);
         if (path) {

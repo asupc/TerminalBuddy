@@ -138,6 +138,7 @@ export const BREATHING_LIGHT_COLORS: TabColorOption[] = TAB_COLORS.filter(
 
 export interface TerminalSession {
   id: string;
+  pinned?: boolean;
   profileId: string;
   profileName: string;
   terminalType: TerminalType;

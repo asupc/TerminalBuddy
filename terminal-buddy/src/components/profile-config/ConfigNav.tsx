@@ -1,4 +1,5 @@
 import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
+import { Plus } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { buildClaudeRefCommand, deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
@@ -491,10 +492,18 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     || scheduledTasksTabOpen
     || claudeReplayTabs.length > 0;
 
+  const profilePinMenuItem = contextMenu && (
+    <div className="context-menu-item" onClick={() => {
+      const target = profiles.find(profile => profile.id === contextMenu.profileId);
+      if (target) handleTogglePin(target);
+      closeContextMenu();
+    }}>{profiles.find(profile => profile.id === contextMenu.profileId)?.pinned ? '取消置顶' : '置顶'}</div>
+  );
+
   return (
     <div
       ref={containerRef}
-      className={`config-nav${isSidebarMode ? ' sidebar-mode' : ''} ${!configPanelVisible ? 'collapsed' : ''}`}
+      className={`config-nav${experimentalProjectTasks ? ' project-tasks-mode' : ''}${isSidebarMode ? ' sidebar-mode' : ''} ${!configPanelVisible ? 'collapsed' : ''}`}
       style={{ width }}
       onMouseDown={(e) => {
         if (e.button !== 0) return;
@@ -509,17 +518,21 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       <div className="panel-titlebar">
         <span className="panel-title">{experimentalProjectTasks ? '项目与任务' : '项目与命令'}</span>
         <span className="panel-title-count">{experimentalProjectTasks ? openSessionCount : profiles.length}</span>
-        <button type="button" className="config-nav-add-project" title="添加项目" onClick={() => editProject()}>+ 项目</button>
+        <button type="button" className="config-nav-add-project" title="添加项目" onClick={() => editProject()}>
+          {experimentalProjectTasks ? <><Plus aria-hidden="true" /><span>项目</span></> : '+ 项目'}
+        </button>
       </div>
-      <div className="config-nav-search-bar">
-        <input
-          type="text"
-          className="config-nav-search-input"
-          placeholder={experimentalProjectTasks ? '搜索项目、配置或会话...' : '搜索配置...'}
-          value={configSearchQuery}
-          onChange={(e) => setConfigSearchQuery(e.target.value)}
-        />
-      </div>
+      {!experimentalProjectTasks && (
+        <div className="config-nav-search-bar">
+          <input
+            type="text"
+            className="config-nav-search-input"
+            placeholder="搜索配置..."
+            value={configSearchQuery}
+            onChange={(e) => setConfigSearchQuery(e.target.value)}
+          />
+        </div>
+      )}
       <div className="config-nav-list" onContextMenu={(e) => {
         if ((e.target as HTMLElement).closest('.tree-item, .tab-nav-settings-btn')) return;
         e.preventDefault();
@@ -529,9 +542,12 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       }}>
         {experimentalProjectTasks ? (
           <>
+            {!hasAnyProjectTasksContent && (
+              <div className="empty-state">暂无项目或会话，点击新建</div>
+            )}
             <ProjectTasksView
               isActive={isActive}
-              searchQuery={configSearchQuery}
+              searchQuery=""
               selectedProfileId={selectedProfileId}
               renamingProfileId={renamingProfileId}
               renamingProfileName={renamingProfileName}
@@ -545,9 +561,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
               onCloseGroup={handleCloseGroup}
               onCloseExternalMenus={closeContextMenu}
             />
-            {!hasAnyProjectTasksContent && !configSearchQuery.trim() && (
-              <div className="empty-state">暂无项目或会话，点击新建</div>
-            )}
           </>
         ) : (
           <>
@@ -589,6 +602,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             if (target) onStartTerminal(target);
             closeContextMenu();
           }}>启动</div>
+          {experimentalProjectTasks && profilePinMenuItem}
           <div className="context-menu-item" onClick={async () => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             closeContextMenu();
@@ -644,11 +658,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             if (target) onEditProfile(target);
             closeContextMenu();
           }}>编辑</div>
-          <div className="context-menu-item" onClick={() => {
-            const target = profiles.find((p) => p.id === contextMenu.profileId);
-            if (target) handleTogglePin(target);
-            closeContextMenu();
-          }}>{profiles.find((p) => p.id === contextMenu.profileId)?.pinned ? '取消置顶' : '置顶'}</div>
+          {!experimentalProjectTasks && profilePinMenuItem}
           <div className="context-menu-item" onClick={() => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             if (target) onCopyProfile(target);

@@ -43,6 +43,7 @@ function load(file, mocks = {}) {
     if (name.endsWith('utils/tabActivation')) return tabActivation;
     if (name.endsWith('utils/claudeLaunch')) return claudeLaunch;
     if (name.endsWith('utils/codexLaunch')) return codexLaunch;
+    if (name.endsWith('utils/antigravityLaunch')) return antigravityLaunch;
     // 不同文件引用 slice 的相对前缀不同（./slices/… 与 ../stores/slices/…），
     // 统一按后缀兜底；store 的 create 被 mock 后 slice 工厂不会被真正调用。
     if (/(^|\/)slices\/\w+Slice$/.test(name)) return {};
@@ -223,3 +224,64 @@ assert.equal(
   'agy.exe',
 );
 console.log('PASS: 剥离 Antigravity --conversation / -c 恢复参数');
+
+// 置顶状态与现有页签快照一同保存和恢复，不引入新的存储。
+reset();
+const pinnedSession = { ...legacy, id: 'pinned-terminal', pinned: true };
+state.sessions = [pinnedSession];
+state.agentTabs = [{ key: 'agent:pinned', shape: 'native', sessionId: 'pinned', title: '置顶会话', provider: 'codex', projectPath: project.path, openedAt: 1, pinned: true }];
+await appStore.saveTabsToStorage(state.sessions, pinnedSession.id);
+let pinSnapshot = await appStore.loadSavedTabs();
+assert.equal(pinSnapshot.tabs[0].pinned, true);
+assert.equal(pinSnapshot.agentTabs[0].pinned, true);
+const persistedPin = JSON.parse(storedTabs);
+persistedPin.agentTabs = [];
+storedTabs = JSON.stringify(persistedPin);
+reset();
+await restore.restoreTabs();
+assert.equal(state.sessions[0].pinned, true);
+const malformedPin = JSON.parse(storedTabs);
+malformedPin.tabs[0].pinned = 'true';
+storedTabs = JSON.stringify(malformedPin);
+pinSnapshot = await appStore.loadSavedTabs();
+assert.equal(pinSnapshot.tabs[0].pinned, undefined);
+console.log('PASS: 终端与原生会话置顶状态随页签保存，终端恢复后保留置顶，非法标记不生效');
+
+const elements = node => Array.isArray(node) ? node.flatMap(elements)
+  : node && typeof node === 'object' ? [node, ...elements(node.props?.children)] : [];
+const content = node => typeof node === 'string' ? node
+  : Array.isArray(node) ? node.map(content).join('') : node && typeof node === 'object' ? content(node.props?.children) : '';
+const menuRows = tree => elements(tree).filter(node => node.props?.className === 'context-menu-item');
+let toggledSession;
+const pinMenu = TabContextMenu({
+  x: 0, y: 0, sessionId: legacy.id, sessions: [legacy], profiles: [],
+  onStartTerminal() {}, onClose() {}, onRename() {}, onCloseSession() {}, onCloseOthers() {},
+  onTogglePin: session => { toggledSession = session; },
+});
+const terminalRows = menuRows(pinMenu);
+const terminalLabels = terminalRows.map(content);
+assert.equal(terminalLabels.indexOf('置顶'), terminalLabels.indexOf('以此配置新建终端') + 1);
+terminalRows.find(row => content(row) === '置顶').props.onClick();
+assert.equal(toggledSession, legacy);
+
+const { AgentTabContextMenu } = load('src/components/shell/AgentTabContextMenu.tsx', {
+  react: { useState: () => [null, () => {}], useEffect: () => {} },
+  'react-dom': { createPortal: children => children },
+  '../../services/tauri': {},
+  '../../stores/appStore': { useAppStore: selector => selector(state) },
+  '../../utils/agentTabTerminalLaunch': {
+    describeAgentLaunchConfig: () => ({ hint: '', exact: true }), launchTerminalFromAgentTab() {},
+  },
+  './AgentTabContextMenu.css': {},
+});
+let agentPinToggled = false;
+const agentMenu = AgentTabContextMenu({
+  x: 0, y: 0, tab: { key: 'agent:pinned', sessionId: 'pinned', provider: 'codex', title: '置顶会话', projectPath: project.path, pinned: true },
+  onClose() {}, onTogglePin: () => { agentPinToggled = true; },
+});
+const agentRows = menuRows(agentMenu);
+const agentLabels = agentRows.map(content);
+assert.equal(agentLabels.indexOf('取消置顶'), agentLabels.findIndex(label => label.includes('以此配置新建终端')) + 1);
+agentRows.find(row => content(row) === '取消置顶').props.onClick();
+assert.equal(agentPinToggled, true);
+console.log('PASS: 终端和原生会话菜单的置顶/取消置顶紧跟启动操作，点击触发正确回调');

@@ -13,6 +13,10 @@ export type SessionLeaf =
   | { kind: 'git-changes'; tab: GitChangesTab }
   | { kind: 'git-history'; tab: GitHistoryTab };
 
+export type RecentProjectTask =
+  | { kind: 'terminal'; session: TerminalSession; timestamp: number }
+  | { kind: 'agent'; tab: NativeAgentTab; timestamp: number };
+
 export interface ProjectTasksGroup {
   id: string;
   label: string;
@@ -23,8 +27,11 @@ export interface ProjectTasksGroup {
 
 export interface ProjectTasksTreeModel {
   pinnedProfiles: Profile[];
+  pinnedSessions: SessionLeaf[];
   editorSessions: TerminalSession[];
   groups: ProjectTasksGroup[];
+  /** 只列出已启动的终端与原生 AI 会话，按创建／打开时间倒序排列。 */
+  recentItems: RecentProjectTask[];
   /** 已打开会话总数（终端 + 编辑器 + 原生 AI 会话），与会话标签面板标题计数口径一致。 */
   openSessionCount: number;
 }
@@ -86,10 +93,10 @@ function sessionLeafMatchesQuery(
 
 /**
  * 构建「项目与任务」树模型：
- * - 置顶配置单独抽到顶层「置顶」分组；
+ * - 置顶配置在顶层「置顶」分组展示，同时保留所属项目的配置入口；
  * - 编辑器会话单独归入顶层「文本编辑」分组；
  * - 项目节点直接承载该项目下所有已打开会话（终端 / 原生 AI / Git 视图），
- *   该项目下的未置顶命令配置统一收纳到「配置」子分组（仅当存在配置时展示）。
+ *   该项目下的命令配置统一收纳到「配置」子分组（仅当存在配置时展示）。
  */
 export function buildProjectTasksTree({
   projects,
@@ -105,10 +112,14 @@ export function buildProjectTasksTree({
   const query = searchQuery.trim().toLowerCase();
 
   const allPinnedProfiles = profiles.filter(p => p.pinned);
-  const normalProfiles = profiles.filter(p => !p.pinned);
   const allEditorSessions = sessions.filter(s => s.sessionType === 'editor');
   const terminalSessions = sessions.filter(s => s.sessionType !== 'editor');
   const nativeTabs = agentTabs.filter((tab): tab is NativeAgentTab => tab.shape === 'native');
+  const pinnedSessions: SessionLeaf[] = [
+    ...sessions.filter(session => session.pinned).map(session => ({ kind: 'terminal' as const, session })),
+    ...nativeTabs.filter(tab => tab.pinned).map(tab => ({ kind: 'agent' as const, tab })),
+  ].filter(leaf => !query || sessionLeafMatchesQuery(leaf, query, taskSummaries)
+    || resolveSessionLeafGroup(leaf, projects, profiles, tabGroups).toLowerCase().includes(query));
 
   const allLeaves: SessionLeaf[] = [
     ...(gitChangesTab ? [{ kind: 'git-changes' as const, tab: gitChangesTab }] : []),
@@ -134,7 +145,7 @@ export function buildProjectTasksTree({
   for (const project of projects) {
     ensureGroup(project.name);
   }
-  for (const profile of normalProfiles) {
+  for (const profile of profiles) {
     const groupName = ensureGroup(profile.group || '默认');
     profilesByGroup.get(groupName)!.push(profile);
   }
@@ -188,10 +199,24 @@ export function buildProjectTasksTree({
 
   groups.sort((a, b) => a.label.localeCompare(b.label, 'zh-CN', { numeric: true, sensitivity: 'base' }));
 
+  const recentItems: RecentProjectTask[] = [];
+  for (const group of groups) {
+    for (const leaf of group.sessions) {
+      if (leaf.kind === 'terminal') {
+        if (!leaf.session.pinned && !leaf.session.starting) recentItems.push({ ...leaf, timestamp: leaf.session.createdAt ?? 0 });
+      } else if (leaf.kind === 'agent' && !leaf.tab.pinned) {
+        recentItems.push({ ...leaf, timestamp: leaf.tab.openedAt });
+      }
+    }
+  }
+  recentItems.sort((a, b) => b.timestamp - a.timestamp);
+
   return {
     pinnedProfiles,
+    pinnedSessions,
     editorSessions,
     groups,
+    recentItems,
     openSessionCount: sessions.length + nativeTabs.length,
   };
 }

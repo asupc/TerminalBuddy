@@ -1,4 +1,4 @@
-import { FC, useEffect } from 'react';
+import { FC } from 'react';
 import { useAppStore } from '../../stores/appStore';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { openNewAgentSession } from '../../utils/openAgentChat';
@@ -21,20 +21,9 @@ interface ProjectLaunchMenuItemsProps {
  * 已有的原生会话不在这里列出：聊天标签会持久化并归在项目的标签分组下。
  */
 export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ project, onLaunched }) => {
-  const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
-  const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
-  const refreshAntigravityAccounts = useAppStore(s => s.refreshAntigravityAccounts);
-  // 环境检测结果：未安装的 Agent 不出现在项目右键菜单里（检测返回前视为可用）。
+  // 直接读取启动时加载的环境缓存；尚未确认可用时隐藏反重力入口。
   const agentAvailability = useAgentAvailability();
-  const showAntigravity = projectEnabledAgents(project).antigravity && (agentAvailability?.antigravity ?? true);
-
-  // 模型菜单数据源：首次打开时加载，之后用缓存（与 HistoryPanel 一致）。
-  useEffect(() => {
-    const state = useAppStore.getState();
-    if (!state.claudeLaunchTargetsLoaded) void refreshClaudeLaunchTargets();
-    if (!state.codexProviderState) void refreshCodexLaunchTargets();
-    if (!state.antigravityAccountState) void refreshAntigravityAccounts();
-  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets, refreshAntigravityAccounts]);
+  const showAntigravity = projectEnabledAgents(project).antigravity && agentAvailability?.antigravity === true;
 
   const gotoProvidersSettings = (source: 'claude' | 'codex' | 'antigravity') => {
     useAppStore.getState().setProviderSettingsTab(source);

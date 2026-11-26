@@ -10,13 +10,14 @@ interface AgentTabContextMenuProps {
   y: number;
   tab: NativeAgentTab;
   onClose: () => void;
+  onTogglePin?: () => void;
 }
 
 /**
  * 原生会话标签的右键菜单：与终端标签的「以此配置新建终端」对齐。
  * 菜单挂在标签栏 / 会话树上，关闭会话、定位标签等操作仍走各自的入口。
  */
-export const AgentTabContextMenu: FC<AgentTabContextMenuProps> = ({ x, y, tab, onClose }) => {
+export const AgentTabContextMenu: FC<AgentTabContextMenuProps> = ({ x, y, tab, onClose, onTogglePin }) => {
   const closeAgentTab = useAppStore(state => state.closeAgentTab);
   const setActiveAgentTab = useAppStore(state => state.setActiveAgentTab);
   const showToast = useAppStore(state => state.showToast);
@@ -61,6 +62,11 @@ export const AgentTabContextMenu: FC<AgentTabContextMenuProps> = ({ x, y, tab, o
           以此配置新建终端
           {!launchHint.exact && <span className="agent-tab-menu-note">基础命令</span>}
         </div>
+        {onTogglePin && (
+          <div className="context-menu-item" onClick={() => { onTogglePin(); onClose(); }}>
+            {tab.pinned ? '取消置顶' : '置顶'}
+          </div>
+        )}
         <div className="context-menu-item" onClick={() => {
           navigator.clipboard.writeText(tab.projectPath).catch(() => {});
           onClose();

@@ -27,6 +27,8 @@ const TYPE_ICONS: Record<string, string> = {
   powershell: 'PS', pwsh: 'PS7', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
 };
 
+type TaskSection = 'projects' | 'recent' | 'pinned';
+
 interface ProjectTasksViewProps {
   isActive: boolean;
   searchQuery: string;
@@ -113,7 +115,11 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     EDITOR_GROUP_ID,
     ...(isDockerClient() ? ['服务器工作区'] : []),
   ]));
+  const [collapsedConfigIds, setCollapsedConfigIds] = useState<Set<string>>(() => new Set());
   const [toolsCollapsed, setToolsCollapsed] = useState(false);
+  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
+  const [recentCollapsed, setRecentCollapsed] = useState(false);
+  const [selectionSection, setSelectionSection] = useState<TaskSection>('projects');
   const [relayCollapsed, setRelayCollapsed] = useState(false);
   const [replayCollapsed, setReplayCollapsed] = useState(false);
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
@@ -251,6 +257,15 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     });
   };
 
+  const toggleConfigExpand = (id: string) => {
+    setCollapsedConfigIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const handleRenameSubmit = (sessionId: string) => {
     const trimmed = renameValue.trim();
     if (trimmed && trimmed !== renameBaseline) renameSession(sessionId, trimmed);
@@ -265,7 +280,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
   const relayAgentTabs = agentTabs.filter(tab => tab.shape === 'relay');
   const hasTopSpecialSections = scheduledTasksTabOpen || relayAgentTabs.length > 0 || claudeReplayTabs.length > 0;
   const hasMainSections =
-    model.editorSessions.length > 0 || model.pinnedProfiles.length > 0 || model.groups.length > 0;
+    model.editorSessions.length > 0 || model.pinnedProfiles.length > 0 || model.pinnedSessions.length > 0 || model.groups.length > 0;
 
   const activateTerminalSession = (sessionId: string) => {
     const store = useAppStore.getState();
@@ -282,9 +297,9 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     }
   };
 
-  const renderProfileLeaf = (profile: Profile, paddingLeft: number) => {
-    const isSelected = lastClickRegion === 'config' && selectedProfileId === profile.id;
-    const isRenaming = renamingProfileId === profile.id;
+  const renderProfileLeaf = (profile: Profile, paddingLeft: number, section: TaskSection = 'projects') => {
+    const isSelected = selectionSection === section && lastClickRegion === 'config' && selectedProfileId === profile.id;
+    const isRenaming = renamingProfileId === profile.id && selectionSection === section;
     return (
       <div
         key={profile.id}
@@ -316,6 +331,8 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
           e.stopPropagation();
           setTabContextMenu(null);
           setAgentTabMenu(null);
+          setSelectionSection(section);
+          useAppStore.getState().setLastClickRegion('config');
           selectProfile(profile.id);
           onProfileContextMenu(e, profile.id);
         }}
@@ -348,13 +365,16 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     );
   };
 
-  const renderTerminalSessionLeaf = (session: TerminalSession, paddingLeft: number) => {
+  const renderTerminalSessionLeaf = (session: TerminalSession, paddingLeft: number, section: TaskSection = 'projects') => {
+    const inRecent = section === 'recent';
+    const active = selectionSection === section && lastClickRegion !== 'config'
+      && activeSpecialTab === null && activeSessionId === session.id;
     const isEditor = session.sessionType === 'editor';
     if (isEditor) {
       return (
         <div
           key={session.id}
-          className={`tree-item tab-nav-item${activeSpecialTab === null && activeSessionId === session.id ? ' active' : ''}`}
+          className={`tree-item tab-nav-item${active ? ' active' : ''}`}
           style={{ paddingLeft: `${paddingLeft}px` }}
           onMouseDown={(e) => {
             if (e.button !== 0) return;
@@ -425,10 +445,10 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     const provider = task?.provider ?? taskProviders[session.id] ?? launchInfo?.provider;
     const fallbackName = session.profileName;
 
-    if (renamingSessionId === session.id) {
+    if (renamingSessionId === session.id && selectionSection === section) {
       return (
         <div key={session.id} className="tree-item" style={{ paddingLeft: `${paddingLeft}px` }}>
-          {ledDot}
+          {inRecent ? <span className="project-tasks-session-icons">{ledDot}</span> : ledDot}
           <input
             ref={renameInputRef}
             className="tree-rename-input"
@@ -448,7 +468,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     return (
       <div
         key={session.id}
-        className={`tree-item tab-nav-item${activeSpecialTab === null && activeSessionId === session.id ? ' active' : ''}`}
+        className={`tree-item tab-nav-item${active ? ' active' : ''}`}
         style={{ paddingLeft: `${paddingLeft}px` }}
         title={provider && session.createdAt ? `${session.profileName} · 运行 ${formatDuration(Date.now() - session.createdAt)}` : undefined}
         onMouseDown={(e) => {
@@ -473,7 +493,12 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
           setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId: session.id });
         }}
       >
-        {ledDot}
+        {inRecent ? (
+          <span className="project-tasks-session-icons">
+            {ledDot}
+            {provider && <AgentIcon provider={provider} className="tab-nav-agent-icon" />}
+          </span>
+        ) : ledDot}
         {provider ? (
           <SessionTaskLabel
             task={task}
@@ -481,6 +506,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
             fallbackProvider={provider}
             color={session.tabColor}
             manualTitle={session.manualTitle}
+            showProviderIcon={!inRecent}
           />
         ) : (
           <span className="tree-name" title={session.profileName} style={session.tabColor ? { color: session.tabColor } : undefined}>
@@ -508,9 +534,10 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     );
   };
 
-  const renderNativeAgentLeaf = (tab: NativeAgentTab, paddingLeft: number) => {
+  const renderNativeAgentLeaf = (tab: NativeAgentTab, paddingLeft: number, section: TaskSection = 'projects') => {
     const light = getNativeAgentLight(tab.status);
-    const active = activeSpecialTab === 'agent-chat' && activeAgentTabKey === tab.key;
+    const active = selectionSection === section && lastClickRegion !== 'config'
+      && activeSpecialTab === 'agent-chat' && activeAgentTabKey === tab.key;
     return (
       <div
         key={tab.key}
@@ -544,21 +571,23 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
           }
         }}
       >
-        <span
-          className={`tab-nav-dot${getIndicatorClassName(light)}`}
-          style={{ background: getIndicatorColor(light) }}
-          title={getIndicatorTitle(light, tab.provider) || undefined}
-          onClick={(e) => {
-            if (light === 'failed') {
-              e.stopPropagation();
-              useAppStore.getState().updateAgentTab(tab.key, { status: 'idle' });
-            } else if (light === 'attention') {
-              e.stopPropagation();
-              useAppStore.getState().setActiveAgentTab(tab.key);
-            }
-          }}
-        />
-        <AgentIcon provider={tab.provider} className="tab-nav-agent-icon" />
+        <span className="project-tasks-session-icons">
+          <span
+            className={`tab-nav-dot${getIndicatorClassName(light)}`}
+            style={{ background: getIndicatorColor(light) }}
+            title={getIndicatorTitle(light, tab.provider) || undefined}
+            onClick={(e) => {
+              if (light === 'failed') {
+                e.stopPropagation();
+                useAppStore.getState().updateAgentTab(tab.key, { status: 'idle' });
+              } else if (light === 'attention') {
+                e.stopPropagation();
+                useAppStore.getState().setActiveAgentTab(tab.key);
+              }
+            }}
+          />
+          <AgentIcon provider={tab.provider} className="tab-nav-agent-icon" />
+        </span>
         <span className="tree-name" title={tab.title}>{tab.title}</span>
         <span className="tree-item-end">
           <button
@@ -574,17 +603,17 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     );
   };
 
-  const renderSessionLeaf = (leaf: SessionLeaf, paddingLeft: number) => {
+  const renderSessionLeaf = (leaf: SessionLeaf, paddingLeft: number, section: TaskSection = 'projects') => {
     switch (leaf.kind) {
       case 'terminal':
-        return renderTerminalSessionLeaf(leaf.session, paddingLeft);
+        return renderTerminalSessionLeaf(leaf.session, paddingLeft, section);
       case 'agent':
-        return renderNativeAgentLeaf(leaf.tab, paddingLeft);
+        return renderNativeAgentLeaf(leaf.tab, paddingLeft, section);
       case 'git-changes':
         return (
           <div
             key="__git_changes__"
-            className={`tree-item tab-nav-item${activeSpecialTab === 'git-changes' ? ' active' : ''}`}
+            className={`tree-item tab-nav-item${selectionSection === section && lastClickRegion !== 'config' && activeSpecialTab === 'git-changes' ? ' active' : ''}`}
             style={{ paddingLeft: `${paddingLeft}px` }}
             title={`${leaf.tab.repoRoot} - 未提交变更`}
             onMouseDown={(e) => {
@@ -625,7 +654,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
         return (
           <div
             key="__git_history__"
-            className={`tree-item tab-nav-item${activeSpecialTab === 'git-history' ? ' active' : ''}`}
+            className={`tree-item tab-nav-item${selectionSection === section && lastClickRegion !== 'config' && activeSpecialTab === 'git-history' ? ' active' : ''}`}
             style={{ paddingLeft: `${paddingLeft}px` }}
             title={`${leaf.tab.repoRoot} - Git 历史记录`}
             onMouseDown={(e) => {
@@ -668,7 +697,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
   const renderProjectGroup = (group: ProjectTasksGroup) => {
     const hasChildren = group.profiles.length > 0 || group.sessions.length > 0;
     const isExpanded = isNodeExpanded(group.id, hasChildren);
-    const isSelected = lastClickRegion === 'config' && selectedProfileId === group.id;
+    const isSelected = selectionSection === 'projects' && lastClickRegion === 'config' && selectedProfileId === group.id;
 
     const groupTerminalSessions = group.sessions
       .filter((leaf): leaf is { kind: 'terminal'; session: TerminalSession } => leaf.kind === 'terminal')
@@ -682,13 +711,12 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     const hasMatchedProfilesInSearch = isSearching && group.profiles.some(
       p => p.name.toLowerCase().includes(trimmedQuery),
     );
-    const isConfigExpanded = isNodeExpanded(group.configGroupId, hasMatchedProfilesInSearch);
+    const isConfigExpanded = hasMatchedProfilesInSearch || !collapsedConfigIds.has(group.configGroupId);
 
     return (
-      <div key={group.id} className="tree-node">
+      <div key={group.id} className="tree-node project-tasks-project">
         <div
-          className={`tree-item tree-group-item${isSelected ? ' selected' : ''}`}
-          style={{ paddingLeft: '8px' }}
+          className={`tree-item tree-group-item project-tasks-project-header${isSelected ? ' selected' : ''}`}
           onMouseDown={(e) => {
             if (e.button !== 0) return;
             e.stopPropagation();
@@ -744,8 +772,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
               <div className="tree-node">
                 <div
                   className="tree-item project-tasks-config-group"
-                  style={{ paddingLeft: '20px' }}
-                  onClick={() => toggleExpand(group.configGroupId)}
+                  onClick={() => toggleConfigExpand(group.configGroupId)}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -756,7 +783,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
                 >
                   <span
                     className={`tree-arrow${isConfigExpanded ? ' expanded' : ''}`}
-                    onClick={(e) => { e.stopPropagation(); toggleExpand(group.configGroupId); }}
+                    onClick={(e) => { e.stopPropagation(); toggleConfigExpand(group.configGroupId); }}
                   >
                     <ChevronRight aria-hidden="true" />
                   </span>
@@ -767,13 +794,13 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
                   <span className="project-tasks-config-count">{group.profiles.length}</span>
                 </div>
                 {isConfigExpanded && (
-                  <div className="tree-children">
-                    {group.profiles.map(profile => renderProfileLeaf(profile, 34))}
+                  <div className="tree-children project-tasks-config-children">
+                    {group.profiles.map(profile => renderProfileLeaf(profile, 9))}
                   </div>
                 )}
               </div>
             )}
-            {group.sessions.map(leaf => renderSessionLeaf(leaf, 20))}
+            {group.sessions.map(leaf => renderSessionLeaf(leaf, 9))}
           </div>
         )}
       </div>
@@ -781,7 +808,11 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
   };
 
   return (
-    <div className="project-tasks-tree">
+    <div className="project-tasks-tree" onMouseDownCapture={(event) => {
+      if (event.button !== 0) return;
+      const section = (event.target as HTMLElement).closest<HTMLElement>('[data-task-section]')?.dataset.taskSection as TaskSection | undefined;
+      if (section) setSelectionSection(section);
+    }}>
       {scheduledTasksTabOpen && (
         <div className="tab-nav-group">
           <div
@@ -801,7 +832,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
           </div>
           {!toolsCollapsed && (
             <div
-              className={`tab-nav-settings-btn tab-nav-replay-item${activeSpecialTab === 'scheduled-tasks' ? ' active' : ''}`}
+              className={`tab-nav-settings-btn tab-nav-replay-item${lastClickRegion !== 'config' && activeSpecialTab === 'scheduled-tasks' ? ' active' : ''}`}
               onMouseDown={(e) => {
                 if (e.button !== 0) return;
                 e.stopPropagation();
@@ -853,7 +884,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
           {!relayCollapsed && relayAgentTabs.map(tab => (
             <div
               key={tab.key}
-              className={`tab-nav-settings-btn tab-nav-replay-item${activeSpecialTab === 'agent-chat' && activeAgentTabKey === tab.key ? ' active' : ''}`}
+              className={`tab-nav-settings-btn tab-nav-replay-item${lastClickRegion !== 'config' && activeSpecialTab === 'agent-chat' && activeAgentTabKey === tab.key ? ' active' : ''}`}
               onMouseDown={(e) => {
                 if (e.button !== 0) return;
                 e.stopPropagation();
@@ -904,7 +935,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
           {!replayCollapsed && claudeReplayTabs.map(tab => (
             <div
               key={sessionReplayTabKey(tab)}
-              className={`tab-nav-settings-btn tab-nav-replay-item${activeSpecialTab === 'claude-replay' && claudeReplayTab && sessionReplayTabKey(claudeReplayTab) === sessionReplayTabKey(tab) ? ' active' : ''}`}
+              className={`tab-nav-settings-btn tab-nav-replay-item${lastClickRegion !== 'config' && activeSpecialTab === 'claude-replay' && claudeReplayTab && sessionReplayTabKey(claudeReplayTab) === sessionReplayTabKey(tab) ? ' active' : ''}`}
               onMouseDown={(e) => {
                 if (e.button !== 0) return;
                 e.stopPropagation();
@@ -939,7 +970,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
       {model.editorSessions.length > 0 && (() => {
         const editorExpanded = isNodeExpanded(EDITOR_GROUP_ID, true);
         return (
-          <div className="tree-node">
+          <div className="tree-node" data-task-section="projects">
             <div
               className="tree-item tree-group-item"
               style={{ paddingLeft: '8px' }}
@@ -983,12 +1014,12 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
         );
       })()}
 
-      {model.pinnedProfiles.length > 0 && (() => {
+      {(model.pinnedProfiles.length > 0 || model.pinnedSessions.length > 0) && (() => {
         const pinnedExpanded = isNodeExpanded(PINNED_GROUP_ID, true);
         return (
-          <div className="tree-node">
+          <div className="tree-node project-tasks-section" data-task-section="pinned">
             <div
-              className="tree-item tree-group-item"
+              className="tree-item tree-group-item project-tasks-pinned-header"
               style={{ paddingLeft: '8px' }}
               onClick={() => toggleExpand(PINNED_GROUP_ID)}
               onContextMenu={(e) => {
@@ -1009,18 +1040,69 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
             </div>
             {pinnedExpanded && (
               <div className="tree-children">
-                {model.pinnedProfiles.map(profile => renderProfileLeaf(profile, 22))}
+                {model.pinnedProfiles.map(profile => renderProfileLeaf(profile, 22, 'pinned'))}
+                {model.pinnedSessions.map(leaf => renderSessionLeaf(leaf, 22, 'pinned'))}
               </div>
             )}
           </div>
         );
       })()}
 
-      {model.groups.map(renderProjectGroup)}
+      <section className="project-tasks-section" aria-label="项目">
+        <button
+          type="button"
+          className="project-tasks-section-heading"
+          aria-expanded={!projectsCollapsed}
+          aria-controls="project-tasks-project-list"
+          onClick={() => setProjectsCollapsed(value => !value)}
+        >
+          <span>项目</span>
+          <ChevronRight className={`project-tasks-section-arrow${projectsCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
+          <span className="project-tasks-section-count">{model.groups.length}</span>
+        </button>
+        <div id="project-tasks-project-list" data-task-section="projects" hidden={projectsCollapsed}>
+          {model.groups.map(renderProjectGroup)}
+        </div>
+      </section>
+
+      <section className="project-tasks-section project-tasks-recent-section" aria-label="最近运行会话">
+        <button
+          type="button"
+          className="project-tasks-section-heading"
+          aria-expanded={!recentCollapsed}
+          aria-controls="project-tasks-recent-list"
+          onClick={() => setRecentCollapsed(value => !value)}
+        >
+          <span>最近</span>
+          <ChevronRight className={`project-tasks-section-arrow${recentCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
+          <span className="project-tasks-section-count">{model.recentItems.length}</span>
+        </button>
+        <div id="project-tasks-recent-list" className="project-tasks-recent-list" data-task-section="recent" hidden={recentCollapsed}>
+          {!recentCollapsed && (
+            <>
+              {model.recentItems.map(item => {
+                switch (item.kind) {
+                  case 'terminal': return renderTerminalSessionLeaf(item.session, 10, 'recent');
+                  case 'agent': return renderNativeAgentLeaf(item.tab, 10, 'recent');
+                }
+              })}
+              {model.recentItems.length === 0 && !isSearching && (
+                <div className="empty-state">暂无已启动的终端或 AI 会话</div>
+              )}
+            </>
+          )}
+        </div>
+      </section>
 
       {isSearching && !hasMainSections && (
         <div className="empty-state">未找到匹配的项目、配置或会话</div>
       )}
+
+      <div className="project-tasks-footer">
+        <span>{fullModel.groups.length} 个项目</span>
+        <span aria-hidden="true">·</span>
+        <span>{fullModel.openSessionCount} 个已打开会话</span>
+      </div>
 
       {tabContextMenu && createPortal(
         <>
@@ -1049,6 +1131,13 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
               }
             }}
             onCloseSession={onCloseSession}
+            onTogglePin={(session) => {
+              useAppStore.getState().updateSession(session.id, { pinned: !session.pinned });
+              if (!session.pinned) {
+                setSelectionSection('pinned');
+                setExpandedIds(ids => new Set(ids).add(PINNED_GROUP_ID));
+              }
+            }}
             onCloseOthers={(sessionId) => {
               const editorSessions = sessions.filter(
                 s => s.sessionType === 'editor' && s.id !== sessionId,
@@ -1070,6 +1159,13 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
             x={agentTabMenu.x}
             y={agentTabMenu.y}
             tab={tab}
+            onTogglePin={() => {
+              useAppStore.getState().updateAgentTab(tab.key, { pinned: !tab.pinned });
+              if (!tab.pinned) {
+                setSelectionSection('pinned');
+                setExpandedIds(ids => new Set(ids).add(PINNED_GROUP_ID));
+              }
+            }}
             onClose={() => setAgentTabMenu(null)}
           />
         );

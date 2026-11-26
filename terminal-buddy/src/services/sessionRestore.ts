@@ -77,6 +77,7 @@ async function restoreEditorTab(tab: SavedTab): Promise<string | undefined> {
       groupId: 'editor-group',
       sessionType: 'editor',
       isDirty: false,
+      pinned: tab.pinned,
     };
     store.addSession(session, true);
     return session.id;
@@ -184,6 +185,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     extraParams: tab.profileId ? baseParams : tab.extraParams,
     extraParamMode: tab.extraParamMode,
     manualTitle: tab.manualTitle,
+    pinned: tab.pinned,
   }, true);
   // 统一回填 Agent 会话绑定；旧 claudeSessionId 同步派生。
   if (binding) {
@@ -227,6 +229,7 @@ function reattachLiveTerminalTab(tab: SavedTab, live: BackendTerminalInfo): stri
     extraParams: live.extraStartupParams ?? tab.extraParams,
     extraParamMode: live.extraStartupMode ?? tab.extraParamMode,
     manualTitle: tab.manualTitle,
+    pinned: tab.pinned,
   }, true);
   // 后端目录可能已在远程工作区期间被 cd 过，优先采用；否则回落到快照目录。
   const directory = live.directory || tab.directory;

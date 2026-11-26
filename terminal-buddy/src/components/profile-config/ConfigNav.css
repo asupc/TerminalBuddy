@@ -192,26 +192,282 @@
 }
 .project-edit-dialog .project-edit-agent-toggle input { width: auto; min-height: 0; accent-color: var(--accent); cursor: pointer; }
 
-/* 「项目与任务」实验性统一树样式：复用 TabNav 的呼吸灯、Logo 与项目分组条，并增加「配置」子分组层次。 */
-.project-tasks-tree > .tree-node:first-child > .tree-item.tree-group-item {
+/* 仅在实验性「项目与任务」视图中使用扁平侧栏布局。 */
+.config-nav.project-tasks-mode .panel-titlebar {
+  min-height: 64px;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 18px 20px 14px;
+  border-bottom: none;
+}
+
+.config-nav.project-tasks-mode .panel-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.config-nav.project-tasks-mode .panel-title-count {
+  flex-shrink: 0;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  font-size: 12px;
+}
+
+.config-nav.project-tasks-mode .config-nav-add-project {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  min-height: 28px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.config-nav.project-tasks-mode .config-nav-add-project:hover {
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
+}
+
+.config-nav.project-tasks-mode .config-nav-add-project svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.6;
+}
+
+.config-nav.project-tasks-mode .config-nav-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 12px 12px;
+}
+
+.project-tasks-tree {
+  --project-tasks-section-gap: 4px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.project-tasks-tree > * {
+  flex-shrink: 0;
+}
+
+.project-tasks-project {
+  margin-bottom: 3px;
+}
+
+.project-tasks-tree .tree-item {
+  min-height: 34px;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+
+.project-tasks-tree .tree-item.tree-group-item {
+  min-height: 38px;
+  gap: 10px;
   margin-top: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: transparent;
 }
 
 .project-tasks-tree .tree-item.tree-group-item.selected {
-  background: var(--list-active-bg);
-  color: var(--list-active-fg);
-  box-shadow: inset 0 0 0 var(--list-active-border-width) var(--list-active-border-color);
+  background: color-mix(in srgb, var(--text-primary) 6%, var(--bg-secondary));
+  box-shadow: none;
 }
 
-.project-tasks-tree .tree-item.tree-group-item.selected .tree-group-name,
-.project-tasks-tree .tree-item.tree-group-item.selected .tree-arrow,
-.project-tasks-tree .tree-item.tree-group-item.selected .tree-group-icon {
-  color: var(--list-active-fg);
+.project-tasks-tree .tree-item.tree-group-item:hover {
+  background: var(--list-hover-bg);
 }
 
-.project-tasks-config-group {
-  min-height: 26px;
+.project-tasks-tree .tree-group-name {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.project-tasks-tree .tree-group-icon {
   color: var(--text-secondary);
+}
+
+.project-tasks-tree .tree-group-icon svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.6;
+}
+
+.project-tasks-tree .tree-arrow {
+  order: 1;
+  width: 12px;
+  height: 16px;
+}
+
+.project-tasks-tree .tree-arrow svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 1.6;
+}
+
+.project-tasks-tree .tree-group-item .tree-item-count {
+  min-width: 12px;
+  padding: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-tasks-project > .tree-children {
+  margin: var(--project-tasks-section-gap) 0 8px 17px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+.project-tasks-config-children {
+  margin: var(--project-tasks-section-gap) 0 0 12px;
+  padding-left: 4px;
+}
+
+.project-tasks-tree .tab-nav-item.active::before,
+.project-tasks-tree .tab-nav-settings-btn::before {
+  display: none;
+}
+
+.project-tasks-tree .tab-nav-item.active,
+.project-tasks-tree .tab-nav-settings-btn.active {
+  color: var(--list-active-fg);
+}
+
+.project-tasks-tree .tab-nav-group-header {
+  min-height: 32px;
+  padding: 4px 10px;
+  margin-bottom: var(--project-tasks-section-gap);
+}
+
+.project-tasks-tree .tab-nav-group-name,
+.project-tasks-tree .project-tasks-pinned-header .tree-group-name {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.project-tasks-tree .project-tasks-pinned-header {
+  min-height: 32px;
+  margin-bottom: 0;
+}
+
+.project-tasks-pinned-header .tree-group-icon {
+  display: none;
+}
+
+.project-tasks-pinned-header .tree-group-name {
+  flex: 0 1 auto;
+}
+
+.project-tasks-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  width: 100%;
+  margin-bottom: 0;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-tasks-section-heading:hover {
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
+}
+
+.project-tasks-section-heading:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.project-tasks-section-arrow {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  stroke-width: 1.6;
+  transition: transform var(--motion-fast) var(--ease-standard);
+}
+
+.project-tasks-section-arrow.expanded {
+  transform: rotate(90deg);
+}
+
+.project-tasks-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--project-tasks-section-gap);
+}
+
+.project-tasks-section + .project-tasks-section {
+  margin-top: var(--project-tasks-section-gap);
+}
+
+.project-tasks-section .project-tasks-project:last-child,
+.project-tasks-section .project-tasks-project:last-child > .tree-children {
+  margin-bottom: 0;
+}
+
+.project-tasks-session-icons {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.project-tasks-recent-list .project-tasks-session-icons,
+.project-tasks-recent-list .tree-icon,
+.project-tasks-recent-list .tab-nav-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-tasks-section-arrow {
+    transition: none;
+  }
+}
+
+.project-tasks-section-count {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.project-tasks-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+  padding: 22px 10px 2px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.project-tasks-tree .project-tasks-config-group {
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .project-tasks-config-icon {

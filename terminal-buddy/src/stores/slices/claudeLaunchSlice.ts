@@ -10,6 +10,8 @@ import {
 export const createClaudeLaunchSlice = (
 	set: StoreApi<AppState>["setState"],
 ): Partial<AppState> => ({
+	agentCliEnvironment: null,
+	setAgentCliEnvironment: (environment) => set({ agentCliEnvironment: environment }),
 	/** Agent 管理的基础启动命令（空串 = 内置默认），供项目模型启动与历史恢复继承参数。 */
 	agentCommands: { claude: '', codex: '', antigravity: '' },
 	setAgentCommands: (commands) => set({ agentCommands: commands }),

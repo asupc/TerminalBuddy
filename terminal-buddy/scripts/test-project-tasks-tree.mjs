@@ -14,7 +14,8 @@ function load(file, mocks = {}) {
     .replace(/import\.meta\.env\.DEV/g, 'false')
     .replace(/import\.meta\.env/g, '({})');
   const { outputText } = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX },
+    fileName: filename,
     fileName: filename,
   });
   const module = { exports: {} };
@@ -26,7 +27,7 @@ function load(file, mocks = {}) {
     if (name.startsWith('.')) throw new Error('Missing mock: ' + name);
     return require(name);
   };
-  new Function('require', 'module', 'exports', outputText)(mockedRequire, module, module.exports);
+  new Function('require', 'module', 'exports', 'document', outputText)(mockedRequire, module, module.exports, { body: {} });
   return module.exports;
 }
 
@@ -75,7 +76,7 @@ const model = buildProjectTasksTree({
   taskSummaries,
 });
 
-// 1. 置顶配置抽离到 pinnedProfiles，不进入项目配置分组
+// 1. 置顶配置在 pinnedProfiles 中聚合，并保留原项目中的配置入口
 assert.deepEqual(model.pinnedProfiles.map(p => p.id), ['p2']);
 // 2. 编辑器会话归入 editorSessions
 assert.deepEqual(model.editorSessions.map(s => s.id), ['s4']);
@@ -89,7 +90,7 @@ const def = model.groups.find(g => g.id === '默认');
 
 assert.ok(alpha && beta && def);
 assert.equal(alpha.configGroupId, projectConfigGroupId('Alpha'));
-assert.deepEqual(alpha.profiles.map(p => p.id), ['p1']);
+assert.deepEqual(alpha.profiles.map(p => p.id), ['p1', 'p2']);
 assert.deepEqual(
   alpha.sessions.map(leaf => (leaf.kind === 'terminal' ? leaf.session.id : leaf.kind)),
   ['git-changes', 's1', 's2'],
@@ -168,3 +169,227 @@ const searchByProject = buildProjectTasksTree({
 assert.deepEqual(searchByProject.groups.map(g => g.id), ['Beta']);
 assert.equal(searchByProject.groups[0].sessions.length, 3);
 console.log('PASS: 搜索过滤按项目名、配置名、会话名与任务摘要生效');
+
+// 最近列表只展示已启动会话，配置即使用过也不加入列表。
+const recentProfiles = [
+  { ...profiles[0], lastUsedAt: '2026-11-26T10:05:00Z' },
+  { ...profiles[0], id: 'used-script', name: '构建脚本', lastUsedAt: '2026-11-26T10:03:00Z' },
+  { ...profiles[1], id: 'pinned-script', name: '置顶脚本', lastUsedAt: '2026-11-26T10:01:00Z' },
+  { ...profiles[0], id: 'unused-script', lastUsedAt: null },
+  { ...profiles[0], id: 'invalid-time', lastUsedAt: 'invalid-date' },
+];
+const recentSessions = [
+  { ...sessions[0], createdAt: Date.parse('2026-11-26T10:02:00Z') },
+  { ...sessions[2] },
+  { ...sessions[3], createdAt: Date.parse('2026-11-26T09:00:00Z') },
+];
+const recentAgentTabs = [
+  { ...agentTabs[0], openedAt: Date.parse('2026-11-26T10:04:00Z') },
+  agentTabs[1],
+];
+const recentInput = {
+  projects, profiles: recentProfiles, sessions: recentSessions, agentTabs: recentAgentTabs,
+  tabGroups, gitChangesTab, gitHistoryTab, taskSummaries,
+};
+const snapshot = JSON.stringify(recentInput);
+const recentModel = buildProjectTasksTree(recentInput);
+const recentKey = item => item.kind === 'terminal' ? `terminal:${item.session.id}`
+  : `agent:${item.tab.key}`;
+assert.deepEqual(recentModel.recentItems.map(recentKey), [
+  'agent:agent:1', 'terminal:s1', 'terminal:s3',
+]);
+assert.equal(JSON.stringify(recentInput), snapshot);
+console.log('PASS: 最近只显示已启动终端与原生 AI 会话，不包含配置或编辑器，按时间倒序排列');
+
+// 配置名称不会产生最近条目，项目名和会话摘要仍可命中运行会话。
+assert.deepEqual(
+  buildProjectTasksTree({ ...recentInput, searchQuery: '构建脚本' }).recentItems.map(recentKey),
+  [],
+);
+assert.deepEqual(
+  buildProjectTasksTree({ ...recentInput, searchQuery: '重构侧边栏' }).recentItems.map(recentKey),
+  ['terminal:s1'],
+);
+assert.deepEqual(
+  buildProjectTasksTree({ ...recentInput, searchQuery: 'beta' }).recentItems.map(recentKey),
+  ['agent:agent:1'],
+);
+assert.deepEqual(
+  buildProjectTasksTree({ ...recentInput, searchQuery: '不存在的内容' }).recentItems,
+  [],
+);
+console.log('PASS: 最近列表按运行会话搜索，不因配置匹配而添加启动入口');
+
+// 关闭会话后直接移除条目，不回退成配置启动入口。
+const closedModel = buildProjectTasksTree({
+  ...recentInput, sessions: recentSessions.filter(session => session.id !== 's1'),
+});
+assert.deepEqual(closedModel.recentItems.map(recentKey), ['agent:agent:1', 'terminal:s3']);
+const startingModel = buildProjectTasksTree({
+  ...recentInput, sessions: recentSessions.map(session => session.id === 's1' ? { ...session, starting: true } : session),
+});
+assert.deepEqual(startingModel.recentItems.map(recentKey), ['agent:agent:1', 'terminal:s3']);
+console.log('PASS: 已关闭会话和启动占位不显示，不会回退为配置条目');
+
+const pinnedModel = buildProjectTasksTree({
+  ...recentInput,
+  sessions: recentSessions.map(session => session.id === 's1' ? { ...session, pinned: true } : session),
+  agentTabs: recentAgentTabs.map(tab => tab.shape === 'native' ? { ...tab, pinned: true } : tab),
+});
+assert.deepEqual(pinnedModel.pinnedSessions.map(item => item.kind === 'terminal' ? item.session.id : item.tab.key), ['s1', 'agent:1']);
+assert.deepEqual(pinnedModel.pinnedProfiles.map(profile => profile.id), ['pinned-script']);
+assert.deepEqual(pinnedModel.recentItems.map(recentKey), ['terminal:s3']);
+assert.equal(pinnedModel.openSessionCount, recentModel.openSessionCount);
+assert.ok(pinnedModel.groups.some(group => group.sessions.some(item => item.kind === 'terminal' && item.session.id === 's1')));
+const pinSearch = buildProjectTasksTree({
+  ...recentInput, sessions: [{ ...recentSessions[0], pinned: true }], searchQuery: '重构侧边栏',
+});
+assert.deepEqual(pinSearch.pinnedSessions.map(item => item.session.id), ['s1']);
+console.log('PASS: 置顶支持会话、原生 AI 与脚本，最近列表不重复展示置顶项，项目归属和计数保持正确');
+
+// 直接驱动组件事件，验证重复列表只高亮当前点击位置，不需要浏览器或真实终端。
+let hookIndex = 0;
+const hookState = [];
+const useState = initial => {
+  const index = hookIndex++;
+  if (!(index in hookState)) hookState[index] = typeof initial === 'function' ? initial() : initial;
+  return [hookState[index], value => {
+    hookState[index] = typeof value === 'function' ? value(hookState[index]) : value;
+  }];
+};
+const viewState = {
+  ...recentInput, groups: tabGroups, activeSessionId: 's1', selectedProfileId: null,
+  gitHistoryTab, gitChangesTab, claudeReplayTab: null, claudeReplayTabs: [],
+  activeSpecialTab: null, scheduledTasksTabOpen: false, activeAgentTabKey: null,
+  terminalActivities: {}, terminalWebTakeovers: {}, lastClickRegion: 'tab', splitMode: 'off',
+  setLastClickRegion: value => { viewState.lastClickRegion = value; },
+  selectProfile: value => { viewState.selectedProfileId = value; },
+  setActiveSession: value => { viewState.activeSessionId = value; viewState.activeSpecialTab = null; },
+  setActiveAgentTab: value => { viewState.activeAgentTabKey = value; viewState.activeSpecialTab = 'agent-chat'; },
+  updateSession: (id, patch) => { viewState.sessions = viewState.sessions.map(item => item.id === id ? { ...item, ...patch } : item); },
+  updateAgentTab: (key, patch) => { viewState.agentTabs = viewState.agentTabs.map(item => item.key === key ? { ...item, ...patch } : item); },
+};
+const useViewStore = selector => selector(viewState);
+useViewStore.getState = () => viewState;
+const Noop = () => null;
+const { ProjectTasksView } = load('src/components/profile-config/ProjectTasksView.tsx', {
+  react: { useState, useMemo: callback => callback(), useRef: value => ({ current: value }), useEffect: () => {} },
+  'react-dom': { createPortal: children => children },
+  '../../services/platform': { isDockerClient: () => false },
+  '../../stores/appStore': { useAppStore: useViewStore },
+  '../../stores/taskSummaryStore': { useTaskSummaryStore: selector => selector({ summaries: taskSummaries, providers: {} }) },
+  '../../utils/projectTasksTree': { buildProjectTasksTree, EDITOR_GROUP_ID: '__editors__', PINNED_GROUP_ID: '__pinned__' },
+  '../../utils/claudeIndicator': {
+    getIndicatorClassName: () => '', getIndicatorColor: () => '#55b988', getIndicatorTitle: () => '',
+    getNativeAgentLight: () => 'idle', getIndicatorLight: () => 'idle',
+  },
+  '../../utils/formatDuration': { formatDuration: () => '' },
+  '../../utils/taskLaunchInfo': { getTaskLaunchInfo: () => undefined },
+  '../agent-chat/AgentIcon': { AgentIcon: Noop },
+  '../shell/AgentTabContextMenu': { AgentTabContextMenu: Noop },
+  '../shell/SessionTaskLabel': { SessionTaskLabel: Noop },
+  '../shell/TabContextMenu': { TabContextMenu: Noop },
+  '../../utils/visibility': { onPageVisible: () => () => {} },
+  '../file-explorer/TreeView.css': {}, '../shell/TabNav.css': {},
+});
+let profileLaunches = 0;
+const viewProps = {
+  isActive: true, searchQuery: '', renamingProfileId: null, renamingProfileName: '',
+  onRenamingProfileChange: Noop, onRenamingProfileSubmit: Noop, onRenamingProfileCancel: Noop,
+  onStartTerminal: () => { profileLaunches += 1; }, onProfileContextMenu: Noop, onGroupContextMenu: Noop,
+  onCloseSession: Noop, onCloseGroup: Noop, onCloseExternalMenus: Noop,
+};
+const renderView = () => {
+  hookIndex = 0;
+  return ProjectTasksView({ ...viewProps, selectedProfileId: viewState.selectedProfileId });
+};
+const nodes = node => {
+  if (Array.isArray(node)) return node.flatMap(nodes);
+  if (!node || typeof node !== 'object') return [];
+  return [node, ...nodes(node.props?.children)];
+};
+const selectedRows = tree => nodes(tree).filter(node => /\b(tree-item|tab-nav-settings-btn)\b/.test(node.props?.className ?? '')
+  && /\b(active|selected)\b/.test(node.props.className));
+const mouseDown = { button: 0, stopPropagation() {} };
+const selectSection = (tree, section) => tree.props.onMouseDownCapture({
+  button: 0, target: { closest: () => ({ dataset: { taskSection: section } }) },
+});
+const recentRow = (tree, key) => nodes(nodes(tree).find(node => node.props?.id === 'project-tasks-recent-list'))
+  .find(node => node.key === key && /\btree-item\b/.test(node.props?.className ?? ''));
+const clickProject = (tree, name) => {
+  selectSection(tree, 'projects');
+  const row = nodes(tree).find(node => /\bproject-tasks-project-header\b/.test(node.props?.className ?? '')
+    && nodes(node).some(child => child.props?.className === 'tree-group-name' && child.props.children === name));
+  row.props.onMouseDown(mouseDown);
+  row.props.onClick();
+};
+let view = renderView();
+clickProject(view, 'Alpha');
+view = renderView();
+assert.equal(selectedRows(view).length, 1);
+const initiallyExpandedProjectList = nodes(view).find(node => node.props?.id === 'project-tasks-project-list');
+const initiallyVisibleProfiles = nodes(initiallyExpandedProjectList)
+  .filter(node => /\bproject-tasks-profile-item\b/.test(node.props?.className ?? '')).map(node => node.key);
+assert.ok(initiallyVisibleProfiles.includes('p1'), '展开项目应直接显示原有配置');
+assert.ok(initiallyVisibleProfiles.includes('pinned-script'), '置顶配置应保留原项目中的入口');
+clickProject(view, 'Beta');
+view = renderView();
+assert.equal(selectedRows(view).length, 1);
+assert.ok(nodes(selectedRows(view)[0]).some(node => node.props?.children === 'Beta'));
+selectSection(view, 'recent');
+recentRow(view, 's1').props.onMouseDown(mouseDown);
+recentRow(view, 's1').props.onClick();
+view = renderView();
+assert.equal(selectedRows(view).length, 1);
+assert.equal(selectedRows(view)[0].key, 's1');
+assert.equal(recentRow(view, 'used-script'), undefined);
+selectSection(view, 'projects');
+const configurationList = nodes(view).find(node => node.props?.id === 'project-tasks-project-list');
+const configuredScript = nodes(configurationList).find(node => node.key === 'used-script');
+configuredScript.props.onMouseDown(mouseDown);
+configuredScript.props.onClick();
+view = renderView();
+assert.equal(selectedRows(view).length, 1);
+assert.equal(selectedRows(view)[0].key, 'used-script');
+assert.equal(profileLaunches, 0);
+viewState.scheduledTasksTabOpen = true;
+viewState.activeSpecialTab = 'scheduled-tasks';
+view = renderView();
+assert.equal(selectedRows(view).length, 1);
+assert.equal(selectedRows(view)[0].key, 'used-script');
+console.log('PASS: 项目单选与最近会话高亮互斥，最近没有配置启动入口');
+
+selectSection(view, 'recent');
+recentRow(view, 's1').props.onMouseDown(mouseDown);
+recentRow(view, 's1').props.onClick();
+recentRow(view, 's1').props.onContextMenu({ preventDefault() {}, stopPropagation() {} });
+view = renderView();
+const terminalMenu = nodes(view).find(node => node.props?.sessionId === 's1' && node.props.onTogglePin);
+terminalMenu.props.onTogglePin(viewState.sessions.find(session => session.id === 's1'));
+terminalMenu.props.onClose();
+view = renderView();
+assert.equal(recentRow(view, 's1'), undefined);
+assert.equal(selectedRows(view).length, 1);
+assert.equal(selectedRows(view)[0].key, 's1');
+assert.ok(viewState.sessions.find(session => session.id === 's1').pinned);
+console.log('PASS: 会话置顶后显示在置顶分组，最近列表移除重复项，仍只有一个选中背景');
+
+selectSection(view, 'projects');
+const projectList = nodes(view).find(node => node.props?.id === 'project-tasks-project-list');
+nodes(projectList).find(node => node.props?.className === 'tree-item project-tasks-config-group').props.onClick();
+view = renderView();
+const collapsedProjectList = nodes(view).find(node => node.props?.id === 'project-tasks-project-list');
+assert.ok(!nodes(collapsedProjectList).some(node => node.key === 'used-script'));
+clickProject(view, 'Alpha');
+view = renderView();
+clickProject(view, 'Alpha');
+view = renderView();
+const reopenedProjectList = nodes(view).find(node => node.props?.id === 'project-tasks-project-list');
+assert.ok(!nodes(reopenedProjectList).some(node => node.key === 'used-script'), '手动收起配置后，重开项目应保留折叠状态');
+nodes(reopenedProjectList).find(node => node.props?.className === 'tree-item project-tasks-config-group').props.onClick();
+view = renderView();
+const expandedProjectList = nodes(view).find(node => node.props?.id === 'project-tasks-project-list');
+nodes(expandedProjectList).find(node => node.key === 'used-script' && /\bproject-tasks-profile-item\b/.test(node.props?.className ?? '')).props.onDoubleClick();
+assert.equal(profileLaunches, 1);
+console.log('PASS: 展开项目默认显示全部配置，置顶配置保留项目入口，并支持手动折叠及恢复');
+console.log('PASS: 项目配置仍可显式启动，最近列表只切换已有会话');

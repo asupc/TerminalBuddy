@@ -18,6 +18,7 @@ interface TabContextMenuProps {
   onRename: (session: TerminalSession | undefined) => void;
   onCloseSession: (sessionId: string) => void;
   onCloseOthers: (sessionId: string) => void;
+  onTogglePin?: (session: TerminalSession) => void;
 }
 
 /** 选项卡右键菜单：重命名 / 以此配置新建 / 复制配置名 / 打开目录 / 关闭。 */
@@ -32,6 +33,7 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
   onRename,
   onCloseSession,
   onCloseOthers,
+  onTogglePin,
 }) => {
   const session = sessions.find(s => s.id === sessionId);
 
@@ -76,6 +78,11 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
           }
           onClose();
         }}>以此配置新建终端</div>
+      )}
+      {session && onTogglePin && (
+        <div className="context-menu-item" onClick={() => { onTogglePin(session); onClose(); }}>
+          {session.pinned ? '取消置顶' : '置顶'}
+        </div>
       )}
       {session && session.sessionType !== 'editor' && (
         <div className="context-menu-item" onClick={() => {
