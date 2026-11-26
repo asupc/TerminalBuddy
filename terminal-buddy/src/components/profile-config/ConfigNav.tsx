@@ -32,6 +32,7 @@ interface ConfigPanelProps {
   isActive: boolean;
   isSidebarMode: boolean;
   experimentalProjectTasks?: boolean;
+  startupRestoreComplete: boolean;
   onStartTerminal: (profile: Profile, extraParams?: string, tabName?: string, extraParamMode?: ExtraParamMode) => void;
   onStartBlankTerminal?: (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => void;
   onStartTextEditor?: () => void;
@@ -44,6 +45,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   isActive,
   isSidebarMode,
   experimentalProjectTasks = false,
+  startupRestoreComplete,
   onStartTerminal,
   onStartBlankTerminal,
   onStartTextEditor,
@@ -547,6 +549,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             )}
             <ProjectTasksView
               isActive={isActive}
+              startupRestoreComplete={startupRestoreComplete}
               searchQuery=""
               selectedProfileId={selectedProfileId}
               renamingProfileId={renamingProfileId}

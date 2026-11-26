@@ -2,6 +2,7 @@ import { FC, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CalendarClock, ChevronRight, FileText, Folder, FolderOpen, SlidersHorizontal, X } from 'lucide-react';
 import { isDockerClient } from '../../services/platform';
+import { readClientData, writeClientData } from '../../services/tauri';
 import { sessionReplayTabKey, useAppStore, type NativeAgentTab } from '../../stores/appStore';
 import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import type { ExtraParamMode, Profile, TerminalSession } from '../../types';
@@ -28,8 +29,19 @@ const TYPE_ICONS: Record<string, string> = {
 
 type TaskSection = 'projects' | 'recent' | 'pinned';
 
+interface ProjectTasksViewState {
+  expandedIds: string[];
+  collapsedConfigIds: string[];
+  toolsCollapsed: boolean;
+  projectsCollapsed: boolean;
+  recentCollapsed: boolean;
+  relayCollapsed: boolean;
+  replayCollapsed: boolean;
+}
+
 interface ProjectTasksViewProps {
   isActive: boolean;
+  startupRestoreComplete: boolean;
   searchQuery: string;
   selectedProfileId: string | null;
   renamingProfileId: string | null;
@@ -64,6 +76,7 @@ function sessionLeafKey(leaf: SessionLeaf): string {
  */
 export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
   isActive,
+  startupRestoreComplete,
   searchQuery,
   selectedProfileId,
   renamingProfileId,
@@ -114,6 +127,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     ...(isDockerClient() ? ['服务器工作区'] : []),
   ]));
   const [collapsedConfigIds, setCollapsedConfigIds] = useState<Set<string>>(() => new Set());
+  const [viewStateLoaded, setViewStateLoaded] = useState(false);
   const [toolsCollapsed, setToolsCollapsed] = useState(false);
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
   const [recentCollapsed, setRecentCollapsed] = useState(true);
@@ -126,7 +140,48 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
   const [renameValue, setRenameValue] = useState('');
   const [renameBaseline, setRenameBaseline] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
-  const prevSessionKeysRef = useRef<Set<string>>(new Set());
+  const prevSessionKeysRef = useRef<Set<string> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void readClientData('project_tasks_view').then(raw => {
+      if (cancelled || !raw) return;
+      const saved: Partial<ProjectTasksViewState> | null = JSON.parse(raw);
+      if (!saved || typeof saved !== 'object') return;
+      if (Array.isArray(saved.expandedIds)) {
+        setExpandedIds(new Set(saved.expandedIds.filter(id => typeof id === 'string')));
+      }
+      if (Array.isArray(saved.collapsedConfigIds)) {
+        setCollapsedConfigIds(new Set(saved.collapsedConfigIds.filter(id => typeof id === 'string')));
+      }
+      if (typeof saved.toolsCollapsed === 'boolean') setToolsCollapsed(saved.toolsCollapsed);
+      if (typeof saved.projectsCollapsed === 'boolean') setProjectsCollapsed(saved.projectsCollapsed);
+      if (typeof saved.recentCollapsed === 'boolean') setRecentCollapsed(saved.recentCollapsed);
+      if (typeof saved.relayCollapsed === 'boolean') setRelayCollapsed(saved.relayCollapsed);
+      if (typeof saved.replayCollapsed === 'boolean') setReplayCollapsed(saved.replayCollapsed);
+    }).catch(error => {
+      console.error('读取项目与任务展开状态失败：', error);
+    }).finally(() => {
+      if (!cancelled) setViewStateLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!viewStateLoaded) return;
+    const state: ProjectTasksViewState = {
+      expandedIds: [...expandedIds],
+      collapsedConfigIds: [...collapsedConfigIds],
+      toolsCollapsed,
+      projectsCollapsed,
+      recentCollapsed,
+      relayCollapsed,
+      replayCollapsed,
+    };
+    void writeClientData('project_tasks_view', JSON.stringify(state)).catch(error => {
+      console.error('保存项目与任务展开状态失败：', error);
+    });
+  }, [viewStateLoaded, expandedIds, collapsedConfigIds, toolsCollapsed, projectsCollapsed, recentCollapsed, relayCollapsed, replayCollapsed]);
 
   // 终端运行时长后缀每 60s 刷新一次（页面隐藏时暂停）
   const [, setUptimeTick] = useState(0);
@@ -153,7 +208,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     searchQuery,
   }), [projects, profiles, sessions, agentTabs, tabGroups, gitChangesTab, gitHistoryTab, taskSummaries, searchQuery]);
 
-  // 新打开的终端、编辑器或原生会话自动展开所属项目，不干扰「配置」子分组折叠态。
+  // 启动恢复的旧会话只建立快照，之后新打开的会话才自动展开所属项目。
   const fullModel = useMemo(() => (
     searchQuery.trim()
       ? buildProjectTasksTree({
@@ -171,6 +226,10 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
   ), [searchQuery, model, projects, profiles, sessions, agentTabs, tabGroups, gitChangesTab, gitHistoryTab, taskSummaries]);
 
   useEffect(() => {
+    if (!viewStateLoaded || !startupRestoreComplete) {
+      prevSessionKeysRef.current = null;
+      return;
+    }
     const currentKeys = new Set<string>();
     const newlyActiveGroups = new Set<string>();
 
@@ -178,7 +237,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
       for (const leaf of group.sessions) {
         const key = `${group.id}\0${sessionLeafKey(leaf)}`;
         currentKeys.add(key);
-        if (!prevSessionKeysRef.current.has(key)) {
+        if (prevSessionKeysRef.current && !prevSessionKeysRef.current.has(key)) {
           newlyActiveGroups.add(group.id);
         }
       }
@@ -199,7 +258,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
         return changed ? next : prev;
       });
     }
-  }, [fullModel]);
+  }, [fullModel, viewStateLoaded, startupRestoreComplete]);
 
   // F2 快速重命名会话（仅在焦点位于会话区域时响应；配置与项目 F2 由 ConfigNav 处理）
   useEffect(() => {
@@ -237,6 +296,8 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, [tabContextMenu]);
+
+  if (!viewStateLoaded) return null;
 
   const toggleExpand = (id: string) => {
     setExpandedIds(prev => {

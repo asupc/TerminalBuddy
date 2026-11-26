@@ -256,10 +256,6 @@
   flex-shrink: 0;
 }
 
-.project-tasks-project {
-  margin-bottom: 3px;
-}
-
 .project-tasks-tree .tree-item {
   min-height: 34px;
   gap: 8px;
@@ -269,10 +265,10 @@
 }
 
 .project-tasks-tree .tree-item.tree-group-item {
-  min-height: 38px;
+  min-height: 34px;
   gap: 10px;
   margin-top: 0;
-  padding: 6px 10px;
+  padding: 5px 10px;
   border-radius: var(--radius-md);
   background: transparent;
 }
@@ -442,6 +438,11 @@
   justify-content: center;
   flex: 0 0 32px;
   width: 32px;
+}
+
+/* 状态灯固定靠左，缺少 Agent 图标时保留空位。 */
+.project-tasks-recent-list .project-tasks-session-icons {
+  justify-content: flex-start;
 }
 
 @media (prefers-reduced-motion: reduce) {

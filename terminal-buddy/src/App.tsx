@@ -93,6 +93,7 @@ function App() {
   const [defaultGroupForNewProfile, setDefaultGroupForNewProfile] = useState<string | undefined>();
   const [enableTabNav, setEnableTabNav] = useState(true);
   const [experimentalProjectTasks, setExperimentalProjectTasks] = useState(() => getAppSettings().experimentalProjectTasks);
+  const [startupRestoreComplete, setStartupRestoreComplete] = useState(false);
   const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
   const [showStatusBar, setShowStatusBar] = useState(() => getAppSettings().showStatusBar);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
@@ -325,6 +326,7 @@ function App() {
     })().finally(() => {
       // 启动流程结束（成功或失败）后才允许 web-resync 走重启恢复，避免与初始恢复并发。
       markStartupRestoreComplete();
+      setStartupRestoreComplete(true);
     });
   }, []);
 
@@ -805,6 +807,7 @@ function App() {
               isActive={windowMode !== 'panels-hidden' && (uiStyle !== 'sidebar' || sidebarPanel === 'config')}
               isSidebarMode={uiStyle === 'sidebar'}
               experimentalProjectTasks={experimentalProjectTasks}
+              startupRestoreComplete={startupRestoreComplete}
               onStartTerminal={handleStartTerminal}
               onStartBlankTerminal={handleStartBlankTerminal}
               onStartTextEditor={handleStartTextEditor}

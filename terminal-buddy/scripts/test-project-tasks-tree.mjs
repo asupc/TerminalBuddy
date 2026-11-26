@@ -27,7 +27,9 @@ function load(file, mocks = {}) {
     if (name.startsWith('.')) throw new Error('Missing mock: ' + name);
     return require(name);
   };
-  new Function('require', 'module', 'exports', 'document', outputText)(mockedRequire, module, module.exports, { body: {} });
+  new Function('require', 'module', 'exports', 'document', outputText)(mockedRequire, module, module.exports, {
+    body: {}, hidden: false, addEventListener() {}, removeEventListener() {},
+  });
   return module.exports;
 }
 
@@ -277,14 +279,49 @@ console.log('PASS: 置顶支持会话、原生 AI 与脚本，最近列表不重
 
 // 直接驱动组件事件，验证重复列表只高亮当前点击位置，不需要浏览器或真实终端。
 let hookIndex = 0;
+let hooksChanged = false;
 const hookState = [];
+let pendingEffects = [];
 const useState = initial => {
   const index = hookIndex++;
   if (!(index in hookState)) hookState[index] = typeof initial === 'function' ? initial() : initial;
   return [hookState[index], value => {
-    hookState[index] = typeof value === 'function' ? value(hookState[index]) : value;
+    const next = typeof value === 'function' ? value(hookState[index]) : value;
+    if (!Object.is(next, hookState[index])) {
+      hookState[index] = next;
+      hooksChanged = true;
+    }
   }];
 };
+const dependenciesChanged = (previous, next) => !previous || next.some((value, index) => !Object.is(value, previous[index]));
+const useMemo = (factory, dependencies) => {
+  const index = hookIndex++;
+  if (dependenciesChanged(hookState[index]?.dependencies, dependencies)) {
+    hookState[index] = { value: factory(), dependencies };
+  }
+  return hookState[index].value;
+};
+const useRef = initial => {
+  const index = hookIndex++;
+  if (!(index in hookState)) hookState[index] = { current: initial };
+  return hookState[index];
+};
+const useEffect = (effect, dependencies) => {
+  const index = hookIndex++;
+  if (dependenciesChanged(hookState[index]?.dependencies, dependencies)) {
+    pendingEffects.push(() => {
+      hookState[index]?.cleanup?.();
+      hookState[index] = { dependencies, cleanup: effect() };
+    });
+  }
+};
+const unmountView = () => {
+  for (const hook of hookState) hook?.cleanup?.();
+  hookState.length = 0;
+  pendingEffects = [];
+};
+let persistedViewState = null;
+const viewStateWrites = [];
 const viewState = {
   ...recentInput, groups: tabGroups, activeSessionId: 's1', selectedProfileId: null,
   gitHistoryTab, gitChangesTab, claudeReplayTab: null, claudeReplayTabs: [],
@@ -301,10 +338,24 @@ const useViewStore = selector => selector(viewState);
 useViewStore.getState = () => viewState;
 const Noop = () => null;
 const { ProjectTasksView } = load('src/components/profile-config/ProjectTasksView.tsx', {
-  react: { useState, useMemo: callback => callback(), useRef: value => ({ current: value }), useEffect: () => {} },
+  react: { useState, useMemo, useRef, useEffect },
   'react-dom': { createPortal: children => children },
   '../../services/platform': { isDockerClient: () => false },
-  '../../stores/appStore': { useAppStore: useViewStore },
+  '../../services/tauri': {
+    readClientData: async key => {
+      assert.equal(key, 'project_tasks_view');
+      return persistedViewState === null ? null : JSON.stringify(persistedViewState);
+    },
+    writeClientData: async (key, content) => {
+      assert.equal(key, 'project_tasks_view');
+      persistedViewState = JSON.parse(content);
+      viewStateWrites.push(persistedViewState);
+    },
+  },
+  '../../stores/appStore': {
+    useAppStore: useViewStore,
+    sessionReplayTabKey: tab => `${tab.provider}:${tab.sessionId}`,
+  },
   '../../stores/taskSummaryStore': { useTaskSummaryStore: selector => selector({ summaries: taskSummaries, providers: {} }) },
   '../../utils/projectTasksTree': { buildProjectTasksTree, PINNED_GROUP_ID: '__pinned__' },
   '../../utils/claudeIndicator': {
@@ -323,14 +374,22 @@ const { ProjectTasksView } = load('src/components/profile-config/ProjectTasksVie
 let profileLaunches = 0;
 const closeRequests = [];
 const viewProps = {
-  isActive: true, searchQuery: '', renamingProfileId: null, renamingProfileName: '',
+  isActive: true, startupRestoreComplete: false, searchQuery: '', renamingProfileId: null, renamingProfileName: '',
   onRenamingProfileChange: Noop, onRenamingProfileSubmit: Noop, onRenamingProfileCancel: Noop,
   onStartTerminal: () => { profileLaunches += 1; }, onProfileContextMenu: Noop, onGroupContextMenu: Noop,
   onCloseSession: id => closeRequests.push(id), onCloseGroup: Noop, onCloseExternalMenus: Noop,
 };
 const renderView = () => {
-  hookIndex = 0;
-  return ProjectTasksView({ ...viewProps, selectedProfileId: viewState.selectedProfileId });
+  let tree;
+  do {
+    hookIndex = 0;
+    hooksChanged = false;
+    tree = ProjectTasksView({ ...viewProps, selectedProfileId: viewState.selectedProfileId });
+    const effects = pendingEffects;
+    pendingEffects = [];
+    for (const effect of effects) effect();
+  } while (hooksChanged);
+  return tree;
 };
 const nodes = node => {
   if (Array.isArray(node)) return node.flatMap(nodes);
@@ -353,6 +412,10 @@ const clickProject = (tree, name) => {
   row.props.onClick();
 };
 let view = renderView();
+assert.equal(view, null, '读取折叠状态前不展示默认布局');
+assert.equal(viewStateWrites.length, 0, '读取完成前不能用默认状态覆盖存档');
+await new Promise(resolve => setImmediate(resolve));
+view = renderView();
 assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, true, '最近会话默认收起');
 assert.ok(!nodes(view).some(node => node.props?.className === 'tree-group-name' && node.props.children === '文本编辑'));
 clickProject(view, 'Alpha');
@@ -443,3 +506,95 @@ nodes(expandedProjectList).find(node => node.key === 'used-script' && /\bproject
 assert.equal(profileLaunches, 1);
 console.log('PASS: 展开项目默认显示全部配置，置顶配置保留项目入口，并支持手动折叠及恢复');
 console.log('PASS: 项目配置仍可显式启动，最近列表只切换已有会话');
+
+
+// 保存真实点击产生的折叠状态，再模拟进程退出、异步恢复与新建会话。
+nodes(view).find(node => node.props?.className === 'tree-item project-tasks-config-group').props.onClick();
+clickProject(view, 'Beta');
+nodes(view).find(node => node.props?.className?.includes('project-tasks-pinned-header')).props.onClick();
+viewState.claudeReplayTabs = [{ provider: 'claude', sessionId: 'replay:1', title: '历史回放' }];
+view = renderView();
+for (const header of nodes(view).filter(node => node.props?.className === 'tab-nav-group-header')) {
+  header.props.onClick();
+}
+nodes(view).find(node => node.props?.['aria-controls'] === 'project-tasks-project-list').props.onClick();
+view = renderView();
+const savedTreeState = structuredClone(persistedViewState);
+assert.deepEqual(savedTreeState, {
+  expandedIds: ['Alpha'],
+  collapsedConfigIds: [projectConfigGroupId('Alpha')],
+  toolsCollapsed: true,
+  projectsCollapsed: true,
+  recentCollapsed: false,
+  relayCollapsed: true,
+  replayCollapsed: true,
+});
+console.log('PASS: 手动展开和收起项目、配置、置顶、最近与辅助分组后保存完整状态');
+
+const liveSessions = viewState.sessions;
+const liveAgentTabs = viewState.agentTabs;
+unmountView();
+viewState.sessions = [];
+viewState.agentTabs = [];
+viewState.gitHistoryTab = null;
+viewState.gitChangesTab = null;
+const writesBeforeRestore = viewStateWrites.length;
+view = renderView();
+assert.equal(view, null);
+assert.equal(viewStateWrites.length, writesBeforeRestore, '冷启动读取完成前不写回默认值');
+await new Promise(resolve => setImmediate(resolve));
+view = renderView();
+assert.deepEqual(persistedViewState, savedTreeState);
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-project-list').props.hidden, true);
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, false);
+assert.ok(nodes(view).filter(node => node.props?.className === 'tab-nav-group-arrow collapsed').length >= 2);
+
+viewState.sessions = liveSessions;
+view = renderView();
+assert.deepEqual(persistedViewState, savedTreeState, '恢复终端与编辑器时不展开项目');
+// 最后一批 AI / Git 会话与启动完成同次渲染，也必须沿用保存的折叠状态。
+viewState.agentTabs = liveAgentTabs;
+viewState.gitHistoryTab = gitHistoryTab;
+viewState.gitChangesTab = gitChangesTab;
+viewProps.startupRestoreComplete = true;
+view = renderView();
+assert.deepEqual(persistedViewState, savedTreeState, '启动恢复完成时不将历史会话当成新会话');
+console.log('PASS: 冷启动恢复全部折叠状态，分批恢复终端、编辑器、AI 和 Git 会话均不自动展开');
+
+nodes(view).find(node => node.props?.['aria-controls'] === 'project-tasks-project-list').props.onClick();
+nodes(view).find(node => node.props?.['aria-controls'] === 'project-tasks-recent-list').props.onClick();
+view = renderView();
+const isProjectExpanded = (tree, name) => {
+  const header = nodes(tree).find(node => node.props?.className?.includes('project-tasks-project-header')
+    && nodes(node).some(child => child.props?.className === 'tree-group-name' && child.props.children === name));
+  return nodes(header).some(node => node.props?.className === 'tree-arrow expanded');
+};
+assert.equal(isProjectExpanded(view, 'Alpha'), true);
+assert.equal(isProjectExpanded(view, 'Beta'), false);
+assert.equal(isProjectExpanded(view, '默认'), false);
+viewState.agentTabs = [...viewState.agentTabs, { ...agentTabs[0], key: 'agent:new', sessionId: 'new' }];
+view = renderView();
+assert.equal(isProjectExpanded(view, 'Beta'), true, '启动后新建 Claude 原生会话自动展开所属项目');
+assert.equal(isProjectExpanded(view, '默认'), false, '新会话不展开无关项目');
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, true, '新会话不展开最近');
+assert.deepEqual(persistedViewState.collapsedConfigIds, savedTreeState.collapsedConfigIds);
+clickProject(view, 'Beta');
+view = renderView();
+viewState.sessions = [...viewState.sessions, { ...sessions[0], id: 'terminal:new', groupName: 'Beta' }];
+view = renderView();
+assert.equal(isProjectExpanded(view, 'Beta'), true, '启动后新建终端会话也只展开所属项目');
+assert.equal(isProjectExpanded(view, '默认'), false);
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, true);
+console.log('PASS: 启动后新建原生 AI 或终端会话只展开所属项目，保留最近与配置折叠状态');
+
+clickProject(view, 'Beta');
+view = renderView();
+const stateBeforeRemount = structuredClone(persistedViewState);
+unmountView();
+assert.equal(renderView(), null);
+await new Promise(resolve => setImmediate(resolve));
+view = renderView();
+assert.deepEqual(persistedViewState, stateBeforeRemount, '启动完成后重新打开视图也不因现有会话展开项目');
+assert.equal(isProjectExpanded(view, 'Beta'), false);
+unmountView();
+console.log('PASS: 重新挂载项目与任务视图保持最后状态，不重新展开已有会话项目');
