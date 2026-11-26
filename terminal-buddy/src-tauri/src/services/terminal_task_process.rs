@@ -17,6 +17,7 @@ pub(super) struct AntigravityProcessScope {
     pub terminal_id: String,
     pub process_id: u32,
     pub root: PathBuf,
+    pub started_at: SystemTime,
 }
 
 pub(super) struct AntigravityDiscovery {
@@ -298,6 +299,8 @@ fn open_antigravity_locks(process_ids: &HashSet<u32>, root: &Path) -> Vec<(Strin
 
 #[cfg(windows)]
 fn open_antigravity_locks(process_ids: &HashSet<u32>, root: &Path) -> Vec<(String, HashSet<u32>)> {
+    use std::os::windows::fs::OpenOptionsExt;
+
     let Ok(entries) = fs::read_dir(root.join("presence")) else { return Vec::new(); };
     let mut result = Vec::new();
     for entry in entries.flatten() {
@@ -305,9 +308,9 @@ fn open_antigravity_locks(process_ids: &HashSet<u32>, root: &Path) -> Vec<(Strin
         if !kind.is_file() { continue; }
         let path = entry.path();
         let Some(conversation_id) = lock_conversation_id(&path) else { continue; };
-        // 运行中的 `agy` 进程会独占打开 `presence/<uuid>.lock`；
-        // 先试探读写打开，跳过所有历史空闲锁文件，只对真正被锁住的文件调 Restart Manager。
-        if fs::OpenOptions::new().read(true).write(true).open(&path).is_ok() {
+        // 必须指定 share_mode(0) 请求独占打开：Go 默认以 FILE_SHARE_READ|WRITE 打开锁文件，
+        // 不加 share_mode(0) 时普通 OpenOptions::open 会直接成功并误跳过所有存活锁文件。
+        if fs::OpenOptions::new().read(true).write(true).share_mode(0).open(&path).is_ok() {
             continue;
         }
         let holders: HashSet<_> = restart_manager::holders(&path)
@@ -319,6 +322,74 @@ fn open_antigravity_locks(process_ids: &HashSet<u32>, root: &Path) -> Vec<(Strin
         }
     }
     result
+}
+
+/// 把 `agy` 进程的后代子进程（如语言服务 / ACP 子进程）一并纳入句柄归属集合，
+/// 防止锁文件由 `agy` 拉起的子进程持有而被漏判。
+fn expand_with_descendants(
+    agy_pids: &mut HashMap<u32, usize>,
+    processes: &[(u32, u32, String)],
+) {
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (pid, parent, _) in processes {
+        children.entry(*parent).or_default().push(*pid);
+    }
+    let mut queue: Vec<(u32, usize)> = agy_pids.iter().map(|(&pid, &depth)| (pid, depth)).collect();
+    while let Some((pid, depth)) = queue.pop() {
+        let Some(kids) = children.get(&pid) else { continue; };
+        for &kid in kids {
+            let next_depth = depth.saturating_add(1);
+            let should_push = match agy_pids.get(&kid) {
+                Some(&existing) if existing <= next_depth => false,
+                _ => {
+                    agy_pids.insert(kid, next_depth);
+                    true
+                }
+            };
+            if should_push {
+                queue.push((kid, next_depth));
+            }
+        }
+    }
+}
+
+/// 兜底：若 `presence/<uuid>.lock` 未命中（例如某些版本不常驻持锁），
+/// 当同一 `antigravity_root` 下只有一个未绑定的存活 `agy` 终端时，
+/// 选取该终端启动后最近更新的非子代理 `brain/<uuid>/.system_generated/logs/transcript*.jsonl`。
+fn latest_recent_antigravity_session(
+    root: &Path,
+    since: SystemTime,
+    subagents: &HashSet<String>,
+    already_bound: &HashSet<String>,
+) -> Option<String> {
+    let Ok(entries) = fs::read_dir(root.join("brain")) else { return None; };
+    let mut best: Option<(SystemTime, String)> = None;
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else { continue; };
+        if !kind.is_dir() { continue; }
+        let name = entry.file_name();
+        let Some(id) = name.to_str() else { continue; };
+        if uuid::Uuid::parse_str(id).is_err() || subagents.contains(id) || already_bound.contains(id) {
+            continue;
+        }
+        let logs = entry.path().join(".system_generated").join("logs");
+        let mut latest_mtime: Option<SystemTime> = None;
+        for file_name in ["transcript_full.jsonl", "transcript.jsonl"] {
+            let candidate = logs.join(file_name);
+            let Ok(meta) = fs::metadata(&candidate) else { continue; };
+            if !meta.is_file() { continue; }
+            let Ok(modified) = meta.modified() else { continue; };
+            if modified >= since && latest_mtime.is_none_or(|prev| modified > prev) {
+                latest_mtime = Some(modified);
+            }
+        }
+        if let Some(modified) = latest_mtime {
+            if best.as_ref().is_none_or(|(prev, _)| modified > *prev) {
+                best = Some((modified, id.to_string()));
+            }
+        }
+    }
+    best.map(|(_, id)| id)
 }
 
 pub(super) fn discover_antigravity_with_processes(
@@ -340,7 +411,8 @@ pub(super) fn discover_antigravity_with_processes(
     let mut trees = Vec::new();
     let mut roots = HashMap::<PathBuf, HashSet<u32>>::new();
     for scope in scopes {
-        let Some(agy_pids) = associated.remove(&scope.terminal_id) else { continue; };
+        let Some(mut agy_pids) = associated.remove(&scope.terminal_id) else { continue; };
+        expand_with_descendants(&mut agy_pids, processes);
         roots.entry(scope.root.clone()).or_default().extend(agy_pids.keys().copied());
         trees.push((scope, agy_pids));
     }
@@ -354,6 +426,7 @@ pub(super) fn discover_antigravity_with_processes(
         })
         .collect();
     let mut sessions = HashMap::new();
+    let mut unmatched_by_root: HashMap<PathBuf, Vec<(String, SystemTime)>> = HashMap::new();
     for (scope, agy_pids) in trees {
         let Some((locks, subagents)) = root_data.get(&scope.root) else { continue; };
         let mut candidates = Vec::new();
@@ -368,7 +441,23 @@ pub(super) fn discover_antigravity_with_processes(
         if let Some((depth, id)) = candidates.first() {
             if candidates.iter().filter(|(d, _)| d == depth).all(|(_, other)| other == id) {
                 sessions.insert(scope.terminal_id, (*id).clone());
+                continue;
             }
+        }
+        unmatched_by_root
+            .entry(scope.root)
+            .or_default()
+            .push((scope.terminal_id, scope.started_at));
+    }
+    let already_bound: HashSet<String> = sessions.values().cloned().collect();
+    for (root, unmatched) in unmatched_by_root {
+        if unmatched.len() != 1 {
+            continue;
+        }
+        let (terminal_id, started_at) = &unmatched[0];
+        let Some((_, subagents)) = root_data.get(&root) else { continue; };
+        if let Some(id) = latest_recent_antigravity_session(&root, *started_at, subagents, &already_bound) {
+            sessions.insert(terminal_id.clone(), id);
         }
     }
     AntigravityDiscovery { live_terminals, sessions }

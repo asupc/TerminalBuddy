@@ -894,6 +894,8 @@ pub(crate) fn summaries_with_live_agents(
             terminal_id: id.clone(),
             process_id: *pid,
             root: tracked.antigravity_root.clone(),
+            started_at: tracked.started_at.unwrap_or(SystemTime::UNIX_EPOCH)
+                .checked_sub(std::time::Duration::from_secs(5)).unwrap_or(SystemTime::UNIX_EPOCH),
         })
     }).collect();
     let agy_discovery = super::terminal_task_process::discover_antigravity_with_processes(agy_scopes, &all_processes);
