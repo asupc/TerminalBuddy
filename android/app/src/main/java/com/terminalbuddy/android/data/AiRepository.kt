@@ -111,6 +111,79 @@ class AiRepository(context: Context) {
         if (preferences.getString(key, null) != encoded) preferences.edit().putString(key, encoded).apply()
     }
 
+    /**
+     * 从服务端补拉斜杠命令与 Skill 清单：
+     * 1) 优先复用服务端任意同 Agent 存活会话已缓存的 `slashCatalog`；
+     * 2) 对 Claude 额外读取资产库已部署与 `~/.claude` / `<project>/.claude` 下的 skills / commands；
+     * 3) 兼容旧服务端：任一步失败静默忽略，不影响主流程。
+     */
+    suspend fun fetchServerSlashCatalog(agent: String, projectDir: String? = null): AiSlashCatalog? {
+        if (!store.loggedIn) return null
+        val fromSessions = runCatching {
+            sessions()
+                .asSequence()
+                .filter { it.provider.equals(agent, ignoreCase = true) }
+                .mapNotNull { it.slashCatalog }
+                .reduceOrNull { acc, next -> mergeSlashCatalogs(acc, next) ?: acc }
+        }.getOrNull()
+
+        val fromAssets = if (agent.equals("claude", ignoreCase = true)) {
+            val skills = LinkedHashSet<String>()
+            val commands = LinkedHashSet<String>()
+            val dir = projectDir?.trim()?.takeIf(String::isNotEmpty)
+
+            runCatching {
+                val list = historyCommand("list_claude_assets", jsonBody {
+                    if (dir != null) put("projectDir", dir) else put("projectDir", JsonNull)
+                }) as? JsonArray ?: return@runCatching
+                for (entry in list) {
+                    val obj = entry as? JsonObject ?: continue
+                    val deployments = obj["deployments"] as? JsonArray ?: continue
+                    if (deployments.isEmpty()) continue
+                    val kind = obj.text("kind")
+                    val name = obj.text("name").trim()
+                    if (name.isEmpty()) continue
+                    when (kind) {
+                        "skills" -> { skills.add(name); commands.add(name) }
+                        "commands" -> commands.add(name)
+                    }
+                }
+            }
+
+            suspend fun collectImportable(scope: String, scopeDir: String?) {
+                runCatching {
+                    val list = historyCommand("list_importable_claude_assets", jsonBody {
+                        put("scope", scope)
+                        if (scopeDir != null) put("projectDir", scopeDir) else put("projectDir", JsonNull)
+                    }) as? JsonArray ?: return@runCatching
+                    for (entry in list) {
+                        val obj = entry as? JsonObject ?: continue
+                        val kind = obj.text("kind")
+                        val name = obj.text("name").trim()
+                        if (name.isEmpty()) continue
+                        when (kind) {
+                            "skills" -> { skills.add(name); commands.add(name) }
+                            "commands" -> commands.add(name)
+                        }
+                    }
+                }
+            }
+            collectImportable("user", null)
+            if (dir != null) collectImportable("project", dir)
+
+            if (skills.isEmpty() && commands.isEmpty()) null
+            else AiSlashCatalog(skills = skills.toList(), slashCommands = commands.toList())
+        } else null
+
+        val merged = mergeSlashCatalogs(fromSessions, fromAssets)
+        if (merged != null) {
+            val combined = mergeSlashCatalogs(merged, cachedSlashCatalog(agent)) ?: merged
+            saveSlashCatalog(agent, combined)
+            return combined
+        }
+        return cachedSlashCatalog(agent)
+    }
+
     /** 连续发送方式是全局偏好，不随账号隔离：false 等当前回合任务完成后排队续发，true 原生插话。 */
     var sendSteer: Boolean
         get() = preferences.getBoolean("ai_send_steer", preferences.getBoolean("ai_send_immediate", false))

@@ -76,6 +76,7 @@ internal data class TerminalAgentUiState(
     val queuedReplies: List<String> = emptyList(),
     // 回复
     val draft: String = "",
+    val slashCatalog: AiSlashCatalog? = null,
     val sending: Boolean = false,
     val pendingReply: PendingTerminalReply? = null,
     val sendError: String? = null,
@@ -93,6 +94,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
     private val taskNotifications = (application as TerminalBuddyApplication).taskNotifications
     private val store = aiRepository.store
     private val repository = TerminalAgentRepository()
+    private var slashCatalogJob: Job? = null
     private val mutable = MutableStateFlow(TerminalAgentUiState())
     val state = mutable.asStateFlow()
 
@@ -264,6 +266,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
                 starting = false, startError = null, queuedReplies = restored,
             )
         }
+        refreshSlashCatalog(session.provider, session.directory)
         if (visible) connect()
         loadSnapshot()
         drainQueue()
@@ -299,8 +302,36 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
                 starting = true,
             )
         }
+        refreshSlashCatalog(provider, directory)
         // 启动态不接镜像：进入会话页即刷一次列表，由宿主 effect 等待绑定出现。
         refresh()
+    }
+
+    fun slashItems(draft: String): List<AiSlashItem> {
+        val state = mutable.value
+        val provider = state.selected?.provider?.takeIf(String::isNotBlank) ?: return emptyList()
+        val catalog = mergeSlashCatalogs(
+            state.slashCatalog ?: aiRepository.cachedSlashCatalog(provider),
+            defaultSlashCatalogForProvider(provider),
+        )
+        return slashCompletions(catalog, draft, includeTerminalCommands = true)
+    }
+
+    private fun refreshSlashCatalog(provider: String, directory: String?) {
+        if (provider.isBlank()) return
+        val cached = aiRepository.cachedSlashCatalog(provider)
+        if (cached != null) {
+            mutable.update { it.copy(slashCatalog = cached) }
+        }
+        slashCatalogJob?.cancel()
+        slashCatalogJob = viewModelScope.launch {
+            val fetched = aiRepository.fetchServerSlashCatalog(provider, directory) ?: return@launch
+            mutable.update { current ->
+                if (current.selected?.provider.equals(provider, ignoreCase = true)) {
+                    current.copy(slashCatalog = fetched)
+                } else current
+            }
+        }
     }
 
     /** 启动偏慢：只提示，不结束启动态（保留会话页与队列，继续等绑定）。 */

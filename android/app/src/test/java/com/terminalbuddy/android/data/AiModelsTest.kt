@@ -126,6 +126,36 @@ class AiModelsTest {
     }
 
     @Test
+    fun `slash completions support fullwidth slash standalone skills substring and terminal commands`() {
+        val catalog = AiSlashCatalog(
+            skills = listOf("code-review", "deploy-app"),
+            slashCommands = listOf("compact", "doctor"),
+            terminalSlashCommands = listOf("doctor"),
+        )
+        assertEquals(
+            listOf("compact", "code-review", "deploy-app"),
+            slashCompletions(catalog, "／").map { it.name },
+        )
+        assertEquals(
+            listOf("code-review"),
+            slashCompletions(catalog, "/review").map { it.name },
+        )
+        assertTrue(slashCompletions(catalog, "/doc", includeTerminalCommands = false).isEmpty())
+        assertEquals(
+            listOf("doctor"),
+            slashCompletions(catalog, "/doc", includeTerminalCommands = true).map { it.name },
+        )
+        val merged = mergeSlashCatalogs(
+            AiSlashCatalog(skills = listOf("s1"), slashCommands = listOf("compact")),
+            defaultSlashCatalogForProvider("claude"),
+        )
+        assertTrue(merged != null)
+        assertTrue("s1" in merged!!.skills)
+        assertTrue("compact" in merged.slashCommands)
+        assertTrue("model" in merged.slashCommands)
+    }
+
+    @Test
     fun `antigravity session decodes provider label and acp config options`() {
         val session = decode<AiSession>(
             """

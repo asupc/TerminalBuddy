@@ -401,7 +401,7 @@ private fun AiComposer(
     val actionEnabled = if (showStop) !ui.working && session.status != "stopping"
         else session.canSend && hasInput && !ui.sending && !ui.loadingSession
     // `/` 补全：候选由服务端 system/init 清单驱动，移动端不硬编码命令名。
-    val slashItems = remember(ui.draft, session.slashCatalog, session.provider) { vm.slashItems(ui.draft) }
+    val slashItems = remember(ui.draft, session.slashCatalog, ui.slashCatalogFallback, session.provider) { vm.slashItems(ui.draft) }
     val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         vm.addImages(uris)
     }

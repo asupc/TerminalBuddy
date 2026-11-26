@@ -44,6 +44,7 @@ data class AiUiState(
     val providers: List<AiProvider> = emptyList(),
     val projectPath: String = "", val providerId: String = "", val modelId: String = "",
     val selected: AiSession? = null, val draft: String = "", val sending: Boolean = false,
+    val slashCatalogFallback: AiSlashCatalog? = null,
     /** 输入框上方待发送的图片：与草稿一起在发送成功后清空。 */
     val attachments: List<AiDraftImage> = emptyList(),
     val connected: Boolean = false, val working: Boolean = false, val error: String? = null,
@@ -162,6 +163,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private val requests = mutableMapOf<String, Pair<String, String>>()
     /** 斜杠命令清单的兜底缓存：会话尚未启动 CLI 时借用同一 Agent 上一次的清单。 */
     private var slashFallback: Pair<String, AiSlashCatalog?>? = null
+    private var slashCatalogJob: Job? = null
+    private var slashCatalogFetchedKey: String? = null
     private data class OutgoingMessage(
         val sessionId: String, val message: AiMessage, val draft: String, val queued: Boolean,
         /** 发送失败/取消时放回输入框上方的图片。 */
@@ -425,6 +428,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         repository.sessionCache.invalidate()
         drafts.clear(); requests.clear(); pending = null
         slashFallback = null
+        slashCatalogFetchedKey = null
         viewedRevisions.clear(); viewedBaselineReady = false
     }
 
@@ -1024,6 +1028,9 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        if (initial.provider.isNotBlank()) {
+            refreshSlashCatalog(initial.provider, initial.projectPath.ifBlank { null })
+        }
         // 实时首帧、REST 补偿和磁盘恢复并行，不再等待完整 GET 才建立连接。
         startRealtime(refreshImmediately = true)
     }
@@ -1157,8 +1164,17 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
      * 新建会话尚未启动 CLI 时回退到同一 Agent 最近一次拿到的缓存。
      */
     fun slashItems(draft: String): List<AiSlashItem> {
-        val session = mutable.value.selected ?: return emptyList()
-        return slashCompletions(session.slashCatalog ?: cachedSlashCatalog(session.provider), draft)
+        val state = mutable.value
+        val session = state.selected ?: return emptyList()
+        val provider = session.provider.ifBlank { return emptyList() }
+        val siblingCatalog = state.sessions
+            .firstOrNull { it.provider.equals(provider, ignoreCase = true) && it.slashCatalog != null }
+            ?.slashCatalog
+        val merged = mergeSlashCatalogs(
+            mergeSlashCatalogs(session.slashCatalog, state.slashCatalogFallback ?: siblingCatalog ?: cachedSlashCatalog(provider)),
+            defaultSlashCatalogForProvider(provider),
+        )
+        return slashCompletions(merged, draft)
     }
 
     /** 按 Agent 记住解析结果，避免每敲一个字符都重新读偏好并反序列化清单。 */
@@ -1167,6 +1183,24 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val catalog = repository.cachedSlashCatalog(agent)
         slashFallback = agent to catalog
         return catalog
+    }
+
+    private fun refreshSlashCatalog(agent: String, projectDir: String?) {
+        val local = cachedSlashCatalog(agent)
+        mutable.update { it.copy(slashCatalogFallback = local) }
+        val key = "$agent|${projectDir.orEmpty()}"
+        if (slashCatalogFetchedKey == key) return
+        slashCatalogFetchedKey = key
+        slashCatalogJob?.cancel()
+        slashCatalogJob = viewModelScope.launch {
+            val remote = repository.fetchServerSlashCatalog(agent, projectDir) ?: return@launch
+            slashFallback = agent to remote
+            mutable.update { current ->
+                if (current.selected?.provider.equals(agent, ignoreCase = true)) {
+                    current.copy(slashCatalogFallback = remote)
+                } else current
+            }
+        }
     }
 
     /** 退出或切换会话时，尚未确认的消息回到草稿，仍可复用原请求标识重试。 */
@@ -1570,9 +1604,14 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         if (selected.id != session.id || session.revision < maxOf(selected.revision, controlRevisionFor(session.id))) return
         // `/` 清单随 CLI 启动刷新：按 Agent 缓存一份，新会话在 init 到达前也能补全；内容一致时跳过 JSON 序列化与写盘。
         session.slashCatalog?.let { catalog ->
-            if (slashFallback?.first != session.provider || slashFallback?.second != catalog) {
-                repository.saveSlashCatalog(session.provider, catalog)
-                slashFallback = session.provider to catalog
+            val merged = mergeSlashCatalogs(catalog, cachedSlashCatalog(session.provider)) ?: catalog
+            if (slashFallback?.first != session.provider || slashFallback?.second != merged) {
+                repository.saveSlashCatalog(session.provider, merged)
+                slashFallback = session.provider to merged
+            }
+        } ?: run {
+            if (mutable.value.slashCatalogFallback == null && session.provider.isNotBlank()) {
+                refreshSlashCatalog(session.provider, session.projectPath.ifBlank { null })
             }
         }
         // 只缓存服务端原始快照，本地尚未确认的消息仍由 outgoing 单独管理。

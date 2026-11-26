@@ -398,7 +398,12 @@ private fun AgentComposer(
             }
         }
         val enabled = (ui.starting || session.canReply) && !ui.closed
-        val providerLabel = if (session.provider == "codex") "Codex" else "Claude"
+        val providerLabel = when (session.provider) {
+            "codex" -> "Codex"
+            "antigravity" -> "Antigravity"
+            else -> "Claude"
+        }
+        val slashItems = remember(ui.draft, ui.slashCatalog, session.provider) { vm.slashItems(ui.draft) }
         AiMessageComposer(
             value = ui.draft, onValueChange = vm::draft,
             placeholder = when {
@@ -408,6 +413,7 @@ private fun AgentComposer(
             },
             enabled = enabled, actionEnabled = enabled && ui.draft.isNotBlank(), onAction = send,
             actionLabel = if (ui.starting || ui.sending || ui.queuedReplies.isNotEmpty()) "发送排队消息" else "发送消息",
+            slashItems = slashItems, onPickSlash = { vm.draft("/$it ") },
         )
     }
 }

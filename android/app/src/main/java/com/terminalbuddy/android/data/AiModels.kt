@@ -55,22 +55,73 @@ data class AiSlashCatalog(
 data class AiSlashItem(val name: String, val isSkill: Boolean)
 
 /**
- * 输入框文本转候选：只认「以 / 开头且尚未写入空格」的草稿，与桌面端规则一致。
- * 排除纯 TUI 命令（doctor / color 等对话中不可用），并按前缀过滤。
+ * 输入框文本转候选：只认「以 / 或全角 ／ 开头且尚未写入空格」的草稿。
+ * - 原生对话默认排除纯 TUI 命令（doctor / color 等）；终端接力会话可通过 [includeTerminalCommands] 放行。
+ * - 合并 `slashCommands` 与 `skills`，避免只出现在 `skills` 里的技能被漏掉。
+ * - 前缀命中优先，其次包含命中（如 `/review` 可匹配 `code-review`）。
  */
-fun slashCompletions(catalog: AiSlashCatalog?, draft: String, limit: Int = 12): List<AiSlashItem> {
-    if (catalog == null || !draft.startsWith("/")) return emptyList()
+fun slashCompletions(
+    catalog: AiSlashCatalog?,
+    draft: String,
+    limit: Int = 12,
+    includeTerminalCommands: Boolean = false,
+): List<AiSlashItem> {
+    if (catalog == null || draft.isEmpty()) return emptyList()
+    val first = draft[0]
+    if (first != '/' && first != '／') return emptyList()
     val query = draft.substring(1)
     if (query.any(Char::isWhitespace)) return emptyList()
-    val terminal = catalog.terminalSlashCommands.toSet()
-    val skills = catalog.skills.toSet()
+    val terminal = if (includeTerminalCommands) emptySet() else catalog.terminalSlashCommands.toSet()
+    val skills = catalog.skills.asSequence().map(String::trim).filter(String::isNotEmpty).toSet()
     val normalized = query.lowercase()
-    return catalog.slashCommands.asSequence()
+    val candidates = (catalog.slashCommands.asSequence() + catalog.skills.asSequence())
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .distinct()
         .filterNot(terminal::contains)
-        .filter { normalized.isEmpty() || it.lowercase().startsWith(normalized) }
+        .toList()
+    val matched = if (normalized.isEmpty()) {
+        candidates
+    } else {
+        val prefix = candidates.filter { it.lowercase().startsWith(normalized) }
+        val contains = candidates.filter { !it.lowercase().startsWith(normalized) && it.lowercase().contains(normalized) }
+        prefix + contains
+    }
+    return matched.asSequence()
         .map { AiSlashItem(it, it in skills) }
         .take(limit)
         .toList()
+}
+
+/** 合并两份斜杠目录：保留主清单顺序并去重，同时补全来自服务端资产或兜底清单的技能与命令。 */
+fun mergeSlashCatalogs(primary: AiSlashCatalog?, fallback: AiSlashCatalog?): AiSlashCatalog? {
+    if (primary == null) return fallback
+    if (fallback == null) return primary
+    val skills = (primary.skills + fallback.skills).map(String::trim).filter(String::isNotEmpty).distinct()
+    val commands = (primary.slashCommands + fallback.slashCommands + skills)
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .distinct()
+    val terminal = (primary.terminalSlashCommands + fallback.terminalSlashCommands)
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .distinct()
+    return AiSlashCatalog(skills = skills, slashCommands = commands, terminalSlashCommands = terminal)
+}
+
+/** CLI 尚未上报 `system/init` 时的按 Agent 兜底命令清单，保证首次输入 `/` 也能唤起快速选择。 */
+fun defaultSlashCatalogForProvider(provider: String): AiSlashCatalog? = when (provider.lowercase()) {
+    "claude" -> AiSlashCatalog(
+        slashCommands = listOf("compact", "clear", "model", "cost", "status", "review", "init", "memory", "plan", "help"),
+        terminalSlashCommands = listOf("doctor", "color", "focus", "reload-plugins"),
+    )
+    "codex" -> AiSlashCatalog(
+        slashCommands = listOf("compact", "model", "review", "diff", "status", "new", "init", "approvals", "permissions", "help"),
+    )
+    "antigravity" -> AiSlashCatalog(
+        slashCommands = listOf("model", "config", "permissions", "mcp", "plan", "context", "btw", "compact", "clear", "help"),
+    )
+    else -> null
 }
 
 /** 主线程当前思考的实时快照（Claude thinking 块）。不落盘、不进聊天记录：
