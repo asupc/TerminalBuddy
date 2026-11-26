@@ -9,7 +9,6 @@ import { getIndicatorClassName, getIndicatorColor, getIndicatorTitle, getNativeA
 import { formatDuration } from '../../utils/formatDuration';
 import {
   buildProjectTasksTree,
-  EDITOR_GROUP_ID,
   PINNED_GROUP_ID,
   type ProjectTasksGroup,
   type SessionLeaf,
@@ -112,13 +111,12 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set([
     PINNED_GROUP_ID,
-    EDITOR_GROUP_ID,
     ...(isDockerClient() ? ['服务器工作区'] : []),
   ]));
   const [collapsedConfigIds, setCollapsedConfigIds] = useState<Set<string>>(() => new Set());
   const [toolsCollapsed, setToolsCollapsed] = useState(false);
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
-  const [recentCollapsed, setRecentCollapsed] = useState(false);
+  const [recentCollapsed, setRecentCollapsed] = useState(true);
   const [selectionSection, setSelectionSection] = useState<TaskSection>('projects');
   const [relayCollapsed, setRelayCollapsed] = useState(false);
   const [replayCollapsed, setReplayCollapsed] = useState(false);
@@ -155,7 +153,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     searchQuery,
   }), [projects, profiles, sessions, agentTabs, tabGroups, gitChangesTab, gitHistoryTab, taskSummaries, searchQuery]);
 
-  // 无搜索时跟踪已见会话，仅在某项目或编辑器分组出现新增打开会话时自动展开该项目，不干扰「配置」子分组折叠态。
+  // 新打开的终端、编辑器或原生会话自动展开所属项目，不干扰「配置」子分组折叠态。
   const fullModel = useMemo(() => (
     searchQuery.trim()
       ? buildProjectTasksTree({
@@ -175,14 +173,6 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
   useEffect(() => {
     const currentKeys = new Set<string>();
     const newlyActiveGroups = new Set<string>();
-
-    for (const editor of fullModel.editorSessions) {
-      const key = `${EDITOR_GROUP_ID}\0${editor.id}`;
-      currentKeys.add(key);
-      if (!prevSessionKeysRef.current.has(key)) {
-        newlyActiveGroups.add(EDITOR_GROUP_ID);
-      }
-    }
 
     for (const group of fullModel.groups) {
       for (const leaf of group.sessions) {
@@ -280,7 +270,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
   const relayAgentTabs = agentTabs.filter(tab => tab.shape === 'relay');
   const hasTopSpecialSections = scheduledTasksTabOpen || relayAgentTabs.length > 0 || claudeReplayTabs.length > 0;
   const hasMainSections =
-    model.editorSessions.length > 0 || model.pinnedProfiles.length > 0 || model.pinnedSessions.length > 0 || model.groups.length > 0;
+    model.pinnedProfiles.length > 0 || model.pinnedSessions.length > 0 || model.groups.length > 0;
 
   const activateTerminalSession = (sessionId: string) => {
     const store = useAppStore.getState();
@@ -967,53 +957,6 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
 
       {hasTopSpecialSections && hasMainSections && <div className="project-tasks-section-sep" />}
 
-      {model.editorSessions.length > 0 && (() => {
-        const editorExpanded = isNodeExpanded(EDITOR_GROUP_ID, true);
-        return (
-          <div className="tree-node" data-task-section="projects">
-            <div
-              className="tree-item tree-group-item"
-              style={{ paddingLeft: '8px' }}
-              onClick={() => toggleExpand(EDITOR_GROUP_ID)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-            >
-              <span
-                className={`tree-arrow${editorExpanded ? ' expanded' : ''}`}
-                onClick={(e) => { e.stopPropagation(); toggleExpand(EDITOR_GROUP_ID); }}
-              >
-                <ChevronRight aria-hidden="true" />
-              </span>
-              <span className="tree-group-icon">
-                {editorExpanded ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}
-              </span>
-              <span className="tree-group-name">文本编辑</span>
-              <span className="tree-item-end">
-                <span className="tree-item-count">{model.editorSessions.length}</span>
-                <button
-                  type="button"
-                  className="tree-item-close"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCloseGroup('文本编辑', model.editorSessions, []);
-                  }}
-                  title="关闭分组内所有标签"
-                >
-                  <X aria-hidden="true" />
-                </button>
-              </span>
-            </div>
-            {editorExpanded && (
-              <div className="tree-children">
-                {model.editorSessions.map(session => renderTerminalSessionLeaf(session, 20))}
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
       {(model.pinnedProfiles.length > 0 || model.pinnedSessions.length > 0) && (() => {
         const pinnedExpanded = isNodeExpanded(PINNED_GROUP_ID, true);
         return (
@@ -1065,7 +1008,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
         </div>
       </section>
 
-      <section className="project-tasks-section project-tasks-recent-section" aria-label="最近运行会话">
+      <section className="project-tasks-section project-tasks-recent-section" aria-label="最近会话">
         <button
           type="button"
           className="project-tasks-section-heading"
@@ -1087,7 +1030,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
                 }
               })}
               {model.recentItems.length === 0 && !isSearching && (
-                <div className="empty-state">暂无已启动的终端或 AI 会话</div>
+                <div className="empty-state">暂无已打开的会话</div>
               )}
             </>
           )}

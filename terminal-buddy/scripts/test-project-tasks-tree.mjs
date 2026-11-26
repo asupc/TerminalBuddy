@@ -50,11 +50,11 @@ const sessions = [
   { id: 's1', profileId: 'p1', profileName: 'Alpha Dev', terminalType: 'powershell', colorTheme: { background: '#000', foreground: '#fff' }, tabColor: null, groupId: 'default' },
   { id: 's2', profileId: 'p2', profileName: 'Alpha Pinned', terminalType: 'cmd', colorTheme: { background: '#000', foreground: '#fff' }, tabColor: null, groupId: 'default' },
   { id: 's3', profileId: '', profileName: 'PowerShell', terminalType: 'powershell', colorTheme: { background: '#000', foreground: '#fff' }, tabColor: null, groupId: 'default' },
-  { id: 's4', profileId: '', profileName: 'notes.md', terminalType: 'editor', sessionType: 'editor', colorTheme: { background: '#000', foreground: '#fff' }, tabColor: null, groupId: '文本编辑' },
+  { id: 's4', profileId: 'D:\\work\\alpha\\notes.md', profileName: 'notes.md', terminalType: 'editor', sessionType: 'editor', colorTheme: { background: '#000', foreground: '#fff' }, tabColor: null, groupId: 'editor-group' },
   { id: 's5', profileId: '', profileName: 'Moved Session', terminalType: 'powershell', colorTheme: { background: '#000', foreground: '#fff' }, tabColor: null, groupId: 'g-beta' },
 ];
 
-const tabGroups = [{ id: 'g-beta', name: 'Beta', collapsed: false }];
+const tabGroups = [{ id: 'g-beta', name: 'Beta', collapsed: false }, { id: 'editor-group', name: '文本编辑', collapsed: false }];
 const agentTabs = [
   { key: 'agent:1', shape: 'native', sessionId: '1', title: 'Fix bug', provider: 'claude', projectPath: 'D:\\work\\beta\\sub', openedAt: 1 },
   { key: 'relay:s1', shape: 'relay', terminalId: 's1', title: 'Relay view', provider: 'claude', openedAt: 2 },
@@ -78,8 +78,9 @@ const model = buildProjectTasksTree({
 
 // 1. 置顶配置在 pinnedProfiles 中聚合，并保留原项目中的配置入口
 assert.deepEqual(model.pinnedProfiles.map(p => p.id), ['p2']);
-// 2. 编辑器会话归入 editorSessions
-assert.deepEqual(model.editorSessions.map(s => s.id), ['s4']);
+// 2. 编辑器直接参与项目会话归组，不再有独立的文本编辑分组。
+assert.equal('editorSessions' in model, false);
+assert.ok(!model.groups.some(group => group.id === '文本编辑'));
 // 3. 打开会话总数 = sessions.length (5) + native agentTabs (1) = 6，不包含 relay
 assert.equal(model.openSessionCount, 6);
 
@@ -93,7 +94,7 @@ assert.equal(alpha.configGroupId, projectConfigGroupId('Alpha'));
 assert.deepEqual(alpha.profiles.map(p => p.id), ['p1', 'p2']);
 assert.deepEqual(
   alpha.sessions.map(leaf => (leaf.kind === 'terminal' ? leaf.session.id : leaf.kind)),
-  ['git-changes', 's1', 's2'],
+  ['git-changes', 's1', 's2', 's4'],
 );
 
 // Beta 无配置（profiles 为空，不渲染「配置」分组），但承载移动来的终端、原生 AI 会话和 Git 历史
@@ -107,6 +108,33 @@ assert.deepEqual(
 assert.equal(def.profiles.length, 0);
 assert.deepEqual(def.sessions.map(leaf => (leaf.kind === 'terminal' ? leaf.session.id : '')), ['s3']);
 console.log('PASS: 项目分组、配置子分组、置顶与各类型会话归类');
+
+const fileSessions = [
+  { ...sessions[0], id: 'ssh-source', terminalType: 'ssh', groupId: 'g-beta' },
+  sessions[3],
+  { ...sessions[3], id: 'ssh-editor', profileId: 'D:\\cache\\downloaded.txt', profileName: 'server.ts', sshRemotePath: '/srv/app/server.ts', sshTerminalId: 'ssh-source' },
+  { ...sessions[3], id: 'unassigned-editor', profileId: 'D:\\drafts\\draft.txt', profileName: '未命名', groupName: '文本编辑' },
+  { ...sessions[3], id: 'moved-editor', profileName: 'moved.md', groupId: 'g-beta' },
+];
+const fileInput = {
+  projects, profiles, sessions: fileSessions, agentTabs: [], tabGroups,
+  gitChangesTab: null, gitHistoryTab: null, taskSummaries: {},
+};
+const fileModel = buildProjectTasksTree(fileInput);
+assert.deepEqual(fileModel.groups.find(group => group.id === 'Alpha').sessions.map(leaf => leaf.session.id), ['s4']);
+assert.deepEqual(fileModel.groups.find(group => group.id === 'Beta').sessions.map(leaf => leaf.session.id), ['ssh-source', 'ssh-editor', 'moved-editor']);
+assert.deepEqual(fileModel.groups.find(group => group.id === '默认').sessions.map(leaf => leaf.session.id), ['unassigned-editor']);
+assert.ok(!fileModel.groups.some(group => group.id === '文本编辑'));
+assert.equal(fileModel.openSessionCount, fileSessions.length);
+const fileSearch = buildProjectTasksTree({ ...fileInput, searchQuery: 'notes.md' });
+assert.deepEqual(fileSearch.groups.map(group => group.id), ['Alpha']);
+assert.deepEqual(fileSearch.groups[0].sessions.map(leaf => leaf.session.id), ['s4']);
+const pinnedFileModel = buildProjectTasksTree({
+  ...fileInput, sessions: fileSessions.map(session => session.id === 's4' ? { ...session, pinned: true } : session),
+});
+assert.ok(pinnedFileModel.pinnedSessions.some(leaf => leaf.session.id === 's4'));
+assert.ok(!pinnedFileModel.recentItems.some(item => item.kind === 'terminal' && item.session.id === 's4'));
+console.log('PASS: 编辑器按本地文件、SSH 来源或显式分组归入项目，未归属文件进入默认，搜索与置顶行为一致');
 
 // 4b. 旧版 Web/App 会话把 canonicalize scope key 当项目路径：`//?/d:/...` 仍要归到项目
 const legacyModel = buildProjectTasksTree({
@@ -196,10 +224,10 @@ const recentModel = buildProjectTasksTree(recentInput);
 const recentKey = item => item.kind === 'terminal' ? `terminal:${item.session.id}`
   : `agent:${item.tab.key}`;
 assert.deepEqual(recentModel.recentItems.map(recentKey), [
-  'agent:agent:1', 'terminal:s1', 'terminal:s3',
+  'agent:agent:1', 'terminal:s1', 'terminal:s4', 'terminal:s3',
 ]);
 assert.equal(JSON.stringify(recentInput), snapshot);
-console.log('PASS: 最近只显示已启动终端与原生 AI 会话，不包含配置或编辑器，按时间倒序排列');
+console.log('PASS: 最近按时间显示已打开的终端、编辑器与 AI 会话，不包含配置命令');
 
 // 配置名称不会产生最近条目，项目名和会话摘要仍可命中运行会话。
 assert.deepEqual(
@@ -224,11 +252,11 @@ console.log('PASS: 最近列表按运行会话搜索，不因配置匹配而添�
 const closedModel = buildProjectTasksTree({
   ...recentInput, sessions: recentSessions.filter(session => session.id !== 's1'),
 });
-assert.deepEqual(closedModel.recentItems.map(recentKey), ['agent:agent:1', 'terminal:s3']);
+assert.deepEqual(closedModel.recentItems.map(recentKey), ['agent:agent:1', 'terminal:s4', 'terminal:s3']);
 const startingModel = buildProjectTasksTree({
   ...recentInput, sessions: recentSessions.map(session => session.id === 's1' ? { ...session, starting: true } : session),
 });
-assert.deepEqual(startingModel.recentItems.map(recentKey), ['agent:agent:1', 'terminal:s3']);
+assert.deepEqual(startingModel.recentItems.map(recentKey), ['agent:agent:1', 'terminal:s4', 'terminal:s3']);
 console.log('PASS: 已关闭会话和启动占位不显示，不会回退为配置条目');
 
 const pinnedModel = buildProjectTasksTree({
@@ -238,7 +266,7 @@ const pinnedModel = buildProjectTasksTree({
 });
 assert.deepEqual(pinnedModel.pinnedSessions.map(item => item.kind === 'terminal' ? item.session.id : item.tab.key), ['s1', 'agent:1']);
 assert.deepEqual(pinnedModel.pinnedProfiles.map(profile => profile.id), ['pinned-script']);
-assert.deepEqual(pinnedModel.recentItems.map(recentKey), ['terminal:s3']);
+assert.deepEqual(pinnedModel.recentItems.map(recentKey), ['terminal:s4', 'terminal:s3']);
 assert.equal(pinnedModel.openSessionCount, recentModel.openSessionCount);
 assert.ok(pinnedModel.groups.some(group => group.sessions.some(item => item.kind === 'terminal' && item.session.id === 's1')));
 const pinSearch = buildProjectTasksTree({
@@ -278,7 +306,7 @@ const { ProjectTasksView } = load('src/components/profile-config/ProjectTasksVie
   '../../services/platform': { isDockerClient: () => false },
   '../../stores/appStore': { useAppStore: useViewStore },
   '../../stores/taskSummaryStore': { useTaskSummaryStore: selector => selector({ summaries: taskSummaries, providers: {} }) },
-  '../../utils/projectTasksTree': { buildProjectTasksTree, EDITOR_GROUP_ID: '__editors__', PINNED_GROUP_ID: '__pinned__' },
+  '../../utils/projectTasksTree': { buildProjectTasksTree, PINNED_GROUP_ID: '__pinned__' },
   '../../utils/claudeIndicator': {
     getIndicatorClassName: () => '', getIndicatorColor: () => '#55b988', getIndicatorTitle: () => '',
     getNativeAgentLight: () => 'idle', getIndicatorLight: () => 'idle',
@@ -293,11 +321,12 @@ const { ProjectTasksView } = load('src/components/profile-config/ProjectTasksVie
   '../file-explorer/TreeView.css': {}, '../shell/TabNav.css': {},
 });
 let profileLaunches = 0;
+const closeRequests = [];
 const viewProps = {
   isActive: true, searchQuery: '', renamingProfileId: null, renamingProfileName: '',
   onRenamingProfileChange: Noop, onRenamingProfileSubmit: Noop, onRenamingProfileCancel: Noop,
   onStartTerminal: () => { profileLaunches += 1; }, onProfileContextMenu: Noop, onGroupContextMenu: Noop,
-  onCloseSession: Noop, onCloseGroup: Noop, onCloseExternalMenus: Noop,
+  onCloseSession: id => closeRequests.push(id), onCloseGroup: Noop, onCloseExternalMenus: Noop,
 };
 const renderView = () => {
   hookIndex = 0;
@@ -324,6 +353,8 @@ const clickProject = (tree, name) => {
   row.props.onClick();
 };
 let view = renderView();
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, true, '最近会话默认收起');
+assert.ok(!nodes(view).some(node => node.props?.className === 'tree-group-name' && node.props.children === '文本编辑'));
 clickProject(view, 'Alpha');
 view = renderView();
 assert.equal(selectedRows(view).length, 1);
@@ -332,11 +363,30 @@ const initiallyVisibleProfiles = nodes(initiallyExpandedProjectList)
   .filter(node => /\bproject-tasks-profile-item\b/.test(node.props?.className ?? '')).map(node => node.key);
 assert.ok(initiallyVisibleProfiles.includes('p1'), '展开项目应直接显示原有配置');
 assert.ok(initiallyVisibleProfiles.includes('pinned-script'), '置顶配置应保留原项目中的入口');
+assert.ok(nodes(initiallyExpandedProjectList).some(node => node.key === 's4'), '文件编辑窗口应归入文件所属项目');
 clickProject(view, 'Beta');
 view = renderView();
 assert.equal(selectedRows(view).length, 1);
 assert.ok(nodes(selectedRows(view)[0]).some(node => node.props?.children === 'Beta'));
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, true, '展开项目不应展开最近会话');
+nodes(view).find(node => node.props?.['aria-controls'] === 'project-tasks-recent-list').props.onClick();
+view = renderView();
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, false, '最近会话由用户手动展开');
 selectSection(view, 'recent');
+viewState.sessions = viewState.sessions.map(session => session.id === 's4' ? { ...session, isDirty: true } : session);
+view = renderView();
+const editorRow = recentRow(view, 's4');
+assert.ok(editorRow);
+assert.ok(nodes(editorRow).some(node => node.props?.className === 'tab-nav-dirty-dot'));
+editorRow.props.onMouseDown(mouseDown);
+editorRow.props.onClick();
+view = renderView();
+assert.equal(viewState.activeSessionId, 's4');
+assert.equal(selectedRows(view).length, 1);
+assert.equal(selectedRows(view)[0].key, 's4');
+nodes(recentRow(view, 's4')).find(node => node.type === 'button' && node.props.title === '关闭').props.onClick(mouseDown);
+assert.deepEqual(closeRequests, ['s4']);
+console.log('PASS: 编辑器按普通会话展示与切换，保留未保存标记及统一关闭入口');
 recentRow(view, 's1').props.onMouseDown(mouseDown);
 recentRow(view, 's1').props.onClick();
 view = renderView();

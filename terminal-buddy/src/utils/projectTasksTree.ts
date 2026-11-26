@@ -4,7 +4,6 @@ import type { Profile, Project, TabGroup, TerminalSession } from '../types';
 import { projectForDirectory } from './projectPath';
 
 export const PINNED_GROUP_ID = '__pinned__';
-export const EDITOR_GROUP_ID = '__editors__';
 export const projectConfigGroupId = (groupName: string): string => `__project_configs__:${groupName}`;
 
 export type SessionLeaf =
@@ -28,9 +27,8 @@ export interface ProjectTasksGroup {
 export interface ProjectTasksTreeModel {
   pinnedProfiles: Profile[];
   pinnedSessions: SessionLeaf[];
-  editorSessions: TerminalSession[];
   groups: ProjectTasksGroup[];
-  /** 只列出已启动的终端与原生 AI 会话，按创建／打开时间倒序排列。 */
+  /** 按创建／打开时间倒序列出终端、文件编辑器与原生 AI 会话。 */
   recentItems: RecentProjectTask[];
   /** 已打开会话总数（终端 + 编辑器 + 原生 AI 会话），与会话标签面板标题计数口径一致。 */
   openSessionCount: number;
@@ -48,12 +46,13 @@ export interface BuildProjectTasksTreeInput {
   searchQuery?: string;
 }
 
-/** 推导会话叶子所属的项目/分组名，保持与 TabNav 一致的归类口径。 */
+/** 推导会话叶子所属的项目或显式分组，文件编辑器按文件位置归类。 */
 export function resolveSessionLeafGroup(
   leaf: SessionLeaf,
   projects: Project[],
   profiles: Profile[],
   tabGroups: TabGroup[],
+  sessions: TerminalSession[] = [],
 ): string {
   if (leaf.kind === 'git-changes' || leaf.kind === 'git-history') {
     return projectForDirectory(projects, leaf.tab.repoRoot)?.name || '默认';
@@ -62,11 +61,17 @@ export function resolveSessionLeafGroup(
     return projectForDirectory(projects, leaf.tab.projectPath)?.name || '默认';
   }
   const session = leaf.session;
+  const isEditor = session.sessionType === 'editor';
   const explicitGroup = session.groupId && session.groupId !== 'default'
     ? tabGroups.find(group => group.id === session.groupId)
     : undefined;
-  if (explicitGroup) return explicitGroup.name;
-  if (session.groupName) return session.groupName;
+  if (explicitGroup && (!isEditor || explicitGroup.name !== '文本编辑')) return explicitGroup.name;
+  if (session.groupName && (!isEditor || session.groupName !== '文本编辑')) return session.groupName;
+  if (isEditor) {
+    const sourceTerminal = session.sshTerminalId ? sessions.find(item => item.id === session.sshTerminalId) : undefined;
+    if (sourceTerminal) return resolveSessionLeafGroup({ kind: 'terminal', session: sourceTerminal }, projects, profiles, tabGroups);
+    return projectForDirectory(projects, session.sshRemotePath || session.profileId)?.name || '默认';
+  }
   const profile = profiles.find(p => p.id === session.profileId);
   return profile?.group || '默认';
 }
@@ -94,8 +99,7 @@ function sessionLeafMatchesQuery(
 /**
  * 构建「项目与任务」树模型：
  * - 置顶配置在顶层「置顶」分组展示，同时保留所属项目的配置入口；
- * - 编辑器会话单独归入顶层「文本编辑」分组；
- * - 项目节点直接承载该项目下所有已打开会话（终端 / 原生 AI / Git 视图），
+ * - 项目节点直接承载该项目下所有已打开会话（终端 / 文件编辑器 / 原生 AI / Git 视图），
  *   该项目下的命令配置统一收纳到「配置」子分组（仅当存在配置时展示）。
  */
 export function buildProjectTasksTree({
@@ -112,19 +116,17 @@ export function buildProjectTasksTree({
   const query = searchQuery.trim().toLowerCase();
 
   const allPinnedProfiles = profiles.filter(p => p.pinned);
-  const allEditorSessions = sessions.filter(s => s.sessionType === 'editor');
-  const terminalSessions = sessions.filter(s => s.sessionType !== 'editor');
   const nativeTabs = agentTabs.filter((tab): tab is NativeAgentTab => tab.shape === 'native');
   const pinnedSessions: SessionLeaf[] = [
     ...sessions.filter(session => session.pinned).map(session => ({ kind: 'terminal' as const, session })),
     ...nativeTabs.filter(tab => tab.pinned).map(tab => ({ kind: 'agent' as const, tab })),
   ].filter(leaf => !query || sessionLeafMatchesQuery(leaf, query, taskSummaries)
-    || resolveSessionLeafGroup(leaf, projects, profiles, tabGroups).toLowerCase().includes(query));
+    || resolveSessionLeafGroup(leaf, projects, profiles, tabGroups, sessions).toLowerCase().includes(query));
 
   const allLeaves: SessionLeaf[] = [
     ...(gitChangesTab ? [{ kind: 'git-changes' as const, tab: gitChangesTab }] : []),
     ...(gitHistoryTab ? [{ kind: 'git-history' as const, tab: gitHistoryTab }] : []),
-    ...terminalSessions.map(session => ({ kind: 'terminal' as const, session })),
+    ...sessions.map(session => ({ kind: 'terminal' as const, session })),
     ...nativeTabs.map(tab => ({ kind: 'agent' as const, tab })),
   ];
 
@@ -150,17 +152,13 @@ export function buildProjectTasksTree({
     profilesByGroup.get(groupName)!.push(profile);
   }
   for (const leaf of allLeaves) {
-    const groupName = ensureGroup(resolveSessionLeafGroup(leaf, projects, profiles, tabGroups));
+    const groupName = ensureGroup(resolveSessionLeafGroup(leaf, projects, profiles, tabGroups, sessions));
     sessionsByGroup.get(groupName)!.push(leaf);
   }
 
   const pinnedProfiles = query
     ? allPinnedProfiles.filter(p => p.name.toLowerCase().includes(query))
     : allPinnedProfiles;
-
-  const editorSessions = query
-    ? allEditorSessions.filter(s => s.profileName.toLowerCase().includes(query))
-    : allEditorSessions;
 
   const groups: ProjectTasksGroup[] = [];
   for (const groupName of groupOrder) {
@@ -214,7 +212,6 @@ export function buildProjectTasksTree({
   return {
     pinnedProfiles,
     pinnedSessions,
-    editorSessions,
     groups,
     recentItems,
     openSessionCount: sessions.length + nativeTabs.length,

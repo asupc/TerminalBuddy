@@ -95,6 +95,7 @@ function makeEditorSession(
 		tabColor: null,
 		groupId: "editor-group",
 		sessionType: "editor",
+		createdAt: Date.now(),
 		isDirty: false,
 		sshRemotePath: ssh?.sshRemotePath,
 		sshTerminalId: ssh?.sshTerminalId,
