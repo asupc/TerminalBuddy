@@ -1,4 +1,4 @@
-import type { Profile, Project, TerminalType } from '../types';
+import type { Profile } from '../types';
 import type { AiCatalog } from '../services/tauri/aiChat';
 import type {
   ScheduledRun,
@@ -214,23 +214,7 @@ export function profilesForProject(profiles: Profile[], projectName: string): Pr
   });
 }
 
-/** 配置卡片上的终端类型说明。 */
-export function terminalTypeLabel(type: TerminalType | string): string {
-  switch (type) {
-    case 'ssh': return 'SSH';
-    case 'docker': return 'Docker';
-    case 'k8s': return 'K8s';
-    case 'mstsc': return '远程桌面';
-    case 'editor': return '编辑器';
-    default: return type || '终端';
-  }
-}
-
 export function runTokenTotal(run: Pick<ScheduledRun, 'inputTokens' | 'outputTokens'>): number {
   return (run.inputTokens ?? 0) + (run.outputTokens ?? 0);
 }
 
-/** 项目名去重后的排序列表，供下拉框使用。 */
-export function projectOptions(projects: Project[]): Project[] {
-  return [...projects].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
-}
