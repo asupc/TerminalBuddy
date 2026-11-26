@@ -31,7 +31,7 @@ type TaskSection = 'projects' | 'recent' | 'pinned';
 
 interface ProjectTasksViewState {
   expandedIds: string[];
-  collapsedConfigIds: string[];
+  expandedConfigIds: string[];
   toolsCollapsed: boolean;
   projectsCollapsed: boolean;
   recentCollapsed: boolean;
@@ -126,7 +126,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     PINNED_GROUP_ID,
     ...(isDockerClient() ? ['服务器工作区'] : []),
   ]));
-  const [collapsedConfigIds, setCollapsedConfigIds] = useState<Set<string>>(() => new Set());
+  const [expandedConfigIds, setExpandedConfigIds] = useState<Set<string>>(() => new Set());
   const [viewStateLoaded, setViewStateLoaded] = useState(false);
   const [toolsCollapsed, setToolsCollapsed] = useState(false);
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
@@ -151,8 +151,8 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
       if (Array.isArray(saved.expandedIds)) {
         setExpandedIds(new Set(saved.expandedIds.filter(id => typeof id === 'string')));
       }
-      if (Array.isArray(saved.collapsedConfigIds)) {
-        setCollapsedConfigIds(new Set(saved.collapsedConfigIds.filter(id => typeof id === 'string')));
+      if (Array.isArray(saved.expandedConfigIds)) {
+        setExpandedConfigIds(new Set(saved.expandedConfigIds.filter(id => typeof id === 'string')));
       }
       if (typeof saved.toolsCollapsed === 'boolean') setToolsCollapsed(saved.toolsCollapsed);
       if (typeof saved.projectsCollapsed === 'boolean') setProjectsCollapsed(saved.projectsCollapsed);
@@ -171,7 +171,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     if (!viewStateLoaded) return;
     const state: ProjectTasksViewState = {
       expandedIds: [...expandedIds],
-      collapsedConfigIds: [...collapsedConfigIds],
+      expandedConfigIds: [...expandedConfigIds],
       toolsCollapsed,
       projectsCollapsed,
       recentCollapsed,
@@ -181,7 +181,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     void writeClientData('project_tasks_view', JSON.stringify(state)).catch(error => {
       console.error('保存项目与任务展开状态失败：', error);
     });
-  }, [viewStateLoaded, expandedIds, collapsedConfigIds, toolsCollapsed, projectsCollapsed, recentCollapsed, relayCollapsed, replayCollapsed]);
+  }, [viewStateLoaded, expandedIds, expandedConfigIds, toolsCollapsed, projectsCollapsed, recentCollapsed, relayCollapsed, replayCollapsed]);
 
   // 终端运行时长后缀每 60s 刷新一次（页面隐藏时暂停）
   const [, setUptimeTick] = useState(0);
@@ -309,7 +309,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
   };
 
   const toggleConfigExpand = (id: string) => {
-    setCollapsedConfigIds(prev => {
+    setExpandedConfigIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -762,7 +762,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     const hasMatchedProfilesInSearch = isSearching && group.profiles.some(
       p => p.name.toLowerCase().includes(trimmedQuery),
     );
-    const isConfigExpanded = hasMatchedProfilesInSearch || !collapsedConfigIds.has(group.configGroupId);
+    const isConfigExpanded = hasMatchedProfilesInSearch || expandedConfigIds.has(group.configGroupId);
 
     return (
       <div key={group.id} className="tree-node project-tasks-project">
