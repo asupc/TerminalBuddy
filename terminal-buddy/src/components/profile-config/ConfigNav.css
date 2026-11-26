@@ -303,6 +303,7 @@
   order: 1;
   width: 12px;
   height: 16px;
+  transition-duration: var(--motion-normal);
 }
 
 .project-tasks-tree .tree-arrow svg {
@@ -321,7 +322,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.project-tasks-project > .tree-children {
+.project-tasks-tree .project-tasks-project-children {
   margin: var(--project-tasks-section-gap) 0 8px 17px;
   padding-left: 10px;
   border-left: 1px solid var(--border);
@@ -401,7 +402,7 @@
   height: 12px;
   flex-shrink: 0;
   stroke-width: 1.6;
-  transition: transform var(--motion-fast) var(--ease-standard);
+  transition: transform var(--motion-normal) var(--ease-standard);
 }
 
 .project-tasks-section-arrow.expanded {
@@ -411,7 +412,36 @@
 .project-tasks-section {
   display: flex;
   flex-direction: column;
-  gap: var(--project-tasks-section-gap);
+  gap: 0;
+}
+
+.project-tasks-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows var(--motion-normal) var(--ease-standard),
+    margin-top var(--motion-normal) var(--ease-standard),
+    opacity var(--motion-normal) var(--ease-standard),
+    visibility 0s var(--motion-normal);
+}
+
+.project-tasks-collapse.expanded {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.project-tasks-collapse-content {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.project-tasks-section > .project-tasks-collapse.expanded {
+  margin-top: var(--project-tasks-section-gap);
 }
 
 .project-tasks-section + .project-tasks-section {
@@ -419,7 +449,7 @@
 }
 
 .project-tasks-section .project-tasks-project:last-child,
-.project-tasks-section .project-tasks-project:last-child > .tree-children {
+.project-tasks-section .project-tasks-project:last-child .project-tasks-project-children {
   margin-bottom: 0;
 }
 
@@ -446,7 +476,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .project-tasks-section-arrow {
+  .project-tasks-collapse,
+  .project-tasks-section-arrow,
+  .project-tasks-tree .tree-arrow {
     transition: none;
   }
 }

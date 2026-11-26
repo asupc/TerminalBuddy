@@ -391,10 +391,11 @@ const renderView = () => {
   } while (hooksChanged);
   return tree;
 };
-const nodes = node => {
-  if (Array.isArray(node)) return node.flatMap(nodes);
+const nodes = (node, includeCollapsed = false) => {
+  if (Array.isArray(node)) return node.flatMap(child => nodes(child, includeCollapsed));
   if (!node || typeof node !== 'object') return [];
-  return [node, ...nodes(node.props?.children)];
+  if (node.props?.inert && !includeCollapsed) return [node];
+  return [node, ...nodes(node.props?.children, includeCollapsed)];
 };
 const selectedRows = tree => nodes(tree).filter(node => /\b(tree-item|tab-nav-settings-btn)\b/.test(node.props?.className ?? '')
   && /\b(active|selected)\b/.test(node.props.className));
@@ -416,7 +417,12 @@ assert.equal(view, null, '读取折叠状态前不展示默认布局');
 assert.equal(viewStateWrites.length, 0, '读取完成前不能用默认状态覆盖存档');
 await new Promise(resolve => setImmediate(resolve));
 view = renderView();
-assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, true, '最近会话默认收起');
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.inert, true, '最近会话默认收起');
+const collapsedRecent = nodes(view).find(node => node.props?.id === 'project-tasks-recent-list');
+assert.equal(collapsedRecent.props.hidden, undefined, '使用高度过渡替代直接隐藏，收起时保留动画');
+assert.equal(collapsedRecent.props['aria-hidden'], true);
+assert.ok(nodes(collapsedRecent, true).some(node => node.key === 's4'), '收起后保留内容，允许动画连续反转');
+assert.ok(!nodes(collapsedRecent).some(node => node.key === 's4'), '折叠内容不可交互');
 assert.ok(!nodes(view).some(node => node.props?.className === 'tree-group-name' && node.props.children === '文本编辑'));
 clickProject(view, 'Alpha');
 view = renderView();
@@ -431,10 +437,10 @@ clickProject(view, 'Beta');
 view = renderView();
 assert.equal(selectedRows(view).length, 1);
 assert.ok(nodes(selectedRows(view)[0]).some(node => node.props?.children === 'Beta'));
-assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, true, '展开项目不应展开最近会话');
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.inert, true, '展开项目不应展开最近会话');
 nodes(view).find(node => node.props?.['aria-controls'] === 'project-tasks-recent-list').props.onClick();
 view = renderView();
-assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, false, '最近会话由用户手动展开');
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.inert, false, '最近会话由用户手动展开');
 selectSection(view, 'recent');
 viewState.sessions = viewState.sessions.map(session => session.id === 's4' ? { ...session, isDirty: true } : session);
 view = renderView();
@@ -545,8 +551,8 @@ assert.equal(viewStateWrites.length, writesBeforeRestore, '冷启动读取完成
 await new Promise(resolve => setImmediate(resolve));
 view = renderView();
 assert.deepEqual(persistedViewState, savedTreeState);
-assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-project-list').props.hidden, true);
-assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, false);
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-project-list').props.inert, true);
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.inert, false);
 assert.ok(nodes(view).filter(node => node.props?.className === 'tab-nav-group-arrow collapsed').length >= 2);
 
 viewState.sessions = liveSessions;
@@ -576,7 +582,7 @@ viewState.agentTabs = [...viewState.agentTabs, { ...agentTabs[0], key: 'agent:ne
 view = renderView();
 assert.equal(isProjectExpanded(view, 'Beta'), true, '启动后新建 Claude 原生会话自动展开所属项目');
 assert.equal(isProjectExpanded(view, '默认'), false, '新会话不展开无关项目');
-assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, true, '新会话不展开最近');
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.inert, true, '新会话不展开最近');
 assert.deepEqual(persistedViewState.collapsedConfigIds, savedTreeState.collapsedConfigIds);
 clickProject(view, 'Beta');
 view = renderView();
@@ -584,7 +590,7 @@ viewState.sessions = [...viewState.sessions, { ...sessions[0], id: 'terminal:new
 view = renderView();
 assert.equal(isProjectExpanded(view, 'Beta'), true, '启动后新建终端会话也只展开所属项目');
 assert.equal(isProjectExpanded(view, '默认'), false);
-assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.hidden, true);
+assert.equal(nodes(view).find(node => node.props?.id === 'project-tasks-recent-list').props.inert, true);
 console.log('PASS: 启动后新建原生 AI 或终端会话只展开所属项目，保留最近与配置折叠状态');
 
 clickProject(view, 'Beta');
@@ -598,3 +604,41 @@ assert.deepEqual(persistedViewState, stateBeforeRemount, '启动完成后重新�
 assert.equal(isProjectExpanded(view, 'Beta'), false);
 unmountView();
 console.log('PASS: 重新挂载项目与任务视图保持最后状态，不重新展开已有会话项目');
+
+// 三个顶层区域和项目节点均保留动画内容，并在折叠时隔离交互。
+view = renderView();
+await new Promise(resolve => setImmediate(resolve));
+view = renderView();
+for (const id of ['project-tasks-project-list', 'project-tasks-recent-list']) {
+  let list = nodes(view).find(node => node.props?.id === id);
+  assert.equal(list.props.inert, !list.props.className.includes(' expanded'));
+  assert.equal(list.props['aria-hidden'], list.props.inert);
+  const mountedRows = nodes(list, true).filter(node => /\btree-item\b/.test(node.props?.className ?? '')).length;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    nodes(view).find(node => node.props?.['aria-controls'] === id).props.onClick();
+    view = renderView();
+    list = nodes(view).find(node => node.props?.id === id);
+    assert.equal(list.props.inert, !list.props.className.includes(' expanded'));
+    assert.equal(list.props['aria-hidden'], list.props.inert);
+    assert.equal(nodes(list, true).filter(node => /\btree-item\b/.test(node.props?.className ?? '')).length, mountedRows);
+  }
+}
+const pinnedSection = nodes(view).find(node => node.props?.['data-task-section'] === 'pinned');
+const pinnedHeader = nodes(pinnedSection).find(node => node.props?.className?.includes('project-tasks-pinned-header'));
+pinnedHeader.props.onClick();
+view = renderView();
+let pinnedContent = nodes(view).find(node => node.props?.['data-task-section'] === 'pinned').props.children[1];
+assert.equal(pinnedContent.props.inert, false);
+pinnedHeader.props.onClick();
+view = renderView();
+pinnedContent = nodes(view).find(node => node.props?.['data-task-section'] === 'pinned').props.children[1];
+assert.equal(pinnedContent.props.inert, true);
+assert.ok(nodes(pinnedContent, true).some(node => node.props?.className?.includes('tree-item')));
+const betaProject = nodes(view).find(node => node.key === 'Beta' && node.props?.className === 'tree-node project-tasks-project');
+assert.equal(betaProject.props.children[1].props.inert, true);
+assert.ok(nodes(betaProject, true).some(node => node.props?.className === 'tree-name' && node.props.children === 'Fix bug'));
+clickProject(view, 'Beta');
+view = renderView();
+assert.equal(isProjectExpanded(view, 'Beta'), true);
+unmountView();
+console.log('PASS: 置顶、项目、最近及项目节点保留展开和收起动画结构，快速切换时隔离折叠内容交互');

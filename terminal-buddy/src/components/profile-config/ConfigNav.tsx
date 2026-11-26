@@ -16,6 +16,7 @@ import { ProjectContextMenu } from '../shared/ProjectContextMenu';
 import { ProjectEditDialog } from '../shared/ProjectEditDialog';
 import { ProjectDeleteDialog } from '../shared/ProjectDeleteDialog';
 import { ProjectTasksView } from './ProjectTasksView';
+import { ConfiguredTerminalMenuItem } from '../shell/NewTerminalMenu';
 import { useSessionCloseActions } from '../../hooks/useSessionCloseActions';
 import { effectiveProfilePath } from '../../utils/projectPath';
 import { defaultShellType, isDockerClient, serverUsesWindowsPaths, supportsSystemExplorerOpen } from '../../services/platform';
@@ -88,6 +89,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const newTerminalSubmenuRef = useRef<HTMLDivElement>(null);
+  const [submenuExpandedGroups, setSubmenuExpandedGroups] = useState<Set<string>>(() => new Set());
   const rafRef = useRef<number | null>(null);
 
   // 模型菜单数据源：挂载时加载，右键打开时用缓存。
@@ -141,7 +144,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const treeItems = useMemo(() => {
     let filtered = profiles;
 
-    if (configSearchQuery.trim()) {
+    if (!experimentalProjectTasks && configSearchQuery.trim()) {
       const query = configSearchQuery.toLowerCase();
       filtered = profiles.filter(p => p.name.toLowerCase().includes(query));
     }
@@ -160,7 +163,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
 
     // Projects are flat entities; unlike legacy groups their names are not slash-separated paths.
     const result: TreeItem[] = projects
-      .filter(project => !configSearchQuery.trim() || normalItems.some(p => p.group === project.name))
+      .filter(project => experimentalProjectTasks || !configSearchQuery.trim() || normalItems.some(p => p.group === project.name))
       .map(project => ({
         id: project.name, label: project.name, isGroup: true,
         children: normalItems.filter(p => p.group === project.name).map(toLeaf),
@@ -187,7 +190,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     }
 
     return result;
-  }, [profiles, projects, configSearchQuery]);
+  }, [profiles, projects, configSearchQuery, experimentalProjectTasks]);
 
   const handleToggle = (groupId: string) => {
     setExpandedGroups(prev => {
@@ -718,6 +721,25 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                   文本编辑器
                 </div>
               )}
+              <ConfiguredTerminalMenuItem
+                submenuTree={treeItems}
+                expandedGroups={submenuExpandedGroups}
+                onToggleGroup={id => {
+                  setSubmenuExpandedGroups(prev => {
+                    const next = new Set(prev);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    return next;
+                  });
+                }}
+                menuRef={contextMenuRef}
+                submenuRef={newTerminalSubmenuRef}
+                onStartTerminal={(profile, extraParams, tabName, extraParamMode) => {
+                  useAppStore.getState().setLastClickRegion('tab');
+                  onStartTerminal(profile, extraParams, tabName, extraParamMode);
+                }}
+                onClose={closeContextMenu}
+              />
               {openSessionCount > 0 && (
                 <>
                   <div className="context-menu-separator" />

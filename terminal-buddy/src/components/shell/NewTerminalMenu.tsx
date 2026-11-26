@@ -7,21 +7,25 @@ import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ProjectLaunchMenuItems } from '../shared/ProjectLaunchMenuItems';
 import type { ExtraParamMode, Profile, Project } from '../../types';
 
-interface NewTerminalMenuProps {
-  x: number;
-  y: number;
+interface ConfiguredTerminalMenuItemProps {
   submenuTree: TreeItem[];
   expandedGroups: Set<string>;
   onToggleGroup: (id: string) => void;
-  highlightedIndex: number;
-  visibleSubmenuItems: TreeItem[];
+  highlightedIndex?: number;
+  visibleSubmenuItems?: TreeItem[];
   menuRef: React.RefObject<HTMLDivElement | null>;
   submenuRef: React.RefObject<HTMLDivElement | null>;
   onStartTerminal: (profile: Profile, extraParams?: string, tabName?: string, extraParamMode?: ExtraParamMode) => void;
+  onStartBlankTerminal?: (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => void;
+  onClose: () => void;
+}
+
+interface NewTerminalMenuProps extends ConfiguredTerminalMenuItemProps {
+  x: number;
+  y: number;
   onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => void;
   onStartTextEditor: () => void;
   onCloseAllTabs: () => void;
-  onClose: () => void;
 }
 
 interface HoverMenuPos {
@@ -31,21 +35,17 @@ interface HoverMenuPos {
   maxHeight: number;
 }
 
-/** 侧栏空白处右键的「新建终端」菜单：快捷入口 + 配置树子菜单。 */
-export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
-  x,
-  y,
+/** 会话标签与项目任务面板共用的配置终端入口，保留项目启动悬停菜单。 */
+export const ConfiguredTerminalMenuItem: FC<ConfiguredTerminalMenuItemProps> = ({
   submenuTree,
   expandedGroups,
   onToggleGroup,
-  highlightedIndex,
-  visibleSubmenuItems,
+  highlightedIndex = -1,
+  visibleSubmenuItems = [],
   menuRef,
   submenuRef,
   onStartTerminal,
   onStartBlankTerminal,
-  onStartTextEditor,
-  onCloseAllTabs,
   onClose,
 }) => {
   const projects = useAppStore(state => state.projects);
@@ -78,11 +78,21 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
     if (hoverTimerRef.current !== null) window.clearTimeout(hoverTimerRef.current);
   }, []);
 
+  useEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const clearOutsideHover = (event: MouseEvent) => {
+      if (!(event.target as HTMLElement).closest('.has-submenu')) setHoveredProject(null);
+    };
+    menu.addEventListener('mouseover', clearOutsideHover);
+    return () => menu.removeEventListener('mouseover', clearOutsideHover);
+  }, [menuRef]);
+
   const handleSelect = (item: TreeItem) => {
     if (item.data) {
       const d = item.data as Record<string, unknown>;
       if ('group' in d) onStartTerminal(item.data as Profile);
-      else if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh');
+      else if (d.terminalType) onStartBlankTerminal?.(d.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh');
       onClose();
     }
   };
@@ -155,17 +165,88 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
   };
 
   return (
+    <div
+      className={`context-menu-item has-submenu${hoveredProject ? ' submenu-active' : ''}`}
+      onMouseEnter={handleSubmenuAnchor}
+      onMouseLeave={event => {
+        if (event.relatedTarget instanceof Element && event.relatedTarget.closest('.claude-model-submenu')) {
+          return;
+        }
+        clearHoverMenus();
+      }}
+    >
+      <span>新建配置终端</span>
+      <span className="submenu-arrow">›</span>
+      <div
+        className="context-submenu new-terminal-profile-menu"
+        ref={submenuRef}
+        style={submenuPos ? { left: submenuPos.left, top: submenuPos.top } : undefined}
+      >
+        <div
+          className="new-terminal-profile-scroll"
+          style={submenuPos ? { maxHeight: submenuPos.maxHeight } : undefined}
+          onMouseOver={handleTargetHover}
+          onScroll={clearHoverMenus}
+        >
+          <TreeView
+            items={submenuTree}
+            expandedIds={expandedGroups}
+            onToggle={onToggleGroup}
+            selectedId={highlightedIndex >= 0 ? visibleSubmenuItems[highlightedIndex]?.id : undefined}
+            onSelect={handleSelect}
+            renderEnd={item => {
+              // 项目分组行：标记可展开与项目右键同步的启动菜单（Agent 启动入口）。
+              if (item.isGroup) {
+                const project = projects.find(p => p.name === item.id);
+                return project?.path ? (
+                  <span data-project-id={project.name} className="submenu-profile-end">
+                    <span className="submenu-arrow">›</span>
+                  </span>
+                ) : null;
+              }
+              return null;
+            }}
+            className="submenu-tree"
+            indent={12}
+          />
+        </div>
+      </div>
+      {hoveredProject && (
+        <div
+          className="new-terminal-project-menu"
+          style={{ left: hoveredProject.pos.left, top: hoveredProject.pos.top, bottom: hoveredProject.pos.bottom, maxHeight: hoveredProject.pos.maxHeight }}
+        >
+          <ProjectLaunchMenuItems project={hoveredProject.project} onLaunched={onClose} />
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** 侧栏空白处右键的「新建终端」菜单：快捷入口 + 配置树子菜单。 */
+export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
+  x,
+  y,
+  submenuTree,
+  expandedGroups,
+  onToggleGroup,
+  highlightedIndex,
+  visibleSubmenuItems,
+  menuRef,
+  submenuRef,
+  onStartTerminal,
+  onStartBlankTerminal,
+  onStartTextEditor,
+  onCloseAllTabs,
+  onClose,
+}) => {
+  return (
     <>
       <div className="context-menu-overlay" onClick={onClose} />
       <div
         className="context-menu"
         ref={menuRef}
         style={{ left: x, top: y }}
-        onMouseOver={event => {
-          if (!(event.target as HTMLElement).closest('.has-submenu')) {
-            setHoveredProject(null);
-          }
-        }}
       >
         <div className="context-menu-item" onClick={() => { onStartBlankTerminal(defaultShellType()); onClose(); }}>
           {serverUsesWindowsPaths() ? 'PowerShell' : 'Bash'}
@@ -176,61 +257,18 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
         <div className="context-menu-item" onClick={() => { onStartTextEditor(); onClose(); }}>
           文本编辑器
         </div>
-        <div
-          className={`context-menu-item has-submenu${hoveredProject ? ' submenu-active' : ''}`}
-          onMouseEnter={handleSubmenuAnchor}
-          onMouseLeave={event => {
-            if (event.relatedTarget instanceof Element && event.relatedTarget.closest('.claude-model-submenu')) {
-              return;
-            }
-            clearHoverMenus();
-          }}
-        >
-          <span>新建配置终端</span>
-          <span className="submenu-arrow">›</span>
-          <div
-            className="context-submenu new-terminal-profile-menu"
-            ref={submenuRef}
-            style={submenuPos ? { left: submenuPos.left, top: submenuPos.top } : undefined}
-          >
-            <div
-              className="new-terminal-profile-scroll"
-              style={submenuPos ? { maxHeight: submenuPos.maxHeight } : undefined}
-              onMouseOver={handleTargetHover}
-              onScroll={clearHoverMenus}
-            >
-              <TreeView
-                items={submenuTree}
-                expandedIds={expandedGroups}
-                onToggle={onToggleGroup}
-                selectedId={highlightedIndex >= 0 ? visibleSubmenuItems[highlightedIndex]?.id : undefined}
-                onSelect={handleSelect}
-                renderEnd={item => {
-                  // 项目分组行：标记可展开与项目右键同步的启动菜单（Agent 启动入口）。
-                  if (item.isGroup) {
-                    const project = projects.find(p => p.name === item.id);
-                    return project?.path ? (
-                      <span data-project-id={project.name} className="submenu-profile-end">
-                        <span className="submenu-arrow">›</span>
-                      </span>
-                    ) : null;
-                  }
-                  return null;
-                }}
-                className="submenu-tree"
-                indent={12}
-              />
-            </div>
-          </div>
-          {hoveredProject && (
-            <div
-              className="new-terminal-project-menu"
-              style={{ left: hoveredProject.pos.left, top: hoveredProject.pos.top, bottom: hoveredProject.pos.bottom, maxHeight: hoveredProject.pos.maxHeight }}
-            >
-              <ProjectLaunchMenuItems project={hoveredProject.project} onLaunched={onClose} />
-            </div>
-          )}
-        </div>
+        <ConfiguredTerminalMenuItem
+          submenuTree={submenuTree}
+          expandedGroups={expandedGroups}
+          onToggleGroup={onToggleGroup}
+          highlightedIndex={highlightedIndex}
+          visibleSubmenuItems={visibleSubmenuItems}
+          menuRef={menuRef}
+          submenuRef={submenuRef}
+          onStartTerminal={onStartTerminal}
+          onStartBlankTerminal={onStartBlankTerminal}
+          onClose={onClose}
+        />
         <div className="context-menu-separator" />
         <div className="context-menu-item danger" onClick={onCloseAllTabs}>
           关闭所有选项卡

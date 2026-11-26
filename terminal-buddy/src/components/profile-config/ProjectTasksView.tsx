@@ -817,41 +817,49 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
           )}
         </div>
 
-        {isExpanded && hasChildren && (
-          <div className="tree-children">
-            {group.profiles.length > 0 && (
-              <div className="tree-node">
-                <div
-                  className="tree-item project-tasks-config-group"
-                  onClick={() => toggleConfigExpand(group.configGroupId)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setTabContextMenu(null);
-                    setAgentTabMenu(null);
-                    onGroupContextMenu(e, group.id);
-                  }}
-                >
-                  <span
-                    className={`tree-arrow${isConfigExpanded ? ' expanded' : ''}`}
-                    onClick={(e) => { e.stopPropagation(); toggleConfigExpand(group.configGroupId); }}
-                  >
-                    <ChevronRight aria-hidden="true" />
-                  </span>
-                  <span className="project-tasks-config-icon">
-                    <SlidersHorizontal aria-hidden="true" />
-                  </span>
-                  <span className="tree-name project-tasks-config-name">配置</span>
-                  <span className="project-tasks-config-count">{group.profiles.length}</span>
-                </div>
-                {isConfigExpanded && (
-                  <div className="tree-children project-tasks-config-children">
-                    {group.profiles.map(profile => renderProfileLeaf(profile, 9))}
+        {hasChildren && (
+          <div
+            className={`project-tasks-collapse${isExpanded ? ' expanded' : ''}`}
+            aria-hidden={!isExpanded}
+            inert={!isExpanded}
+          >
+            <div className="project-tasks-collapse-content">
+              <div className="tree-children project-tasks-project-children">
+                {group.profiles.length > 0 && (
+                  <div className="tree-node">
+                    <div
+                      className="tree-item project-tasks-config-group"
+                      onClick={() => toggleConfigExpand(group.configGroupId)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setTabContextMenu(null);
+                        setAgentTabMenu(null);
+                        onGroupContextMenu(e, group.id);
+                      }}
+                    >
+                      <span
+                        className={`tree-arrow${isConfigExpanded ? ' expanded' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); toggleConfigExpand(group.configGroupId); }}
+                      >
+                        <ChevronRight aria-hidden="true" />
+                      </span>
+                      <span className="project-tasks-config-icon">
+                        <SlidersHorizontal aria-hidden="true" />
+                      </span>
+                      <span className="tree-name project-tasks-config-name">配置</span>
+                      <span className="project-tasks-config-count">{group.profiles.length}</span>
+                    </div>
+                    {isConfigExpanded && (
+                      <div className="tree-children project-tasks-config-children">
+                        {group.profiles.map(profile => renderProfileLeaf(profile, 9))}
+                      </div>
+                    )}
                   </div>
                 )}
+                {group.sessions.map(leaf => renderSessionLeaf(leaf, 9))}
               </div>
-            )}
-            {group.sessions.map(leaf => renderSessionLeaf(leaf, 9))}
+            </div>
           </div>
         )}
       </div>
@@ -1042,12 +1050,16 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
               </span>
               <span className="tree-group-name">置顶</span>
             </div>
-            {pinnedExpanded && (
-              <div className="tree-children">
+            <div
+              className={`project-tasks-collapse${pinnedExpanded ? ' expanded' : ''}`}
+              aria-hidden={!pinnedExpanded}
+              inert={!pinnedExpanded}
+            >
+              <div className="tree-children project-tasks-collapse-content">
                 {model.pinnedProfiles.map(profile => renderProfileLeaf(profile, 22, 'pinned'))}
                 {model.pinnedSessions.map(leaf => renderSessionLeaf(leaf, 22, 'pinned'))}
               </div>
-            )}
+            </div>
           </div>
         );
       })()}
@@ -1064,8 +1076,16 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
           <ChevronRight className={`project-tasks-section-arrow${projectsCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
           <span className="project-tasks-section-count">{model.groups.length}</span>
         </button>
-        <div id="project-tasks-project-list" data-task-section="projects" hidden={projectsCollapsed}>
-          {model.groups.map(renderProjectGroup)}
+        <div
+          id="project-tasks-project-list"
+          className={`project-tasks-collapse${projectsCollapsed ? '' : ' expanded'}`}
+          data-task-section="projects"
+          aria-hidden={projectsCollapsed}
+          inert={projectsCollapsed}
+        >
+          <div className="project-tasks-collapse-content">
+            {model.groups.map(renderProjectGroup)}
+          </div>
         </div>
       </section>
 
@@ -1081,20 +1101,24 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
           <ChevronRight className={`project-tasks-section-arrow${recentCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
           <span className="project-tasks-section-count">{model.recentItems.length}</span>
         </button>
-        <div id="project-tasks-recent-list" className="project-tasks-recent-list" data-task-section="recent" hidden={recentCollapsed}>
-          {!recentCollapsed && (
-            <>
-              {model.recentItems.map(item => {
-                switch (item.kind) {
-                  case 'terminal': return renderTerminalSessionLeaf(item.session, 10, 'recent');
-                  case 'agent': return renderNativeAgentLeaf(item.tab, 10, 'recent');
-                }
-              })}
-              {model.recentItems.length === 0 && !isSearching && (
-                <div className="empty-state">暂无已打开的会话</div>
-              )}
-            </>
-          )}
+        <div
+          id="project-tasks-recent-list"
+          className={`project-tasks-recent-list project-tasks-collapse${recentCollapsed ? '' : ' expanded'}`}
+          data-task-section="recent"
+          aria-hidden={recentCollapsed}
+          inert={recentCollapsed}
+        >
+          <div className="project-tasks-collapse-content">
+            {model.recentItems.map(item => {
+              switch (item.kind) {
+                case 'terminal': return renderTerminalSessionLeaf(item.session, 10, 'recent');
+                case 'agent': return renderNativeAgentLeaf(item.tab, 10, 'recent');
+              }
+            })}
+            {model.recentItems.length === 0 && !isSearching && (
+              <div className="empty-state">暂无已打开的会话</div>
+            )}
+          </div>
         </div>
       </section>
 
