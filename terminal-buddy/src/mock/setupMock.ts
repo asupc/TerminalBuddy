@@ -178,7 +178,6 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
 
   // 5. 核心 Invoke 分发器
   async function mockInvoke(cmd: string, args: any = {}): Promise<any> {
-    // console.log(`[Mock Invoke] ${cmd}`, args);
 
     switch (cmd) {
       // ===== Agent CLI =====

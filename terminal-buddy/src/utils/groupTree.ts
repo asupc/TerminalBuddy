@@ -70,32 +70,3 @@ export function buildGroupTree<T>(
   return sortChildren(roots);
 }
 
-/** 提取所有去重的完整分组路径 */
-export function extractGroupPaths<T>(
-  items: T[],
-  getGroup: (item: T) => string,
-): string[] {
-  const paths = new Set<string>();
-  for (const item of items) {
-    const rawGroup = getGroup(item) || DEFAULT_GROUP;
-    // 同时添加所有中间路径
-    const segments = rawGroup.split(SEPARATOR);
-    for (let i = 1; i <= segments.length; i++) {
-      paths.add(segments.slice(0, i).join(SEPARATOR));
-    }
-  }
-  return Array.from(paths).sort((a, b) => a.localeCompare(b, 'zh'));
-}
-
-/** 重命名分组路径：将 groupPath 中 oldPath 前缀替换为 newPath */
-export function renameGroupInPath(
-  groupPath: string,
-  oldPath: string,
-  newPath: string,
-): string {
-  if (groupPath === oldPath) return newPath;
-  if (groupPath.startsWith(oldPath + SEPARATOR)) {
-    return newPath + groupPath.slice(oldPath.length);
-  }
-  return groupPath; // 不匹配，不变
-}

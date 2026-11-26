@@ -84,19 +84,6 @@ pub(super) fn session_set_config_option_request(
     })
 }
 
-#[allow(dead_code)]
-pub(super) fn session_set_mode_request(id: u64, session_id: &str, mode_id: &str) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "session/set_mode",
-        "params": {
-            "sessionId": session_id,
-            "modeId": mode_id,
-        }
-    })
-}
-
 pub(super) fn session_prompt_request(
     id: u64,
     session_id: &str,

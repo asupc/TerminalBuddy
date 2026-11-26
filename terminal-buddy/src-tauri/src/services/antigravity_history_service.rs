@@ -421,7 +421,7 @@ fn collect_files(root: &Path, summaries: &HashMap<String, SummaryMeta>) -> Resul
     Ok(files)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn scan_root(
     conn: &Connection,
     root: &Path,

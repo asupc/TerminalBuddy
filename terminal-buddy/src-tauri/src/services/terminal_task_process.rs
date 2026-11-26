@@ -95,25 +95,12 @@ fn associate_antigravity_processes(
     associate_agent_processes(terminal_pids, processes, inherited_id, is_antigravity_cli_process)
 }
 
-/// 会话发现和呼吸灯存活判断共用，避免一处能找到会话、另一处却判定 CLI 已退出。
-#[allow(dead_code)]
-pub(super) fn codex_processes(terminal_pids: &[(String, u32)]) -> HashMap<String, HashMap<u32, usize>> {
-    if terminal_pids.is_empty() { return HashMap::new(); }
-    codex_processes_with_processes(terminal_pids, &crate::commands::claude_session::get_all_processes())
-}
-
 pub(super) fn codex_processes_with_processes(
     terminal_pids: &[(String, u32)],
     processes: &[(u32, u32, String)],
 ) -> HashMap<String, HashMap<u32, usize>> {
     if terminal_pids.is_empty() { return HashMap::new(); }
     associate_codex_processes(terminal_pids, processes, inherited_terminal_id)
-}
-
-#[allow(dead_code)]
-pub(super) fn antigravity_processes(terminal_pids: &[(String, u32)]) -> HashMap<String, HashMap<u32, usize>> {
-    if terminal_pids.is_empty() { return HashMap::new(); }
-    antigravity_processes_with_processes(terminal_pids, &crate::commands::claude_session::get_all_processes())
 }
 
 pub(super) fn antigravity_processes_with_processes(
