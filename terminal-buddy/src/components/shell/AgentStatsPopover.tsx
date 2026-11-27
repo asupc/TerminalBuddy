@@ -253,7 +253,7 @@ export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, 
       <div className="agent-stats-footer">
         {view.source === 'native'
           ? '会话状态实时推送 · 上下文超过 60% 转黄、80% 转红'
-          : `${view.agent === 'antigravity' ? '每 5 秒同步对话库与 transcript' : '每 5 秒读取终端 transcript'}${view.updatedAt ? ` · 更新于 ${formatClock(view.updatedAt)}` : ''}`}
+          : `${view.provider === 'antigravity' ? '每 5 秒同步对话库与 transcript' : '每 5 秒读取终端 transcript'}${view.updatedAt ? ` · 更新于 ${formatClock(view.updatedAt)}` : ''}`}
       </div>
     </div>
   );
