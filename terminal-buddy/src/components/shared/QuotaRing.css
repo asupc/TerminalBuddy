@@ -1,0 +1,118 @@
+.quota-ring-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.quota-ring-grid.is-compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quota-ring-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, var(--border));
+  background: var(--bg-secondary, rgba(128, 128, 128, 0.06));
+  min-width: 0;
+}
+
+.quota-ring-visual {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.quota-ring-svg {
+  transform: rotate(-90deg);
+  display: block;
+}
+
+.quota-ring-track {
+  fill: none;
+  stroke: var(--border);
+  opacity: 0.7;
+}
+
+.quota-ring-progress {
+  fill: none;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.35s ease, stroke 0.25s ease;
+}
+
+.quota-ring-progress.tone-ok {
+  stroke: #3fb950;
+}
+
+.quota-ring-progress.tone-warn {
+  stroke: #e6a23c;
+}
+
+.quota-ring-progress.tone-low {
+  stroke: #f14c4c;
+}
+
+.quota-ring-progress.tone-unknown {
+  stroke: var(--text-tertiary, var(--text-secondary));
+}
+
+.quota-ring-percent {
+  position: absolute;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--text-primary);
+}
+
+.quota-ring-percent.tone-ok {
+  color: #3fb950;
+}
+
+.quota-ring-percent.tone-warn {
+  color: #e6a23c;
+}
+
+.quota-ring-percent.tone-low {
+  color: #f14c4c;
+}
+
+.quota-ring-percent.tone-unknown {
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.quota-ring-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+}
+
+.quota-ring-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.quota-ring-reset {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--text-tertiary, var(--text-secondary));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}

@@ -260,3 +260,17 @@
   text-align: right;
   line-height: 1.35;
 }
+
+.agent-stats-refresh[aria-disabled="true"] {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.agent-stats-refresh.is-spinning svg {
+  animation: agent-stats-spin 1s linear infinite;
+}
+
+@keyframes agent-stats-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

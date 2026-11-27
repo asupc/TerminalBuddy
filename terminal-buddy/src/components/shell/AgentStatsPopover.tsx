@@ -2,6 +2,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import type { AiTokenUsage, AntigravityQuotaSummary } from '../../services/tauri';
 import { AgentIcon } from '../agent-chat/AgentIcon';
+import { AntigravityQuotaRings } from '../shared/QuotaRing';
 import { cacheHitRate, contextPercent, precise } from '../agent-chat/UsagePanel';
 import { agentEffortLabel, contextLevel, type AgentStatusView } from './agentStatusView';
 import './StatusBarAgent.css';
@@ -94,17 +95,25 @@ interface AgentStatsPopoverProps {
 export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, agyQuotaLoading, agyQuotaError, onRefreshAgyQuota }: AgentStatsPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  // 点外部 / Esc / 窗口尺寸变化时关闭；点击状态栏条目本身交给外层做开合切换。
+  // 点外部 / Esc / 窗口真实尺寸变化时关闭；点击状态栏条目本身交给外层做开合切换。
   useEffect(() => {
+    const initialW = window.innerWidth;
+    const initialH = window.innerHeight;
     const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
+      const target = event.target as Node | null;
+      if (!target) return;
       if (popoverRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
       onClose();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
-    const handleResize = () => onClose();
+    const handleResize = () => {
+      if (Math.abs(window.innerWidth - initialW) <= 1 && Math.abs(window.innerHeight - initialH) <= 1) {
+        return;
+      }
+      onClose();
+    };
     document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
     window.addEventListener('resize', handleResize);
@@ -137,6 +146,9 @@ export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, 
       style={{ left: anchor.left, bottom: anchor.bottom }}
       role="dialog"
       aria-label={`${view.providerLabel} Agent 详情`}
+      onPointerDown={e => e.stopPropagation()}
+      onMouseDown={e => e.stopPropagation()}
+      onClick={e => e.stopPropagation()}
     >
       <div className="agent-stats-header">
         <AgentIcon
@@ -181,10 +193,17 @@ export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, 
               {onRefreshAgyQuota && (
                 <button
                   type="button"
-                  className="agent-stats-close"
-                  disabled={agyQuotaLoading}
-                  onClick={onRefreshAgyQuota}
-                  title="刷新 Gemini 用量"
+                  className={`agent-stats-close agent-stats-refresh${agyQuotaLoading ? ' is-spinning' : ''}`}
+                  aria-disabled={agyQuotaLoading}
+                  aria-busy={agyQuotaLoading}
+                  onMouseDown={e => { e.preventDefault(); e.stopPropagation(); }}
+                  onPointerDown={e => { e.preventDefault(); e.stopPropagation(); }}
+                  onClick={e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!agyQuotaLoading) onRefreshAgyQuota();
+                  }}
+                  title={agyQuotaLoading ? '正在刷新…' : '刷新 Gemini 用量'}
                 >
                   <RefreshCw size={12} />
                 </button>
@@ -193,24 +212,7 @@ export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, 
             {agyQuotaLoading && !agyQuota ? (
               <p className="agent-stats-empty">正在查询账号 Gemini 用量…</p>
             ) : agyQuota && agyQuota.geminiWindows.length > 0 ? (
-              <div className="agent-stats-quota-list">
-                {agyQuota.geminiWindows.map((w, idx) => {
-                  const resetDetail = formatQuotaResetDetail(w.resetText);
-                  return (
-                    <div key={`${w.kind}-${w.label}-${idx}`} className="agent-stats-quota-item">
-                      <div className="agent-stats-row">
-                        <span className="agent-stats-row-label">{w.label}</span>
-                        <span className="agent-stats-row-value">
-                          {w.remainingPercent != null ? `剩余 ${w.remainingPercent}%` : '—'}
-                        </span>
-                      </div>
-                      {resetDetail && (
-                        <div className="agent-stats-quota-reset">{resetDetail}</div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+              <AntigravityQuotaRings windows={agyQuota.geminiWindows} compact />
             ) : (
               <p className="agent-stats-empty">{agyQuotaError || agyQuota?.rawSummary || '暂未获取到 Gemini 额度信息'}</p>
             )}
