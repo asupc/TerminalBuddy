@@ -848,6 +848,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           x={groupContextMenu.x}
           y={groupContextMenu.y}
           groupName={groupContextMenu.group}
+          onStartTerminal={onStartTerminal}
           onAddProfile={onAddProfile}
           onEditProject={(group) => setEditingProject(group)}
           onDeleteProject={(group) => setDeletingProject(group)}

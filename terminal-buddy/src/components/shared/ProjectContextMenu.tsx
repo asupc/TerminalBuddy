@@ -2,7 +2,9 @@ import { FC, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/appStore';
 import { openInExplorer } from '../../services/tauri';
 import { supportsSystemExplorerOpen } from '../../services/platform';
+import type { Profile } from '../../types';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
+import { PROFILE_TYPE_ICONS } from '../profile-config/ProfileTagList';
 import { ProjectLaunchMenuItems } from './ProjectLaunchMenuItems';
 
 interface ProjectContextMenuProps {
@@ -10,6 +12,7 @@ interface ProjectContextMenuProps {
   y: number;
   /** 分组名（已登记项目名或旧式配置分组名）。 */
   groupName: string;
+  onStartTerminal: (profile: Profile) => void;
   onAddProfile: (groupName: string) => void;
   onEditProject: (groupName: string) => void;
   onDeleteProject: (groupName: string) => void;
@@ -24,6 +27,7 @@ export const ProjectContextMenu: FC<ProjectContextMenuProps> = ({
   x,
   y,
   groupName,
+  onStartTerminal,
   onAddProfile,
   onEditProject,
   onDeleteProject,
@@ -36,8 +40,9 @@ export const ProjectContextMenu: FC<ProjectContextMenuProps> = ({
 
   const project = projects.find(item => item.name === groupName);
   const projectPath = project?.path;
+  const groupProfiles = profiles.filter(p => (p.group || '默认') === groupName);
   // 删除项目只在该分组不再承载任何配置时提供（与旧面板行为一致）。
-  const hasProfiles = profiles.some(p => p.group === groupName);
+  const hasProfiles = groupProfiles.length > 0;
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -73,10 +78,42 @@ export const ProjectContextMenu: FC<ProjectContextMenuProps> = ({
   return (
     <div ref={menuRef} className="context-menu" style={{ left: pos.x, top: pos.y }} onMouseDown={(e) => e.stopPropagation()}>
       {project && projectPath && (
+        <ProjectLaunchMenuItems project={project} onLaunched={onClose} />
+      )}
+      {groupProfiles.length > 0 && (
         <>
-          {/* 启动区（命令行 / Agent 模型）与会话标签栏「新建配置终端」悬停菜单共用 */}
-          <ProjectLaunchMenuItems project={project} onLaunched={onClose} />
-          <div className="context-menu-separator" />
+          {project && projectPath && <div className="context-menu-separator" />}
+          <div className="context-menu-section-label">项目配置</div>
+          {groupProfiles.map(profile => {
+            const typeLabel = PROFILE_TYPE_ICONS[profile.terminalType] || profile.terminalType.toUpperCase();
+            return (
+              <div
+                key={profile.id}
+                className="context-menu-item context-menu-profile-item"
+                title={profile.startupCommands?.filter(Boolean).join(' && ') || profile.name}
+                onClick={() => {
+                  useAppStore.getState().setLastClickRegion('tab');
+                  onClose();
+                  onStartTerminal(profile);
+                }}
+              >
+                <span className="config-nav-icon-type">{typeLabel}</span>
+                <span
+                  className="context-menu-profile-name"
+                  style={profile.tabColor ? { color: profile.tabColor } : undefined}
+                >
+                  {profile.name}
+                </span>
+              </div>
+            );
+          })}
+        </>
+      )}
+      {((project && projectPath) || groupProfiles.length > 0) && (
+        <div className="context-menu-separator" />
+      )}
+      {project && projectPath && (
+        <>
           {supportsSystemExplorerOpen() && (
             <div className="context-menu-item" onClick={async () => {
               onClose();

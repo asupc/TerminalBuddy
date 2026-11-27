@@ -9,7 +9,8 @@ import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
 import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
 import { currentClaudeCommand } from '../../utils/agentCommands';
 import type { ExtraParamMode, Profile } from '../../types';
-import { TreeView, type TreeItem } from '../file-explorer/TreeView';
+import '../file-explorer/TreeView.css';
+import { ProfileTagList } from './ProfileTagList';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { ProjectContextMenu } from '../shared/ProjectContextMenu';
@@ -21,10 +22,6 @@ import { useSessionCloseActions } from '../../hooks/useSessionCloseActions';
 import { effectiveProfilePath } from '../../utils/projectPath';
 import { defaultShellType, isDockerClient, serverUsesWindowsPaths, supportsSystemExplorerOpen } from '../../services/platform';
 import './ConfigNav.css';
-
-const TYPE_ICONS: Record<string, string> = {
-  powershell: 'PS', pwsh: 'PS7', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
-};
 
 /** 虚拟置顶分组 id：置顶的配置聚合到此分组，永远显示在列表最顶部 */
 const PINNED_GROUP_ID = '__pinned__';
@@ -140,8 +137,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   // 项目编辑对话框目标名：null 关闭；空字符串新建；否则编辑 / 按该名称新建。
   const [editingProject, setEditingProject] = useState<string | null>(null);
 
-  // Build project nodes and their profiles
-  const treeItems = useMemo(() => {
+  // Build project groups and their profiles
+  const projectGroups = useMemo(() => {
     let filtered = profiles;
 
     if (!experimentalProjectTasks && configSearchQuery.trim()) {
@@ -153,26 +150,21 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     const pinnedItems = filtered.filter(p => p.pinned);
     const normalItems = filtered.filter(p => !p.pinned);
 
-    const toLeaf = (p: Profile): TreeItem => ({
-      id: p.id,
-      label: p.name,
-      icon: <span className="config-nav-icon-type">{TYPE_ICONS[p.terminalType] || p.terminalType.toUpperCase()}</span>,
-      color: p.tabColor || undefined,
-      data: p,
-    });
-
-    // Projects are flat entities; unlike legacy groups their names are not slash-separated paths.
-    const result: TreeItem[] = projects
+    const result: Array<{ id: string; label: string; profiles: Profile[] }> = projects
       .filter(project => experimentalProjectTasks || !configSearchQuery.trim() || normalItems.some(p => p.group === project.name))
       .map(project => ({
-        id: project.name, label: project.name, isGroup: true,
-        children: normalItems.filter(p => p.group === project.name).map(toLeaf),
+        id: project.name,
+        label: project.name,
+        profiles: normalItems.filter(p => p.group === project.name),
       }));
     // Keep legacy groups visible until their project path has been configured.
     for (const group of new Set(normalItems.map(p => p.group || '默认'))) {
       if (!result.some(item => item.id === group)) {
-        result.push({ id: group, label: group, isGroup: true,
-          children: normalItems.filter(p => (p.group || '默认') === group).map(toLeaf) });
+        result.push({
+          id: group,
+          label: group,
+          profiles: normalItems.filter(p => (p.group || '默认') === group),
+        });
       }
     }
 
@@ -184,8 +176,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       result.unshift({
         id: PINNED_GROUP_ID,
         label: '置顶',
-        isGroup: true,
-        children: [...pinnedItems].map(toLeaf),
+        profiles: [...pinnedItems],
       });
     }
 
@@ -200,35 +191,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       return next;
     });
   };
-
-  const handleSelect = useCallback((item: TreeItem) => {
-    if (item.data) {
-      selectProfile((item.data as Profile).id);
-    } else if (item.isGroup) {
-      selectProfile(item.id);
-    }
-  }, [selectProfile]);
-
-  const handleDoubleClick = useCallback((item: TreeItem) => {
-    if (item.data) {
-      onStartTerminal(item.data as Profile);
-    }
-  }, [onStartTerminal]);
-
-  const handleItemContextMenu = useCallback((e: React.MouseEvent, item: TreeItem) => {
-    e.preventDefault();
-    if (item.data) {
-      const profile = item.data as Profile;
-      selectProfile(profile.id);
-      setGroupContextMenu(null);
-      setBlankContextMenu(null);
-      setContextMenu({ x: e.clientX, y: e.clientY, profileId: profile.id });
-    } else if (item.isGroup && item.id !== PINNED_GROUP_ID) {
-      setContextMenu(null);
-      setBlankContextMenu(null);
-      setGroupContextMenu({ x: e.clientX, y: e.clientY, group: item.id });
-    }
-  }, [selectProfile]);
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
@@ -539,7 +501,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
         </div>
       )}
       <div className="config-nav-list" onContextMenu={(e) => {
-        if ((e.target as HTMLElement).closest('.tree-item, .tab-nav-settings-btn')) return;
+        if ((e.target as HTMLElement).closest('.tree-item, .profile-tag-item, .tab-nav-settings-btn')) return;
         e.preventDefault();
         setContextMenu(null);
         setGroupContextMenu(null);
@@ -570,30 +532,70 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           </>
         ) : (
           <>
-            <TreeView
-              items={treeItems}
-              expandedIds={expandedGroups}
-              onToggle={handleToggle}
-              selectedId={selectedProfileId}
-              onSelect={handleSelect}
-              onDoubleClick={handleDoubleClick}
-              onContextMenu={handleItemContextMenu}
-              renamingProfileId={renamingProfileId}
-              renamingProfileValue={renamingProfileName}
-              onRenamingProfileChange={setRenamingProfileName}
-              onRenamingProfileSubmit={handleFinishRenameProfile}
-              onRenamingProfileCancel={() => setRenamingProfileId(null)}
-              itemDraggable
-              showEmptyGroupArrow
-              onItemDragStart={(e, item) => {
-                const profile = item.data as Profile | undefined;
-                if (!profile) return;
-                setDragProfileId(profile.id);
-                e.dataTransfer.effectAllowed = 'copy';
-                e.dataTransfer.setData('text/plain', profile.id);
-              }}
-              onItemDragEnd={() => setDragProfileId(null)}
-            />
+            <div className="tree-view config-nav-project-list">
+              {projectGroups.map(group => {
+                const isExpanded = expandedGroups.has(group.id);
+                const isSelected = selectedProfileId === group.id;
+                const hasProfiles = group.profiles.length > 0;
+                return (
+                  <div key={group.id} className="tree-node">
+                    <div
+                      className={`tree-item tree-item-group${isSelected ? ' selected' : ''}`}
+                      style={{ paddingLeft: '8px' }}
+                      onClick={() => {
+                        selectProfile(group.id);
+                        handleToggle(group.id);
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (group.id === PINNED_GROUP_ID) return;
+                        setContextMenu(null);
+                        setBlankContextMenu(null);
+                        setGroupContextMenu({ x: e.clientX, y: e.clientY, group: group.id });
+                      }}
+                    >
+                      <span
+                        className={`tree-arrow${isExpanded ? ' expanded' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); handleToggle(group.id); }}
+                      >
+                        ▶
+                      </span>
+                      <span className="tree-name">{group.label}</span>
+                      {hasProfiles && (
+                        <span className="config-nav-group-count">{group.profiles.length}</span>
+                      )}
+                    </div>
+                    {isExpanded && hasProfiles && (
+                      <ProfileTagList
+                        profiles={group.profiles}
+                        selectedProfileId={selectedProfileId}
+                        renamingProfileId={renamingProfileId}
+                        renamingProfileName={renamingProfileName}
+                        onRenamingProfileChange={setRenamingProfileName}
+                        onRenamingProfileSubmit={handleFinishRenameProfile}
+                        onRenamingProfileCancel={() => setRenamingProfileId(null)}
+                        onSelectProfile={(profile) => selectProfile(profile.id)}
+                        onStartTerminal={onStartTerminal}
+                        onContextMenu={(e, profile) => {
+                          selectProfile(profile.id);
+                          setGroupContextMenu(null);
+                          setBlankContextMenu(null);
+                          setContextMenu({ x: e.clientX, y: e.clientY, profileId: profile.id });
+                        }}
+                        onDragStart={(e, profile) => {
+                          setDragProfileId(profile.id);
+                          e.dataTransfer.effectAllowed = 'copy';
+                          e.dataTransfer.setData('text/plain', profile.id);
+                        }}
+                        onDragEnd={() => setDragProfileId(null)}
+                        className="config-nav-profile-tags"
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
             {projects.length === 0 && profiles.length === 0 && (
               <div className="empty-state">暂无配置，点击新建</div>
             )}
@@ -690,6 +692,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           x={groupContextMenu.x}
           y={groupContextMenu.y}
           groupName={groupContextMenu.group}
+          onStartTerminal={onStartTerminal}
           onAddProfile={onAddProfile}
           onEditProject={editProject}
           onDeleteProject={setConfirmDeleteProject}

@@ -534,3 +534,89 @@
   margin: 6px 4px;
   background: var(--border-subtle);
 }
+
+/* ── 项目下配置平铺标签（自适应项目导航宽度，一行展示多个） ────────────── */
+.profile-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.config-nav-profile-tags {
+  padding: 4px 8px 6px 24px;
+}
+
+.project-tasks-profile-tags {
+  padding: 2px 2px 6px 4px;
+}
+
+.project-tasks-pinned-tags {
+  padding: 4px 4px 6px 20px;
+}
+
+.config-nav-group-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-tag-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
+}
+
+.profile-tag-item:hover {
+  background: var(--list-hover-bg);
+  border-color: var(--border);
+}
+
+.profile-tag-item.selected {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-secondary));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.profile-tag-type {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  opacity: 0.82;
+  letter-spacing: 0.02em;
+}
+
+.profile-tag-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-tag-rename-input {
+  width: 96px;
+  max-width: 100%;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}

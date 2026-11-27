@@ -1,6 +1,6 @@
 import { FC, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CalendarClock, ChevronRight, FileText, Folder, FolderOpen, SlidersHorizontal, X } from 'lucide-react';
+import { CalendarClock, ChevronRight, FileText, Folder, FolderOpen, X } from 'lucide-react';
 import { isDockerClient } from '../../services/platform';
 import { readClientData, writeClientData } from '../../services/tauri';
 import { sessionReplayTabKey, useAppStore, type NativeAgentTab } from '../../stores/appStore';
@@ -19,19 +19,15 @@ import { AgentIcon } from '../agent-chat/AgentIcon';
 import { AgentTabContextMenu } from '../shell/AgentTabContextMenu';
 import { SessionTaskLabel } from '../shell/SessionTaskLabel';
 import { TabContextMenu } from '../shell/TabContextMenu';
+import { ProfileTagList } from './ProfileTagList';
 import '../file-explorer/TreeView.css';
 import { onPageVisible } from '../../utils/visibility';
 import '../shell/TabNav.css';
-
-const TYPE_ICONS: Record<string, string> = {
-  powershell: 'PS', pwsh: 'PS7', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
-};
 
 type TaskSection = 'projects' | 'recent' | 'pinned';
 
 interface ProjectTasksViewState {
   expandedIds: string[];
-  expandedConfigIds: string[];
   toolsCollapsed: boolean;
   projectsCollapsed: boolean;
   recentCollapsed: boolean;
@@ -126,7 +122,6 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     PINNED_GROUP_ID,
     ...(isDockerClient() ? ['服务器工作区'] : []),
   ]));
-  const [expandedConfigIds, setExpandedConfigIds] = useState<Set<string>>(() => new Set());
   const [viewStateLoaded, setViewStateLoaded] = useState(false);
   const [toolsCollapsed, setToolsCollapsed] = useState(false);
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
@@ -151,9 +146,6 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
       if (Array.isArray(saved.expandedIds)) {
         setExpandedIds(new Set(saved.expandedIds.filter(id => typeof id === 'string')));
       }
-      if (Array.isArray(saved.expandedConfigIds)) {
-        setExpandedConfigIds(new Set(saved.expandedConfigIds.filter(id => typeof id === 'string')));
-      }
       if (typeof saved.toolsCollapsed === 'boolean') setToolsCollapsed(saved.toolsCollapsed);
       if (typeof saved.projectsCollapsed === 'boolean') setProjectsCollapsed(saved.projectsCollapsed);
       if (typeof saved.recentCollapsed === 'boolean') setRecentCollapsed(saved.recentCollapsed);
@@ -171,7 +163,6 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     if (!viewStateLoaded) return;
     const state: ProjectTasksViewState = {
       expandedIds: [...expandedIds],
-      expandedConfigIds: [...expandedConfigIds],
       toolsCollapsed,
       projectsCollapsed,
       recentCollapsed,
@@ -181,7 +172,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     void writeClientData('project_tasks_view', JSON.stringify(state)).catch(error => {
       console.error('保存项目与任务展开状态失败：', error);
     });
-  }, [viewStateLoaded, expandedIds, expandedConfigIds, toolsCollapsed, projectsCollapsed, recentCollapsed, relayCollapsed, replayCollapsed]);
+  }, [viewStateLoaded, expandedIds, toolsCollapsed, projectsCollapsed, recentCollapsed, relayCollapsed, replayCollapsed]);
 
   // 终端运行时长后缀每 60s 刷新一次（页面隐藏时暂停）
   const [, setUptimeTick] = useState(0);
@@ -308,15 +299,6 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     });
   };
 
-  const toggleConfigExpand = (id: string) => {
-    setExpandedConfigIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const handleRenameSubmit = (sessionId: string) => {
     const trimmed = renameValue.trim();
     if (trimmed && trimmed !== renameBaseline) renameSession(sessionId, trimmed);
@@ -348,73 +330,45 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     }
   };
 
-  const renderProfileLeaf = (profile: Profile, paddingLeft: number, section: TaskSection = 'projects') => {
-    const isSelected = selectionSection === section && lastClickRegion === 'config' && selectedProfileId === profile.id;
-    const isRenaming = renamingProfileId === profile.id && selectionSection === section;
-    return (
-      <div
-        key={profile.id}
-        className={`tree-item project-tasks-profile-item${isSelected ? ' selected' : ''}`}
-        style={{ paddingLeft: `${paddingLeft}px` }}
-        draggable={!isRenaming}
-        onDragStart={(e) => {
-          setDragProfileId(profile.id);
-          e.dataTransfer.effectAllowed = 'copy';
-          e.dataTransfer.setData('text/plain', profile.id);
-        }}
-        onDragEnd={() => setDragProfileId(null)}
-        onMouseDown={(e) => {
-          if (e.button !== 0) return;
-          e.stopPropagation();
-          useAppStore.getState().setLastClickRegion('config');
-          selectProfile(profile.id);
-        }}
-        onClick={() => {
-          useAppStore.getState().setLastClickRegion('config');
-          selectProfile(profile.id);
-        }}
-        onDoubleClick={() => {
-          if (isRenaming) return;
-          onStartTerminal(profile);
-        }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setTabContextMenu(null);
-          setAgentTabMenu(null);
-          setSelectionSection(section);
-          useAppStore.getState().setLastClickRegion('config');
-          selectProfile(profile.id);
-          onProfileContextMenu(e, profile.id);
-        }}
-      >
-        <span className="tree-icon">
-          <span className="config-nav-icon-type">
-            {TYPE_ICONS[profile.terminalType] || profile.terminalType.toUpperCase()}
-          </span>
-        </span>
-        {isRenaming ? (
-          <input
-            className="tree-rename-input"
-            value={renamingProfileName}
-            onChange={(e) => onRenamingProfileChange(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === 'Enter') onRenamingProfileSubmit();
-              if (e.key === 'Escape') onRenamingProfileCancel();
-            }}
-            onBlur={onRenamingProfileSubmit}
-            onClick={(e) => e.stopPropagation()}
-            autoFocus
-          />
-        ) : (
-          <span className="tree-name" style={profile.tabColor ? { color: profile.tabColor } : undefined}>
-            {profile.name}
-          </span>
-        )}
-      </div>
-    );
-  };
+  const renderProfileTags = (
+    groupProfiles: Profile[],
+    section: TaskSection = 'projects',
+    className?: string,
+  ) => (
+    <ProfileTagList
+      profiles={groupProfiles}
+      selectedProfileId={selectedProfileId}
+      isProfileSelected={(profile) =>
+        selectionSection === section && lastClickRegion === 'config' && selectedProfileId === profile.id
+      }
+      renamingProfileId={selectionSection === section ? renamingProfileId : null}
+      renamingProfileName={renamingProfileName}
+      onRenamingProfileChange={onRenamingProfileChange}
+      onRenamingProfileSubmit={onRenamingProfileSubmit}
+      onRenamingProfileCancel={onRenamingProfileCancel}
+      onSelectProfile={(profile) => {
+        setSelectionSection(section);
+        useAppStore.getState().setLastClickRegion('config');
+        selectProfile(profile.id);
+      }}
+      onStartTerminal={onStartTerminal}
+      onContextMenu={(e, profile) => {
+        setTabContextMenu(null);
+        setAgentTabMenu(null);
+        setSelectionSection(section);
+        useAppStore.getState().setLastClickRegion('config');
+        selectProfile(profile.id);
+        onProfileContextMenu(e, profile.id);
+      }}
+      onDragStart={(e, profile) => {
+        setDragProfileId(profile.id);
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('text/plain', profile.id);
+      }}
+      onDragEnd={() => setDragProfileId(null)}
+      className={className}
+    />
+  );
 
   const renderTerminalSessionLeaf = (session: TerminalSession, paddingLeft: number, section: TaskSection = 'projects') => {
     const inRecent = section === 'recent';
@@ -759,10 +713,6 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
     const closableCount = groupTerminalSessions.length + groupAgentKeys.length;
     const sessionCount = group.sessions.length;
 
-    const hasMatchedProfilesInSearch = isSearching && group.profiles.some(
-      p => p.name.toLowerCase().includes(trimmedQuery),
-    );
-    const isConfigExpanded = hasMatchedProfilesInSearch || expandedConfigIds.has(group.configGroupId);
 
     return (
       <div key={group.id} className="tree-node project-tasks-project">
@@ -825,38 +775,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
           >
             <div className="project-tasks-collapse-content">
               <div className="tree-children project-tasks-project-children">
-                {group.profiles.length > 0 && (
-                  <div className="tree-node">
-                    <div
-                      className="tree-item project-tasks-config-group"
-                      onClick={() => toggleConfigExpand(group.configGroupId)}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setTabContextMenu(null);
-                        setAgentTabMenu(null);
-                        onGroupContextMenu(e, group.id);
-                      }}
-                    >
-                      <span
-                        className={`tree-arrow${isConfigExpanded ? ' expanded' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); toggleConfigExpand(group.configGroupId); }}
-                      >
-                        <ChevronRight aria-hidden="true" />
-                      </span>
-                      <span className="project-tasks-config-icon">
-                        <SlidersHorizontal aria-hidden="true" />
-                      </span>
-                      <span className="tree-name project-tasks-config-name">配置</span>
-                      <span className="project-tasks-config-count">{group.profiles.length}</span>
-                    </div>
-                    {isConfigExpanded && (
-                      <div className="tree-children project-tasks-config-children">
-                        {group.profiles.map(profile => renderProfileLeaf(profile, 9))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                {group.profiles.length > 0 && renderProfileTags(group.profiles, 'projects', 'project-tasks-profile-tags')}
                 {group.sessions.map(leaf => renderSessionLeaf(leaf, 9))}
               </div>
             </div>
@@ -1056,7 +975,7 @@ export const ProjectTasksView: FC<ProjectTasksViewProps> = ({
               inert={!pinnedExpanded}
             >
               <div className="tree-children project-tasks-collapse-content">
-                {model.pinnedProfiles.map(profile => renderProfileLeaf(profile, 22, 'pinned'))}
+                {model.pinnedProfiles.length > 0 && renderProfileTags(model.pinnedProfiles, 'pinned', 'project-tasks-pinned-tags')}
                 {model.pinnedSessions.map(leaf => renderSessionLeaf(leaf, 22, 'pinned'))}
               </div>
             </div>

@@ -430,6 +430,25 @@ textarea:focus-visible,
   background: var(--border-subtle);
 }
 
+.context-menu-section-label {
+  padding: 4px 10px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.context-menu-profile-item {
+  gap: 6px;
+}
+
+.context-menu-profile-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Shared panel titlebar (FileNav, ConfigNav, TabNav) */
 /* 会话活动指示灯（tab-nav-dot / terminal-tab-dot 共用，状态机见 utils/claudeIndicator.ts） */
 .tab-nav-dot.led-running,
