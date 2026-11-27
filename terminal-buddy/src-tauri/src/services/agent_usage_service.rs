@@ -8,13 +8,15 @@ use crate::services::{
     ai_catalog_service, claude_hook_settings, llm_provider_service,
     terminal_task_service,
 };
+use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,7 +92,7 @@ impl IncrementalState {
                 Self::Codex(_) => {
                     trimmed_line.contains("token_count") || trimmed_line.contains("\"model\"")
                 }
-                Self::Antigravity(_) => trimmed_line.contains("PLANNER_RESPONSE"),
+                Self::Antigravity(_) => trimmed_line.contains("PLANNER_RESPONSE") || trimmed_line.contains("CHECKPOINT"),
             };
             if !matches_prefilter {
                 match self {
@@ -222,43 +224,66 @@ impl IncrementalState {
             Self::Antigravity(state) => {
                 let index = state.line_index;
                 state.line_index += 1;
-                if parsed_value.get("type").and_then(Value::as_str) != Some("PLANNER_RESPONSE") {
+                let row_type = parsed_value.get("type").and_then(Value::as_str).unwrap_or("");
+                let is_planner = row_type == "PLANNER_RESPONSE";
+                let is_checkpoint = row_type == "CHECKPOINT";
+                if !is_planner && !is_checkpoint {
                     return true;
                 }
-                let source = parsed_value.get("source").and_then(Value::as_str).unwrap_or("");
-                if !matches!(source, "" | "MODEL") {
-                    return true;
+                if is_planner {
+                    let source = parsed_value.get("source").and_then(Value::as_str).unwrap_or("");
+                    if !matches!(source, "" | "MODEL") {
+                        return true;
+                    }
                 }
-                if let Some(model) = parsed_value
-                    .get("model")
+                // 跳过明确标记为未完成的流式行（如 status: "GENERATING"），防止缺失 step_index 时重复累加。
+                if let Some(status) = parsed_value
+                    .get("status")
                     .and_then(Value::as_str)
                     .map(str::trim)
-                    .filter(|model| !model.is_empty())
+                    .filter(|status| !status.is_empty())
                 {
-                    state.model = Some(model.to_string());
+                    if status != "DONE" {
+                        return true;
+                    }
+                }
+                if is_planner {
+                    if let Some(model) = parsed_value
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|model| !model.is_empty())
+                    {
+                        state.model = Some(model.to_string());
+                    }
                 }
                 let fresh = number(&parsed_value, "input_tokens");
                 let cached = number(&parsed_value, "cache_read_tokens");
+                let created = number(&parsed_value, "cache_creation_input_tokens")
+                    .or_else(|| number(&parsed_value, "cache_write_tokens"));
                 let output = number(&parsed_value, "output_tokens");
-                if fresh.is_none() && cached.is_none() && output.is_none() {
+                if fresh.is_none() && cached.is_none() && created.is_none() && output.is_none() {
                     return true;
                 }
-                let input = add(fresh, cached);
+                let input = add(add(fresh, cached), created);
                 let tokens = AiTokenUsage {
                     input_tokens: input,
                     output_tokens: output,
                     cache_read_input_tokens: cached,
-                    cache_creation_input_tokens: None,
+                    cache_creation_input_tokens: created,
                     reasoning_output_tokens: None,
                 };
+                let prefix = if is_checkpoint { "checkpoint" } else { "step" };
                 let key = parsed_value
                     .get("step_index")
                     .and_then(Value::as_u64)
-                    .map(|step| format!("step-{step}"))
+                    .map(|step| format!("{prefix}-{step}"))
                     .unwrap_or_else(|| format!("line-{index}"));
                 merge_max(state.by_step.entry(key).or_default(), &tokens);
-                if let Some(used) = input.filter(|used| *used > 0) {
-                    state.context_used = Some(used);
+                if is_planner {
+                    if let Some(used) = input.filter(|used| *used > 0) {
+                        state.context_used = Some(used);
+                    }
                 }
                 true
             }
@@ -464,6 +489,304 @@ fn parse_file(path: &Path, provider: &str) -> Result<ParsedUsage, String> {
     Ok(parsed)
 }
 
+
+// ── Antigravity 对话库 gen_metadata 解析（精确会话累计 Token）─────────
+// `conversations/<conversation_id>.db` 的 `gen_metadata.data` 为 Protobuf，
+// 完整记录主对话、CHECKPOINT 压缩、缓存写入与推理思考 token：
+//   data(1).chat -> chat(4).usage (exa.codeium_common_pb.ModelUsageStats):
+//     field 2 = input_tokens (未缓存输入)
+//     field 3 = output_tokens (= thinking + response)
+//     field 4 = cache_write_tokens
+//     field 5 = cache_read_tokens
+//     field 9 = thinking_output_tokens
+//     field 10 = response_output_tokens
+//     field 11 = response_id (去重键)
+//   data(4) = generation_id (备用去重键)
+
+#[derive(Clone)]
+struct CachedGenDb {
+    db_stamp: (u64, u64),
+    wal_stamp: Option<(u64, u64)>,
+    parsed: ParsedUsage,
+}
+
+fn gen_db_cache() -> &'static Mutex<HashMap<PathBuf, CachedGenDb>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedGenDb>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+enum PbField<'a> {
+    Num(u64),
+    Bytes(&'a [u8]),
+}
+
+fn pb_read_varint(buf: &[u8], pos: &mut usize) -> Option<u64> {
+    let mut value: u64 = 0;
+    let mut shift: u32 = 0;
+    for _ in 0..10 {
+        let &byte = buf.get(*pos)?;
+        *pos += 1;
+        if shift == 63 && byte > 1 {
+            return None;
+        }
+        value |= ((byte & 0x7f) as u64) << shift;
+        if (byte & 0x80) == 0 {
+            return Some(value);
+        }
+        if shift == 63 {
+            return None;
+        }
+        shift += 7;
+    }
+    None
+}
+
+fn pb_field<'a>(buf: &'a [u8], wanted: u64) -> Option<PbField<'a>> {
+    let mut pos = 0usize;
+    let mut result = None;
+    while pos < buf.len() {
+        let key = pb_read_varint(buf, &mut pos)?;
+        let field_no = key >> 3;
+        if field_no == 0 {
+            return None;
+        }
+        let field = match key & 7 {
+            0 => PbField::Num(pb_read_varint(buf, &mut pos)?),
+            2 => {
+                let len = pb_read_varint(buf, &mut pos)? as usize;
+                let end = pos.checked_add(len)?;
+                if end > buf.len() {
+                    return None;
+                }
+                let slice = &buf[pos..end];
+                pos = end;
+                PbField::Bytes(slice)
+            }
+            1 => {
+                pos = pos.checked_add(8)?;
+                if pos > buf.len() {
+                    return None;
+                }
+                PbField::Num(0)
+            }
+            5 => {
+                pos = pos.checked_add(4)?;
+                if pos > buf.len() {
+                    return None;
+                }
+                PbField::Num(0)
+            }
+            _ => return None,
+        };
+        if field_no == wanted {
+            result = Some(field);
+        }
+    }
+    result
+}
+
+fn pb_bytes<'a>(buf: &'a [u8], field_no: u64) -> Option<&'a [u8]> {
+    match pb_field(buf, field_no)? {
+        PbField::Bytes(bytes) => Some(bytes),
+        PbField::Num(_) => None,
+    }
+}
+
+fn pb_num(buf: &[u8], field_no: u64) -> u64 {
+    match pb_field(buf, field_no) {
+        Some(PbField::Num(n)) => n,
+        _ => 0,
+    }
+}
+
+fn pb_str(buf: &[u8], field_no: u64) -> Option<String> {
+    let bytes = pb_bytes(buf, field_no)?;
+    if bytes.is_empty() {
+        return None;
+    }
+    std::str::from_utf8(bytes)
+        .ok()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn parse_antigravity_gen_metadata_blob(data: &[u8]) -> Option<(Option<String>, AiTokenUsage)> {
+    let chat = pb_bytes(data, 1)?;
+    let usage = pb_bytes(chat, 4)?;
+    let fresh = pb_num(usage, 2);
+    let thinking = pb_num(usage, 9);
+    let response_out = pb_num(usage, 10);
+    let raw_output = pb_num(usage, 3);
+    let output = if raw_output > 0 {
+        raw_output
+    } else {
+        thinking.saturating_add(response_out)
+    };
+    let cache_write = pb_num(usage, 4);
+    let cache_read = pb_num(usage, 5);
+    if fresh == 0 && output == 0 && cache_write == 0 && cache_read == 0 {
+        return None;
+    }
+    let total_input = fresh.saturating_add(cache_read).saturating_add(cache_write);
+    let dedup_id = pb_str(usage, 11).or_else(|| pb_str(data, 4));
+    let tokens = AiTokenUsage {
+        input_tokens: Some(total_input),
+        output_tokens: Some(output),
+        cache_read_input_tokens: Some(cache_read),
+        cache_creation_input_tokens: (cache_write > 0).then_some(cache_write),
+        reasoning_output_tokens: (thinking > 0).then_some(thinking),
+    };
+    Some((dedup_id, tokens))
+}
+
+fn is_uuid_like(value: &str) -> bool {
+    value.len() == 36 && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+}
+
+/// 从 `<root>/brain/<conversation_id>/.system_generated/logs/transcript[_full].jsonl`
+/// 推导同账号隔离目录下的 `<root>/conversations/<conversation_id>.db`。
+fn derive_antigravity_conversation_db(transcript_path: &Path) -> Option<PathBuf> {
+    let mut current = transcript_path.parent()?;
+    while let Some(parent) = current.parent() {
+        if parent.file_name().and_then(|n| n.to_str()) == Some("brain") {
+            let conv_id = current.file_name().and_then(|n| n.to_str())?;
+            if is_uuid_like(conv_id) {
+                let root = parent.parent()?;
+                return Some(root.join("conversations").join(format!("{conv_id}.db")));
+            }
+            return None;
+        }
+        current = parent;
+    }
+    None
+}
+
+fn is_wal_database(path: &Path) -> bool {
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let mut hdr = [0u8; 20];
+    file.read_exact(&mut hdr).is_ok() && (hdr[18] == 2 || hdr[19] == 2)
+}
+
+fn sqlite_immutable_uri(path: &Path) -> String {
+    let raw = path.to_string_lossy().replace('\\', "/");
+    let mut encoded = String::with_capacity(raw.len() + 24);
+    if raw.starts_with('/') {
+        encoded.push_str("file://");
+    } else {
+        encoded.push_str("file:///");
+    }
+    for ch in raw.chars() {
+        match ch {
+            '%' => encoded.push_str("%25"),
+            '?' => encoded.push_str("%3F"),
+            '#' => encoded.push_str("%23"),
+            _ => encoded.push(ch),
+        }
+    }
+    encoded.push_str("?immutable=1");
+    encoded
+}
+
+fn open_readonly_sqlite(path: &Path) -> Option<Connection> {
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let conn = match Connection::open_with_flags(path, flags) {
+        Ok(conn) => Some(conn),
+        Err(_) => {
+            // 已关闭的 WAL 数据库在缺少 -wal/-shm 时，SQLite 只读模式无法创建 -shm；
+            // 当 -wal 不存在或为空时，用 immutable=1 只读打开是安全的。
+            if !is_wal_database(path) {
+                return None;
+            }
+            let wal_path = PathBuf::from(format!("{}-wal", path.display()));
+            if fs::metadata(&wal_path).is_ok_and(|meta| meta.len() > 0) {
+                return None;
+            }
+            let uri = sqlite_immutable_uri(path);
+            Connection::open_with_flags(uri, flags | OpenFlags::SQLITE_OPEN_URI).ok()
+        }
+    }?;
+    let _ = conn.busy_timeout(Duration::from_millis(50));
+    Some(conn)
+}
+
+fn parse_antigravity_conversation_db(db_path: &Path) -> Option<ParsedUsage> {
+    if !db_path.is_file() {
+        return None;
+    }
+    let db_stamp = file_stamp(db_path)?;
+    let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
+    let wal_stamp = file_stamp(&wal_path);
+
+    if let Ok(map) = gen_db_cache().lock() {
+        if let Some(cached) = map.get(db_path) {
+            if cached.db_stamp == db_stamp && cached.wal_stamp == wal_stamp {
+                return Some(cached.parsed.clone());
+            }
+        }
+    }
+
+    let conn = open_readonly_sqlite(db_path)?;
+    let mut stmt = conn
+        .prepare("SELECT data FROM gen_metadata WHERE data IS NOT NULL ORDER BY idx ASC")
+        .ok()?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))
+        .ok()?;
+
+    let mut by_id: HashMap<String, AiTokenUsage> = HashMap::new();
+    let mut last_input: Option<u64> = None;
+    let mut row_idx: usize = 0;
+
+    for row in rows {
+        let Ok(blob) = row else {
+            continue;
+        };
+        if let Some((dedup_id, tokens)) = parse_antigravity_gen_metadata_blob(&blob) {
+            if let Some(used) = tokens.input_tokens.filter(|used| *used > 0) {
+                last_input = Some(used);
+            }
+            let key = dedup_id.unwrap_or_else(|| format!("row-{row_idx}"));
+            merge_max(by_id.entry(key).or_default(), &tokens);
+        }
+        row_idx += 1;
+    }
+
+    if by_id.is_empty() {
+        return None;
+    }
+
+    let mut total = AiTokenUsage::default();
+    for tokens in by_id.values() {
+        total = plus(&total, tokens);
+    }
+
+    let parsed = ParsedUsage {
+        model: None,
+        context_used: last_input,
+        context_window: None,
+        total,
+    };
+
+    if let Ok(mut map) = gen_db_cache().lock() {
+        if map.len() > 32 {
+            map.clear();
+        }
+        map.insert(
+            db_path.to_path_buf(),
+            CachedGenDb {
+                db_stamp,
+                wal_stamp,
+                parsed: parsed.clone(),
+            },
+        );
+    }
+
+    Some(parsed)
+}
+
 fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_slice(&fs::read(path).ok()?).ok()
 }
@@ -627,8 +950,20 @@ pub fn usage(terminal_id: &str) -> Result<Option<TerminalAgentUsage>, String> {
             ..Default::default()
         }));
     };
-    let parsed = parse_file(&location.path, &location.provider)?;
+    let mut parsed = parse_file(&location.path, &location.provider)?;
     let is_antigravity = location.provider == "antigravity";
+    if is_antigravity {
+        // 对话库 `gen_metadata` 包含完整的 CHECKPOINT 压缩、缓存写入与推理输出统计，
+        // 优先作为本会话累计主源；上下文占用仍优先保留主线程 transcript 最新步。
+        if let Some(db_path) = derive_antigravity_conversation_db(&location.path) {
+            if let Some(db_usage) = parse_antigravity_conversation_db(&db_path) {
+                parsed.total = db_usage.total;
+                if parsed.context_used.is_none() {
+                    parsed.context_used = db_usage.context_used;
+                }
+            }
+        }
+    }
     let is_claude = location.provider == "claude";
     let model = parsed.model.clone().or_else(|| {
         if is_antigravity {
@@ -863,5 +1198,59 @@ mod tests {
         assert_eq!(truncated.total.output_tokens, Some(5));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn antigravity_usage_includes_checkpoint_and_skips_generating() {
+        let content = jsonl(vec![
+            json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"GENERATING","model":"gemini-4-neon-xhigh","input_tokens":50,"cache_read_tokens":500,"output_tokens":5}),
+            json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","model":"gemini-4-neon-xhigh","input_tokens":100,"cache_read_tokens":900,"output_tokens":20}),
+            json!({"step_index":2,"source":"SYSTEM","type":"CHECKPOINT","status":"DONE","input_tokens":200,"cache_read_tokens":800,"output_tokens":40}),
+        ]);
+        let parsed = parse_antigravity(&content);
+        assert_eq!(parsed.model.as_deref(), Some("gemini-4-neon-xhigh"));
+        // 上下文占用保持主线程 PLANNER_RESPONSE（1000），不被 CHECKPOINT 覆盖。
+        assert_eq!(parsed.context_used, Some(1000));
+        // 累计总量包含 CHECKPOINT。
+        assert_eq!(parsed.total.input_tokens, Some(2000));
+        assert_eq!(parsed.total.cache_read_input_tokens, Some(1700));
+        assert_eq!(parsed.total.output_tokens, Some(60));
+    }
+
+    #[test]
+    fn antigravity_gen_metadata_protobuf_parses_all_fields() {
+        // 构造一个最小的 protobuf：
+        // usage(chat field 4):
+        //   field 2 (input_tokens) = 120 (0x10 0x78)
+        //   field 3 (output_tokens) = 80 (0x18 0x50)
+        //   field 4 (cache_write) = 30 (0x20 0x1e)
+        //   field 5 (cache_read) = 1000 (0x28 0xe8 0x07)
+        //   field 9 (thinking) = 50 (0x48 0x32)
+        //   field 11 (response_id) = "r1" (0x5a 0x02 'r' '1')
+        let usage = [0x10u8, 0x78, 0x18, 0x50, 0x20, 0x1e, 0x28, 0xe8, 0x07, 0x48, 0x32, 0x5a, 0x02, b'r', b'1'];
+        let mut chat = vec![0x22u8, usage.len() as u8];
+        chat.extend_from_slice(&usage);
+        let mut root = vec![0x0au8, chat.len() as u8];
+        root.extend_from_slice(&chat);
+
+        let (dedup_id, tokens) = parse_antigravity_gen_metadata_blob(&root).expect("应成功解析");
+        assert_eq!(dedup_id.as_deref(), Some("r1"));
+        assert_eq!(tokens.input_tokens, Some(1150)); // 120 + 1000 + 30
+        assert_eq!(tokens.output_tokens, Some(80));
+        assert_eq!(tokens.cache_read_input_tokens, Some(1000));
+        assert_eq!(tokens.cache_creation_input_tokens, Some(30));
+        assert_eq!(tokens.reasoning_output_tokens, Some(50));
+    }
+
+    #[test]
+    fn derive_antigravity_conversation_db_maps_isolated_profile_path() {
+        let conv_id = "12345678-abcd-ef01-2345-6789abcdef01";
+        let transcript = PathBuf::from(format!(
+            "/data/antigravity-profiles/us/.gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs/transcript_full.jsonl"
+        ));
+        let expected = PathBuf::from(format!(
+            "/data/antigravity-profiles/us/.gemini/antigravity-cli/conversations/{conv_id}.db"
+        ));
+        assert_eq!(derive_antigravity_conversation_db(&transcript), Some(expected));
     }
 }

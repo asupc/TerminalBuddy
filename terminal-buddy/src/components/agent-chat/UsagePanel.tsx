@@ -31,13 +31,13 @@ export function contextSummary(context: AiContextUsage | null | undefined): stri
   return '上下文 —';
 }
 
-/** 缓存命中率：命中 /（命中 + 写入 + 未命中输入）。 */
+/** 缓存命中率：命中 ÷ 总输入（inputTokens 已包含缓存读写，取 max 兜底避免分母小于缓存之和）。 */
 export function cacheHitRate(tokens: AiTokenUsage | null | undefined): string {
   const read = tokens?.cacheReadInputTokens ?? null;
   const write = tokens?.cacheCreationInputTokens ?? null;
   const input = tokens?.inputTokens ?? null;
   if (read == null || input == null) return '—';
-  const total = input + (write ?? 0);
+  const total = Math.max(input, read + (write ?? 0));
   if (total <= 0) return '—';
   return `${Math.round((read / total) * 100)}%`;
 }

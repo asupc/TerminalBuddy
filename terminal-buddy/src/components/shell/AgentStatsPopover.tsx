@@ -240,6 +240,9 @@ export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, 
             <h4 className="agent-stats-section-title">本会话累计</h4>
             <StatRow label="输入" value={`${precise(total.inputTokens)} token`} />
             <StatRow label="输出" value={`${precise(total.outputTokens)} token`} />
+            {total.reasoningOutputTokens != null && total.reasoningOutputTokens > 0 && (
+              <StatRow label="其中推理输出" value={`${precise(total.reasoningOutputTokens)} token`} />
+            )}
             <StatRow label="缓存读取" value={`${precise(total.cacheReadInputTokens)} token`} />
             <StatRow label="缓存写入" value={`${precise(total.cacheCreationInputTokens)} token`} />
             <StatRow label="缓存命中率" value={cacheHitRate(total)} hint="缓存读取 ÷ 输入" />
@@ -250,7 +253,7 @@ export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, 
       <div className="agent-stats-footer">
         {view.source === 'native'
           ? '会话状态实时推送 · 上下文超过 60% 转黄、80% 转红'
-          : `每 5 秒读取终端 transcript${view.updatedAt ? ` · 更新于 ${formatClock(view.updatedAt)}` : ''}`}
+          : `${view.agent === 'antigravity' ? '每 5 秒同步对话库与 transcript' : '每 5 秒读取终端 transcript'}${view.updatedAt ? ` · 更新于 ${formatClock(view.updatedAt)}` : ''}`}
       </div>
     </div>
   );
