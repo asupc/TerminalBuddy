@@ -200,3 +200,37 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.ag-tier-badge {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ag-tier-badge.tier-plus {
+  background: rgba(32, 178, 170, 0.16);
+  color: #2dd4bf;
+  border: 1px solid rgba(45, 212, 191, 0.35);
+}
+
+.ag-tier-badge.tier-pro {
+  background: rgba(59, 130, 246, 0.16);
+  color: #60a5fa;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+}
+
+.ag-tier-badge.tier-ultra {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.22), rgba(245, 158, 11, 0.22));
+  color: #d8b4fe;
+  border: 1px solid rgba(192, 132, 252, 0.45);
+}
+
+.ag-account-dialog select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}

@@ -47,6 +47,7 @@ export const AntigravityAccountMenuSection: FC<AntigravityAccountMenuSectionProp
             <AgentIcon provider="antigravity" />
           </span>
           <span className="claude-model-menu-label">{account.alias}</span>
+          {account.planTier && <span className="claude-model-menu-tag">{account.planTier}</span>}
           {account.isDefault && <span className="claude-model-menu-tag">默认</span>}
         </div>
       ))}

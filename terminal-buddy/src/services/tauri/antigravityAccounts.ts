@@ -11,6 +11,7 @@ export interface AntigravityAccountView {
   tokenHint: string;
   updatedAt: string;
   isDefault: boolean;
+  planTier?: 'Plus' | 'Pro' | 'Ultra' | string | null;
 }
 
 export interface AntigravityAccountState {
@@ -24,6 +25,7 @@ export interface AntigravityTokenInput {
   token?: string;
   clientId?: string;
   clientSecret?: string;
+  planTier?: string;
 }
 
 export interface AntigravityOAuthStartResult {
@@ -95,6 +97,7 @@ export interface AntigravityQuotaSummary {
   accountId: string | null;
   geminiPercent: number | null;
   geminiWindows: AntigravityQuotaWindow[];
+  planTier?: 'Plus' | 'Pro' | 'Ultra' | string | null;
   rawSummary: string | null;
   fetchedAt: number;
 }

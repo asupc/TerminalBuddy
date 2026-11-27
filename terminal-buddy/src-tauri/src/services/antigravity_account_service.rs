@@ -114,6 +114,7 @@ fn to_state(store: &AntigravityAccountStoreFile) -> AntigravityAccountState {
             token_hint: rec.token_hint.clone(),
             updated_at: rec.updated_at.clone(),
             is_default: active == Some(rec.id.as_str()),
+            plan_tier: rec.plan_tier.clone(),
         })
         .collect();
     accounts.sort_by_key(|a| !a.is_default);
@@ -183,6 +184,59 @@ pub fn rename_account(id: &str, alias: &str) -> Result<AntigravityAccountState> 
     account.updated_at = Utc::now().to_rfc3339();
     save_store_to(&path, &store)?;
     Ok(to_state(&store))
+}
+
+fn normalize_plan_tier(raw: &str) -> Option<String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return None;
+    }
+    if lower.contains("ultra") {
+        Some("Ultra".to_string())
+    } else if lower.contains("pro") {
+        Some("Pro".to_string())
+    } else if lower.contains("plus") {
+        Some("Plus".to_string())
+    } else {
+        None
+    }
+}
+
+fn update_account_metadata(
+    id: &str,
+    alias: &str,
+    plan_tier_input: Option<&str>,
+) -> Result<AntigravityAccountState> {
+    let trimmed = alias.trim();
+    if trimmed.is_empty() {
+        return Err("账号别名不能为空".into());
+    }
+    let _guard = store_lock().lock().map_err(|_| "账号存储锁不可用")?;
+    let path = store_path()?;
+    let mut store = load_store_from(&path)?;
+    let Some(account) = store.accounts.iter_mut().find(|a| a.id == id) else {
+        return Err("未找到指定的 Antigravity 账号".into());
+    };
+    account.alias = trimmed.to_string();
+    if let Some(raw_tier) = plan_tier_input {
+        account.plan_tier = normalize_plan_tier(raw_tier);
+    }
+    account.updated_at = Utc::now().to_rfc3339();
+    save_store_to(&path, &store)?;
+    Ok(to_state(&store))
+}
+
+fn update_account_plan_tier_if_detected(account_id: &str, detected_tier: &str) {
+    let Some(normalized) = normalize_plan_tier(detected_tier) else { return; };
+    let Ok(_guard) = store_lock().lock() else { return; };
+    let Ok(path) = store_path() else { return; };
+    let Ok(mut store) = load_store_from(&path) else { return; };
+    let Some(account) = store.accounts.iter_mut().find(|a| a.id == account_id) else { return; };
+    if account.plan_tier.as_deref() == Some(normalized.as_str()) {
+        return;
+    }
+    account.plan_tier = Some(normalized);
+    let _ = save_store_to(&path, &store);
 }
 
 /// 根据账号 ID 物化独立的 `GEMINI_HOME` 目录，并返回启动 `agy` / `agy acp` 所需的隔离环境。
@@ -644,7 +698,7 @@ pub async fn save_account_from_token(input: AntigravityTokenInput) -> Result<Ant
     if raw_token.is_empty() {
         if let Some(id) = input.id.as_deref().filter(|s| !s.trim().is_empty()) {
             let alias = input.alias.as_deref().unwrap_or("").trim();
-            return rename_account(id, alias);
+            return update_account_metadata(id, alias, input.plan_tier.as_deref());
         }
         return Err("请输入授权 Token（支持 OAuth JSON、access_token 或 refresh_token）".into());
     }
@@ -1662,6 +1716,7 @@ fn upsert_account_record(
             has_refresh_token: has_refresh,
             token_hint: hint,
             updated_at: now,
+            plan_tier: None,
         });
         id
     };
@@ -1773,6 +1828,9 @@ pub fn get_account_quota(
         }
     }
 
+    if let (Some(ref id), Some(ref tier)) = (&summary.account_id, &summary.plan_tier) {
+        update_account_plan_tier_if_detected(id, tier);
+    }
     if !summary.gemini_windows.is_empty() {
         if let Ok(mut cache) = quota_cache().lock() {
             cache.insert(
@@ -1863,13 +1921,107 @@ fn parse_gemini_quota_output(account_id: Option<String>, raw: &str) -> Antigravi
         None
     };
 
+    let plan_tier = extract_json_value(&cleaned)
+        .as_ref()
+        .and_then(extract_plan_tier_from_json)
+        .or_else(|| extract_plan_tier_from_text(&cleaned));
+
     AntigravityQuotaSummary {
         account_id,
         gemini_percent,
         gemini_windows: windows,
+        plan_tier,
         raw_summary,
         fetched_at: now,
     }
+}
+
+fn extract_plan_tier_from_json(val: &Value) -> Option<String> {
+    const TIER_KEYS: &[&str] = &[
+        "planTier",
+        "plan_tier",
+        "userTier",
+        "user_tier",
+        "currentTier",
+        "current_tier",
+        "paidTier",
+        "paid_tier",
+        "subscriptionTier",
+        "subscription_tier",
+        "planName",
+        "plan_name",
+        "tierName",
+        "tier_name",
+        "tier",
+        "plan",
+        "subscription",
+        "license",
+        "entitlement",
+    ];
+    match val {
+        Value::Object(map) => {
+            for key in TIER_KEYS {
+                if let Some(v) = map.get(*key) {
+                    if let Some(s) = v.as_str().and_then(normalize_plan_tier) {
+                        return Some(s);
+                    }
+                    if let Value::Object(inner) = v {
+                        for sub in ["name", "displayName", "display_name", "id", "tier", "plan"] {
+                            if let Some(s) = inner.get(sub).and_then(Value::as_str).and_then(normalize_plan_tier) {
+                                return Some(s);
+                            }
+                        }
+                    }
+                }
+            }
+            for child in map.values() {
+                if matches!(child, Value::Object(_) | Value::Array(_)) {
+                    if let Some(found) = extract_plan_tier_from_json(child) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+        Value::Array(items) => {
+            for item in items {
+                if let Some(found) = extract_plan_tier_from_json(item) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn extract_plan_tier_from_text(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let lower = line.to_ascii_lowercase();
+        let has_plan_context = lower.contains("google ai")
+            || lower.contains("plan")
+            || lower.contains("tier")
+            || lower.contains("subscription")
+            || lower.contains("g1-")
+            || lower.contains("会员")
+            || lower.contains("套餐");
+        if !has_plan_context {
+            continue;
+        }
+        if lower.contains("ultra") {
+            return Some("Ultra".to_string());
+        }
+        if lower.contains("pro") && !lower.contains("gemini") {
+            return Some("Pro".to_string());
+        }
+        if lower.contains("plus") {
+            return Some("Plus".to_string());
+        }
+        if lower.contains("google ai pro") || lower.contains("ai pro") || lower.contains("g1-pro") {
+            return Some("Pro".to_string());
+        }
+    }
+    None
 }
 
 fn extract_json_error_message(val: &Value) -> Option<String> {

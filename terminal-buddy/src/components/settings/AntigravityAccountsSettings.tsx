@@ -7,7 +7,6 @@ import {
   getAntigravityAccountState,
   importLocalAntigravityAccount,
   openUrl,
-  renameAntigravityAccount,
   saveAntigravityAccountToken,
   setDefaultAntigravityAccount,
   startAntigravityOAuthLogin,
@@ -41,6 +40,7 @@ interface TokenEditorState {
   token: string;
   clientId: string;
   clientSecret: string;
+  planTier: '' | 'Plus' | 'Pro' | 'Ultra';
 }
 
 const AUTH_SOURCE_LABEL: Record<string, string> = {
@@ -85,6 +85,15 @@ function quotaWindowLabel(w: AntigravityQuotaWindow): string {
   if (w.kind === 'session_5h') return w.label || '5小时额度';
   if (w.kind === 'weekly') return w.label || '周额度';
   return w.label || 'Gemini 额度';
+}
+
+function normalizeTierLabel(raw?: string | null): 'Plus' | 'Pro' | 'Ultra' | null {
+  if (!raw) return null;
+  const lower = raw.trim().toLowerCase();
+  if (lower.includes('ultra')) return 'Ultra';
+  if (lower.includes('pro')) return 'Pro';
+  if (lower.includes('plus')) return 'Plus';
+  return null;
 }
 
 function quotaLevelClass(percent: number | null): string {
@@ -239,8 +248,14 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
       }
       await mutate(
         'rename',
-        () => renameAntigravityAccount(tokenEditor.id!, alias),
-        '账号别名已更新',
+        () =>
+          saveAntigravityAccountToken({
+            id: tokenEditor.id,
+            alias,
+            token: '',
+            planTier: tokenEditor.planTier,
+          }),
+        '账号信息已更新',
         () => setTokenEditor(null),
       );
       return;
@@ -254,6 +269,7 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
           token: tokenEditor.token.trim(),
           clientId: tokenEditor.clientId.trim() || undefined,
           clientSecret: tokenEditor.clientSecret.trim() || undefined,
+          planTier: tokenEditor.planTier || undefined,
         }),
       tokenEditor.id ? '账号凭据已更新' : '已获取账号信息并保存',
       () => setTokenEditor(null),
@@ -287,6 +303,7 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
                 token: '',
                 clientId: '',
                 clientSecret: '',
+                planTier: '',
               })
             }
           >
@@ -345,6 +362,14 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
                 )}
               </span>
               <span className="llm-provider-name" title={account.alias}>{account.alias}</span>
+              {(() => {
+                const tier = normalizeTierLabel(quotas[account.id]?.data?.planTier ?? account.planTier);
+                return tier ? (
+                  <span className={`llm-badge ag-tier-badge tier-${tier.toLowerCase()}`} title={`Google AI ${tier}`}>
+                    {tier}
+                  </span>
+                ) : null;
+              })()}
               {account.isDefault && <span className="llm-badge default">默认</span>}
               <span className="llm-badge">{AUTH_SOURCE_LABEL[account.authSource] ?? account.authSource}</span>
             </div>
@@ -453,6 +478,7 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
                     token: '',
                     clientId: '',
                     clientSecret: '',
+                    planTier: normalizeTierLabel(quotas[account.id]?.data?.planTier ?? account.planTier) ?? '',
                   })
                 }
               >

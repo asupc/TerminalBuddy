@@ -25,6 +25,9 @@ pub struct AntigravityAccountRecord {
     pub token_hint: String,
     #[serde(default)]
     pub updated_at: String,
+    /// 会员类型：`Plus` | `Pro` | `Ultra`（可由 `agy /usage` 自动识别，也可手动指定）。
+    #[serde(default)]
+    pub plan_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -50,6 +53,8 @@ pub struct AntigravityAccountView {
     pub token_hint: String,
     pub updated_at: String,
     pub is_default: bool,
+    #[serde(default)]
+    pub plan_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -74,6 +79,8 @@ pub struct AntigravityTokenInput {
     pub client_id: Option<String>,
     #[serde(default)]
     pub client_secret: Option<String>,
+    #[serde(default)]
+    pub plan_tier: Option<String>,
 }
 
 /// 通过 `agy acp --login` 发起浏览器 OAuth 授权后返回给前端的会话信息。
@@ -114,6 +121,8 @@ pub struct AntigravityQuotaSummary {
     /// Gemini 组中最紧缺窗口的剩余百分比（0..=100），供底部状态栏紧凑展示。
     pub gemini_percent: Option<u8>,
     pub gemini_windows: Vec<AntigravityQuotaWindow>,
+    #[serde(default)]
+    pub plan_tier: Option<String>,
     pub raw_summary: Option<String>,
     pub fetched_at: i64,
 }
