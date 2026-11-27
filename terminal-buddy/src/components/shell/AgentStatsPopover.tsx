@@ -167,7 +167,14 @@ export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, 
         {view.provider === 'antigravity' && (
           <section className="agent-stats-section">
             <h4 className="agent-stats-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Gemini 模型用量</span>
+              <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+                <span>Gemini 模型用量</span>
+                {agyQuota?.fetchedAt ? (
+                  <span className="agent-stats-row-hint" style={{ fontWeight: 400 }}>
+                    查询于 {formatClock(agyQuota.fetchedAt < 1e12 ? agyQuota.fetchedAt * 1000 : agyQuota.fetchedAt)}
+                  </span>
+                ) : null}
+              </span>
               {onRefreshAgyQuota && (
                 <button
                   type="button"
