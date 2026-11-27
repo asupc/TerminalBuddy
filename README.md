@@ -359,7 +359,7 @@ TerminalBuddy 内置了轻量级开发工作台，查看配置文件与修改源
 ### 11. 原生 AI 会话与安卓客户端
 除在终端中使用 Claude Code / Codex 外，服务端还内置原生 AI 会话能力，并配套全新的安卓原生客户端：
 
-- **原生 AI 会话**：会话保存在服务端 `AiSessions/*.json`，可选择供应商与模型（仅列出项目已启用的 Agent，继承服务端权限配置）；支持流式回复、中断、Codex 操作确认卡片与断线重连补偿，接口详见 [docs/原生AI会话API.md](docs/原生AI会话API.md)；
+- **原生 AI 会话**：会话保存在服务端 `AiSessions/*.json`，可选择供应商与模型（仅列出项目已启用的 Agent，继承服务端权限配置）；支持流式回复、中断、Codex 操作确认卡片与断线重连补偿，接口详见 [docs/guides/原生AI会话API.md](docs/guides/原生AI会话API.md)；
 - **安卓原生客户端**（`android/`，Kotlin + Jetpack Compose）：账号密码登录后即可选择项目、供应商与模型开始对话；流式逐字显示、工具执行日志折叠展示、跟随滚动与「回到最新」、浅色 / 深色主题切换；登录令牌经 Android Keystore 加密存储，会话保存在服务端，App 退到后台任务继续执行；
 - **连续发送方式（App）**：安卓客户端支持「排队发送」（默认）与「原生插话」两种方式（首页菜单「发送方式」）——回复期间发送的消息默认在服务端排队（App 被杀也不丢失），等当前回合任务（含后台任务）全部完成后由服务端写入同一个 CLI 进程继续，不重启进程也不需要恢复历史；原生插话则把消息直接交给运行中的 CLI 进程，由它选择合适节点接收，不中断当前任务；排队列表中每条可点发送箭头单独插话；
 - **历史会话恢复（App）**：安卓客户端新增「历史会话」折叠区——展开即按当前项目 + Agent 列出电脑端 CLI 的转录历史（Claude / Codex 共用同一索引，展开前自动增量扫描），点击任意一条即在服务端创建绑定原会话线程的原生会话并预填最近消息：Claude 走 `claude --resume`、Codex 走 `thread/resume`，继续对话即无缝续接；同一历史线程重复恢复自动复用已有会话；
@@ -457,7 +457,7 @@ npm run tauri build
 ### Docker 服务器部署与多端构建
 除 Windows 安装包外，还提供服务器 / NAS 部署与跨平台构建方式：
 
-- **Docker 服务器部署**：在电脑或手机浏览器中使用与桌面同款的功能，详见 [DEPLOY_README.md](DEPLOY_README.md) 与 [docs/Docker与完整网页界面.md](docs/Docker与完整网页界面.md)；
+- **Docker 服务器部署**：在电脑或手机浏览器中使用与桌面同款的功能，详见 [DEPLOY_README.md](DEPLOY_README.md) 与 [docs/guides/Docker与完整网页界面.md](docs/guides/Docker与完整网页界面.md)；
 - **飞牛 fnOS 一键部署**：执行 `./xcj/deploy-fnos.sh` 将 TerminalBuddy 部署到飞牛 NAS，默认在开发机本机构建镜像后上传（需 Docker；构建复用 BuildKit 层缓存），飞牛只负责载入镜像与重建容器，内置写入探测、健康检查与失败自动回退；
 - **Linux 交叉编译 Windows 单文件 exe**：仓库根目录执行 `./xcj/build-windows-exe.sh`，在 Linux 本机使用 cargo-xwin 交叉编译（首次自动补齐 Rust / cargo-xwin 与 `~/.cache/terminal-buddy/xwin` 下的 Windows SDK 缓存），产出 `dist/` 下的单文件 exe（不生成 `.sha256`）；构建成功后自动归档到 `/mnt/fnos/code/`（不可用时保留在 `dist/`）；
 - **Android 客户端构建**：Linux 上在仓库根目录执行 `./xcj/build-android.sh`，在本机使用 JDK 17+、Android SDK 36 与 Gradle 构建 Release APK（首次自动下载 SDK 到 `~/.android-sdk`），并用 apksigner 校验签名；产出 `dist/` 下的 APK（不生成 `.sha256`），构建成功后自动归档到 `/mnt/fnos/code/`（不可用时保留在 `dist/`）。也可 `cd android && ./gradlew :app:assembleDebug`（详见 [android/README.md](android/README.md)），Windows 直装设备用 `scripts/build-android.bat`。

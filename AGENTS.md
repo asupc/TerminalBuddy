@@ -10,7 +10,7 @@
   - **Android 原生客户端（`android/`）**：Kotlin + Jetpack Compose（包名 `com.terminalbuddy.android`，minSdk 26 / targetSdk 36），对接 Web API 实现原生 AI 对话、服务端终端操作、终端 Agent 接力、后台通知（前台保活 + WorkManager 补偿）与在线更新；内置简版 / 完整版两种界面模式（`AppUiMode`，默认简版），在「我的 → 界面模式」切换，无需分包构建。
   - **后端分层**：`commands/`（薄 Tauri 命令封装）→ `services/`（业务逻辑、持久化、调度与进程管理）→ `models/`（数据结构与校验），外加 `web/`（axum HTTP/WS 服务与 `desktop_dispatch.rs` 浏览器调用适配器）及 `runtime.rs`（桌面 / 服务端统一的 `AppHandle`、`Manager`、`Emitter`、`async_runtime` 抽象）。
 - **独立手机 SPA（`terminal-buddy/web/`）已于 2026-10 彻底退役**：不参与任何构建与打包，手机浏览器直接使用 `src/` 构建的完整网页界面。`terminal-buddy/web/` 仅作历史参考保留，不要改动或重新引入；注意区分活跃的 Rust 模块 `terminal-buddy/src-tauri/src/web/`。
-- **根目录辅助目录**：`xcj/`（用户日常一键构建/部署/更新 sh 入口）、`scripts/`（Windows `.bat`/`.ps1`、远端目标执行脚本 `deploy-*-remote.sh` 及旧路径兼容转发脚本）、`docs/`（设计规范与使用指南）、`design/`（UI 设计稿与静态预览）、`RELEASE_NOTES/`（版本发布说明）。
+- **根目录辅助目录**：`xcj/`（用户日常一键构建/部署/更新 sh 入口）、`scripts/`（Windows `.bat`/`.ps1`、远端目标执行脚本 `deploy-*-remote.sh` 及旧路径兼容转发脚本）、`docs/`（统一文档中心：`guides/` 使用与 API 指南、`specs/` 功能设计规范、`plans/` 实施与升级计划、`research/` 技术调研、`images/` 配图）、`design/`（纯 UI 静态交互原型、截图与 Logo 矢量稿）、`RELEASE_NOTES/`（版本发布说明）。
 
 ## 常用命令
 

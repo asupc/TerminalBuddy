@@ -1,6 +1,6 @@
 # 定时任务功能 · 详细实施方案
 
-> 对应设计稿：`design/scheduled-tasks/design.md`
+> 对应设计稿：`docs/specs/scheduled-tasks.md`
 > UI 预览：`design/scheduled-tasks/preview.html`
 > 目标版本：v1.10.0（建议）
 > 本文落实两项界面要求：

@@ -1,6 +1,6 @@
 //! 定时任务：任务定义、运行记录、输入校验与视图模型。
 //!
-//! 调度语义见 `design/scheduled-tasks/design.md`：Cron 在任务时区下求值，
+//! 调度语义见 `docs/specs/scheduled-tasks.md`：Cron 在任务时区下求值，
 //! 「仅一次」保存的是任务时区下的本地墙钟时间，避免容器 UTC 与浏览器时区不一致。
 use crate::commands::profile::Project;
 use crate::models::ai_chat::AiCatalog;
