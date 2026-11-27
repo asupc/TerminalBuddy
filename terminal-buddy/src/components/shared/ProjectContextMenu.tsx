@@ -4,7 +4,9 @@ import { openInExplorer } from '../../services/tauri';
 import { supportsSystemExplorerOpen } from '../../services/platform';
 import type { Profile } from '../../types';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
-import { PROFILE_TYPE_ICONS } from '../profile-config/ProfileTagList';
+const PROFILE_TYPE_ICONS: Record<string, string> = {
+  powershell: 'PS', pwsh: 'PS7', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
+};
 import { ProjectLaunchMenuItems } from './ProjectLaunchMenuItems';
 
 interface ProjectContextMenuProps {
