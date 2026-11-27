@@ -9,8 +9,9 @@ import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
 import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
 import { currentClaudeCommand } from '../../utils/agentCommands';
 import type { ExtraParamMode, Profile } from '../../types';
+import type { TreeItem } from '../file-explorer/TreeView';
 import '../file-explorer/TreeView.css';
-import { ProfileTagList } from './ProfileTagList';
+import { PROFILE_TYPE_ICONS, ProfileTagList } from './ProfileTagList';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { ProjectContextMenu } from '../shared/ProjectContextMenu';
@@ -182,6 +183,22 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
 
     return result;
   }, [profiles, projects, configSearchQuery, experimentalProjectTasks]);
+
+  // 保留 TreeItem 结构供 F2 快捷键查找与空白右键「新建配置终端」子菜单复用
+  const treeItems = useMemo<TreeItem[]>(() => (
+    projectGroups.map(group => ({
+      id: group.id,
+      label: group.label,
+      isGroup: true,
+      children: group.profiles.map(p => ({
+        id: p.id,
+        label: p.name,
+        icon: <span className="config-nav-icon-type">{PROFILE_TYPE_ICONS[p.terminalType] || p.terminalType.toUpperCase()}</span>,
+        color: p.tabColor || undefined,
+        data: p,
+      })),
+    }))
+  ), [projectGroups]);
 
   const handleToggle = (groupId: string) => {
     setExpandedGroups(prev => {
