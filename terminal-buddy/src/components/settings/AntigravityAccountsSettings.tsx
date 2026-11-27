@@ -3,6 +3,7 @@ import {
   cancelAntigravityOAuthLogin,
   completeAntigravityOAuthLogin,
   deleteAntigravityAccount,
+  getAntigravityAccountQuota,
   getAntigravityAccountState,
   importLocalAntigravityAccount,
   openUrl,
@@ -13,6 +14,8 @@ import {
   type AntigravityAccountState,
   type AntigravityAccountView,
   type AntigravityOAuthStartResult,
+  type AntigravityQuotaSummary,
+  type AntigravityQuotaWindow,
 } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import {
@@ -46,6 +49,51 @@ const AUTH_SOURCE_LABEL: Record<string, string> = {
   local_import: '本机导入',
 };
 
+interface AccountQuotaEntry {
+  data?: AntigravityQuotaSummary;
+  loading: boolean;
+  error?: string;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function formatQuotaResetDetail(raw?: string | null): string | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const ms = /^\d{10,13}$/.test(trimmed)
+    ? (trimmed.length === 10 ? Number(trimmed) * 1000 : Number(trimmed))
+    : Date.parse(trimmed);
+  if (!Number.isNaN(ms)) {
+    const d = new Date(ms);
+    const clock = `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    const diffSec = Math.floor((ms - Date.now()) / 1000);
+    if (diffSec <= 0) return `已刷新（${clock}）`;
+    const days = Math.floor(diffSec / 86400);
+    const hours = Math.floor((diffSec % 86400) / 3600);
+    const mins = Math.floor((diffSec % 3600) / 60);
+    const rel = days > 0 ? `${days}天${hours}小时` : hours > 0 ? `${hours}小时${mins}分` : `${Math.max(1, mins)}分钟`;
+    return `${rel}后刷新（${clock}）`;
+  }
+  const cleaned = trimmed.replace(/^(?:resets?\s+(?:in|at)\s+|in\s+|刷新于\s*|重置于\s*)/i, '').trim() || trimmed;
+  return `刷新：${cleaned}`;
+}
+
+function quotaWindowLabel(w: AntigravityQuotaWindow): string {
+  if (w.kind === 'session_5h') return w.label || '5小时额度';
+  if (w.kind === 'weekly') return w.label || '周额度';
+  return w.label || 'Gemini 额度';
+}
+
+function quotaLevelClass(percent: number | null): string {
+  if (percent == null) return '';
+  if (percent < 15) return ' is-low';
+  if (percent < 40) return ' is-warn';
+  return ' is-ok';
+}
+
 export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active }) => {
   const showToast = useAppStore(s => s.showToast);
   const setAntigravityAccountState = useAppStore(s => s.setAntigravityAccountState);
@@ -57,9 +105,34 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
   const [oauthCode, setOauthCode] = useState('');
   const [oauthAlias, setOauthAlias] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<AntigravityAccountView | null>(null);
+  const [quotas, setQuotas] = useState<Record<string, AccountQuotaEntry>>({});
   const pendingRef = useRef(false);
+  const quotaInFlightRef = useRef<Set<string>>(new Set());
 
-  const load = useCallback(async () => {
+  const fetchAccountQuota = useCallback(async (accountId: string, forceRefresh = false) => {
+    if (quotaInFlightRef.current.has(accountId)) return;
+    quotaInFlightRef.current.add(accountId);
+    setQuotas(prev => ({
+      ...prev,
+      [accountId]: { ...prev[accountId], loading: true, error: undefined },
+    }));
+    try {
+      const data = await getAntigravityAccountQuota(accountId, forceRefresh);
+      setQuotas(prev => ({
+        ...prev,
+        [accountId]: { data, loading: false, error: undefined },
+      }));
+    } catch (error) {
+      setQuotas(prev => ({
+        ...prev,
+        [accountId]: { ...prev[accountId], loading: false, error: error instanceof Error ? error.message : String(error) },
+      }));
+    } finally {
+      quotaInFlightRef.current.delete(accountId);
+    }
+  }, []);
+
+  const load = useCallback(async (forceQuotaRefresh = false) => {
     if (pendingRef.current) return;
     pendingRef.current = true;
     setPending('load');
@@ -68,13 +141,16 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
       setState(next);
       setAntigravityAccountState(next);
       setLoadError('');
+      for (const account of next.accounts) {
+        void fetchAccountQuota(account.id, forceQuotaRefresh);
+      }
     } catch (error) {
       setLoadError(String(error));
     } finally {
       pendingRef.current = false;
       setPending(null);
     }
-  }, [setAntigravityAccountState]);
+  }, [fetchAccountQuota, setAntigravityAccountState]);
 
   useEffect(() => {
     if (active) void load();
@@ -231,8 +307,9 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
             type="button"
             className="claude-segment-btn"
             disabled={busy}
+            title="刷新账号列表与全部额度"
             aria-label="刷新 Antigravity 账号"
-            onClick={() => void load()}
+            onClick={() => void load(true)}
           >
             <RefreshCw size={14} />
           </button>
@@ -279,6 +356,68 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
                 <span className="llm-key-tail">凭据已加密保存 ····{account.tokenHint}</span>
               </div>
             )}
+            {(() => {
+              const q = quotas[account.id];
+              const windows = q?.data?.geminiWindows ?? [];
+              return (
+                <div className="ag-account-quota">
+                  <div className="ag-account-quota-head">
+                    <span className="ag-account-quota-title">Gemini 额度</span>
+                    <button
+                      type="button"
+                      className={`ag-account-quota-refresh${q?.loading ? ' is-spinning' : ''}`}
+                      disabled={q?.loading}
+                      title="刷新该账号 5小时/周额度"
+                      onClick={() => void fetchAccountQuota(account.id, true)}
+                    >
+                      <RefreshCw size={12} />
+                      <span>{q?.loading ? '查询中…' : '刷新额度'}</span>
+                    </button>
+                  </div>
+                  {q?.loading && !q.data ? (
+                    <div className="ag-account-quota-empty">正在查询 5小时 / 周额度…</div>
+                  ) : windows.length > 0 ? (
+                    <div className="ag-account-quota-grid">
+                      {windows.map((w, idx) => {
+                        const pct = w.remainingPercent;
+                        const resetDetail = formatQuotaResetDetail(w.resetText);
+                        return (
+                          <div key={`${w.kind}-${w.label}-${idx}`} className="ag-account-quota-window">
+                            <div className="ag-account-quota-row">
+                              <span className="ag-account-quota-label">{quotaWindowLabel(w)}</span>
+                              <span className={`ag-account-quota-value${quotaLevelClass(pct)}`}>
+                                {pct != null ? `剩余 ${pct}%` : '—'}
+                              </span>
+                            </div>
+                            {pct != null && (
+                              <div className="ag-account-quota-bar" aria-hidden="true">
+                                <span
+                                  className={`ag-account-quota-bar-fill${quotaLevelClass(pct)}`}
+                                  style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+                                />
+                              </div>
+                            )}
+                            {resetDetail && (
+                              <div className="ag-account-quota-reset" title={w.resetText ?? undefined}>
+                                {resetDetail}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : q?.data?.geminiPercent != null ? (
+                    <div className="ag-account-quota-empty">剩余 {q.data.geminiPercent}%</div>
+                  ) : q?.error ? (
+                    <div className="ag-account-quota-error" title={q.error}>查询失败：{q.error}</div>
+                  ) : q?.data?.rawSummary ? (
+                    <div className="ag-account-quota-empty" title={q.data.rawSummary}>{q.data.rawSummary}</div>
+                  ) : (
+                    <div className="ag-account-quota-empty">暂无额度数据，点击「刷新额度」重试</div>
+                  )}
+                </div>
+              );
+            })()}
             <div className="llm-provider-actions">
               {account.isDefault ? (
                 <button
