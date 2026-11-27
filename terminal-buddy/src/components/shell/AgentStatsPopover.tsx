@@ -34,28 +34,6 @@ function formatClock(millis: number): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-function formatQuotaResetDetail(raw?: string | null): string | undefined {
-  if (!raw) return undefined;
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  const ms = /^\d{10,13}$/.test(trimmed)
-    ? (trimmed.length === 10 ? Number(trimmed) * 1000 : Number(trimmed))
-    : Date.parse(trimmed);
-  if (!Number.isNaN(ms)) {
-    const d = new Date(ms);
-    const clock = `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    const diffSec = Math.floor((ms - Date.now()) / 1000);
-    if (diffSec <= 0) return `已刷新（${clock}）`;
-    const days = Math.floor(diffSec / 86400);
-    const hours = Math.floor((diffSec % 86400) / 3600);
-    const mins = Math.floor((diffSec % 3600) / 60);
-    const rel = days > 0 ? `${days}天${hours}小时` : hours > 0 ? `${hours}小时${mins}分` : `${Math.max(1, mins)}分钟`;
-    return `${rel}后刷新（${clock}）`;
-  }
-  const cleaned = trimmed.replace(/^(?:resets?\s+(?:in|at)\s+|in\s+|刷新于\s*|重置于\s*)/i, '').trim() || trimmed;
-  return `刷新：${cleaned}`;
-}
-
 function hasTokens(tokens: AiTokenUsage | null): tokens is AiTokenUsage {
   if (!tokens) return false;
   return tokens.inputTokens != null
