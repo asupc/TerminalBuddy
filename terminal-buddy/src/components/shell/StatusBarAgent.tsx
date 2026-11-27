@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Coins, Gauge, Sparkles, User } from 'lucide-react';
 import { AgentIcon } from '../agent-chat/AgentIcon';
 import { cacheHitRate, compact, contextPercent } from '../agent-chat/UsagePanel';
-import { getAntigravityAccountQuota, type AntigravityQuotaSummary } from '../../services/tauri';
+import { antigravityQuotaCacheKey, useAntigravityQuotaStore } from '../../stores/antigravityQuotaStore';
 import { AgentStatsPopover } from './AgentStatsPopover';
 import { agentEffortLabel, contextLevel, type AgentStatusView } from './agentStatusView';
 import './StatusBarAgent.css';
@@ -16,32 +16,21 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const [agyQuota, setAgyQuota] = useState<AntigravityQuotaSummary | null>(null);
-  const [agyQuotaLoading, setAgyQuotaLoading] = useState(false);
-  const [agyQuotaError, setAgyQuotaError] = useState<string | null>(null);
-
   const isAntigravity = view.provider === 'antigravity';
+  const agyQuotaKey = antigravityQuotaCacheKey(view.accountId ?? null);
+  const agyQuotaEntry = useAntigravityQuotaStore(s => (isAntigravity ? s.entries[agyQuotaKey] : undefined));
+  const fetchQuota = useAntigravityQuotaStore(s => s.fetchQuota);
+  const agyQuota = isAntigravity ? (agyQuotaEntry?.data ?? null) : null;
+  const agyQuotaLoading = isAntigravity ? Boolean(agyQuotaEntry?.loading) : false;
+  const agyQuotaError = isAntigravity ? (agyQuotaEntry?.error ?? null) : null;
+
   const loadAgyQuota = useCallback((forceRefresh = false) => {
     if (!isAntigravity) return;
-    setAgyQuotaLoading(true);
-    setAgyQuotaError(null);
-    getAntigravityAccountQuota(view.accountId ?? null, forceRefresh)
-      .then(res => {
-        setAgyQuota(res);
-        setAgyQuotaError(null);
-      })
-      .catch(err => {
-        setAgyQuota(null);
-        setAgyQuotaError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => setAgyQuotaLoading(false));
-  }, [isAntigravity, view.accountId]);
+    void fetchQuota(view.accountId ?? null, forceRefresh);
+  }, [fetchQuota, isAntigravity, view.accountId]);
 
   useEffect(() => {
-    if (!isAntigravity) {
-      setAgyQuota(null);
-      return;
-    }
+    if (!isAntigravity) return;
     loadAgyQuota(false);
   }, [isAntigravity, view.accountId, loadAgyQuota]);
 

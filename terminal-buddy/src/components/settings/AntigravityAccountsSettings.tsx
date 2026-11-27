@@ -3,7 +3,6 @@ import {
   cancelAntigravityOAuthLogin,
   completeAntigravityOAuthLogin,
   deleteAntigravityAccount,
-  getAntigravityAccountQuota,
   getAntigravityAccountState,
   importLocalAntigravityAccount,
   openUrl,
@@ -13,10 +12,10 @@ import {
   type AntigravityAccountState,
   type AntigravityAccountView,
   type AntigravityOAuthStartResult,
-  type AntigravityQuotaSummary,
   type AntigravityQuotaWindow,
 } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
+import { antigravityQuotaCacheKey, useAntigravityQuotaStore } from '../../stores/antigravityQuotaStore';
 import {
   Copy,
   Download,
@@ -48,12 +47,6 @@ const AUTH_SOURCE_LABEL: Record<string, string> = {
   token: 'Token 录入',
   local_import: '本机导入',
 };
-
-interface AccountQuotaEntry {
-  data?: AntigravityQuotaSummary;
-  loading: boolean;
-  error?: string;
-}
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -114,32 +107,9 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
   const [oauthCode, setOauthCode] = useState('');
   const [oauthAlias, setOauthAlias] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<AntigravityAccountView | null>(null);
-  const [quotas, setQuotas] = useState<Record<string, AccountQuotaEntry>>({});
+  const quotas = useAntigravityQuotaStore(s => s.entries);
+  const fetchAccountQuota = useAntigravityQuotaStore(s => s.fetchQuota);
   const pendingRef = useRef(false);
-  const quotaInFlightRef = useRef<Set<string>>(new Set());
-
-  const fetchAccountQuota = useCallback(async (accountId: string, forceRefresh = false) => {
-    if (quotaInFlightRef.current.has(accountId)) return;
-    quotaInFlightRef.current.add(accountId);
-    setQuotas(prev => ({
-      ...prev,
-      [accountId]: { ...prev[accountId], loading: true, error: undefined },
-    }));
-    try {
-      const data = await getAntigravityAccountQuota(accountId, forceRefresh);
-      setQuotas(prev => ({
-        ...prev,
-        [accountId]: { data, loading: false, error: undefined },
-      }));
-    } catch (error) {
-      setQuotas(prev => ({
-        ...prev,
-        [accountId]: { ...prev[accountId], loading: false, error: error instanceof Error ? error.message : String(error) },
-      }));
-    } finally {
-      quotaInFlightRef.current.delete(accountId);
-    }
-  }, []);
 
   const load = useCallback(async (forceQuotaRefresh = false) => {
     if (pendingRef.current) return;
@@ -363,7 +333,7 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
               </span>
               <span className="llm-provider-name" title={account.alias}>{account.alias}</span>
               {(() => {
-                const tier = normalizeTierLabel(quotas[account.id]?.data?.planTier ?? account.planTier);
+                const tier = normalizeTierLabel(quotas[antigravityQuotaCacheKey(account.id)]?.data?.planTier ?? account.planTier);
                 return tier ? (
                   <span className={`llm-badge ag-tier-badge tier-${tier.toLowerCase()}`} title={`Google AI ${tier}`}>
                     {tier}
@@ -382,7 +352,7 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
               </div>
             )}
             {(() => {
-              const q = quotas[account.id];
+              const q = quotas[antigravityQuotaCacheKey(account.id)];
               const windows = q?.data?.geminiWindows ?? [];
               return (
                 <div className="ag-account-quota">
@@ -478,7 +448,7 @@ export const AntigravityAccountsSettings: FC<{ active: boolean }> = ({ active })
                     token: '',
                     clientId: '',
                     clientSecret: '',
-                    planTier: normalizeTierLabel(quotas[account.id]?.data?.planTier ?? account.planTier) ?? '',
+                    planTier: normalizeTierLabel(quotas[antigravityQuotaCacheKey(account.id)]?.data?.planTier ?? account.planTier) ?? '',
                   })
                 }
               >

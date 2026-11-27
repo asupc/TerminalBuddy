@@ -1740,7 +1740,17 @@ fn quota_cache() -> &'static Mutex<HashMap<String, CachedQuota>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-const QUOTA_CACHE_TTL: Duration = Duration::from_secs(60);
+const QUOTA_CACHE_TTL: Duration = Duration::from_secs(180);
+
+fn quota_inflight_lock(cache_key: &str) -> std::sync::Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>> = OnceLock::new();
+    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .entry(cache_key.to_string())
+        .or_insert_with(|| std::sync::Arc::new(Mutex::new(())))
+        .clone()
+}
 
 /// 通过官方 `agy -p /usage --output-format json` 查询指定账号的 Gemini 模型额度。
 /// 不使用 OAuth Token 直接请求任何 LLM 接口。
@@ -1756,6 +1766,20 @@ pub fn get_account_quota(
         .clone()
         .unwrap_or_else(|| "__default__".to_string());
 
+    if !force_refresh {
+        if let Ok(cache) = quota_cache().lock() {
+            if let Some(entry) = cache.get(&cache_key) {
+                if entry.fetched_at.elapsed() < QUOTA_CACHE_TTL {
+                    return Ok(entry.summary.clone());
+                }
+            }
+        }
+    }
+
+    // 同一账号的并发额度查询串行合并（例如状态栏与设置页同时触发）：
+    // 后到者拿到锁后先复查缓存，直接复用首请求结果，不重复拉起 `agy -p /usage`。
+    let key_lock = quota_inflight_lock(&cache_key);
+    let _inflight_guard = key_lock.lock().unwrap_or_else(|e| e.into_inner());
     if !force_refresh {
         if let Ok(cache) = quota_cache().lock() {
             if let Some(entry) = cache.get(&cache_key) {
