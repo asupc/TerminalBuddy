@@ -1054,6 +1054,10 @@ pub(crate) struct ScanData {
     pub bindings: HashMap<String, AgentSessionRecord>,
 }
 
+fn is_relay_provider(provider: &str) -> bool {
+    matches!(provider, "claude" | "codex" | "antigravity")
+}
+
 /// 完整进程扫描：summaries 先补写 transcript，再读绑定表——顺序不能反（§4.2）。
 /// 结果为不带权限语义的快照，各调用方自行按可见终端过滤与鉴权。
 fn relay_scan(app: &AppHandle) -> Arc<ScanData> {
@@ -1083,7 +1087,7 @@ fn relay_scan(app: &AppHandle) -> Arc<ScanData> {
     let summaries = terminal_task_service::summaries(pids);
     let bindings = terminal_task_service::session_bindings()
         .into_iter()
-        .filter(|(_, record)| matches!(record.provider.as_str(), "claude" | "codex"))
+        .filter(|(_, record)| is_relay_provider(&record.provider))
         .collect();
     let data = Arc::new(ScanData { summaries, bindings });
     lock_state().scan_cache = Some((Instant::now(), pids_key, data.clone()));
@@ -1132,6 +1136,7 @@ fn read_transcript_stable(path: &std::path::Path) -> TranscriptRead {
 fn parse_and_retain(provider: &str, content: &str) -> (Vec<SessionReplayMessage>, i64, bool) {
     let mut messages = match provider {
         "claude" => super::claude_history_service::parse_replay_messages(content),
+        "antigravity" => super::antigravity_transcript::parse(content).messages,
         _ => super::codex_transcript::parse(content).messages,
     };
     let total = messages.len() as i64;
@@ -1245,7 +1250,7 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
     let Some(record) = scan.bindings.get(terminal_id).cloned() else {
         return PollContent::None;
     };
-    if !matches!(record.provider.as_str(), "claude" | "codex") {
+    if !is_relay_provider(&record.provider) {
         return PollContent::None;
     }
     let light_existing = {
@@ -1696,7 +1701,7 @@ fn build_session_meta_with_mirror(
     include_mirror: bool,
 ) -> Option<(TerminalAgentSession, Option<MirrorEntry>)> {
     let record = scan.bindings.get(&info.id)?;
-    if !matches!(record.provider.as_str(), "claude" | "codex") {
+    if !is_relay_provider(&record.provider) {
         return None;
     }
     reconcile_transcript_end(app, info, record);
@@ -1906,7 +1911,7 @@ pub async fn subscribe(
         let has_agent = scan
             .bindings
             .get(terminal_id)
-            .is_some_and(|record| matches!(record.provider.as_str(), "claude" | "codex"));
+            .is_some_and(|record| is_relay_provider(&record.provider));
         if !has_agent {
             return Err(RelayError::NotFound("该终端没有正在运行的 Agent".to_string()));
         }
@@ -2058,7 +2063,7 @@ pub async fn reply(
         let scan = relay_scan(&app_clone);
         scan.bindings
             .get(&terminal_id_owned)
-            .filter(|record| matches!(record.provider.as_str(), "claude" | "codex"))
+            .filter(|record| is_relay_provider(&record.provider))
             .map(|record| (record.provider.clone(), record.session_id.clone()))
     })
     .await
