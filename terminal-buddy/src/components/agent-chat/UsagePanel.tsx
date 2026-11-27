@@ -12,7 +12,7 @@ export function precise(value: number | null | undefined): string {
 export function compact(value: number | null | undefined): string {
   if (value == null || value < 0) return '—';
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
   return String(value);
 }
 
@@ -42,9 +42,9 @@ export function cacheHitRate(tokens: AiTokenUsage | null | undefined): string {
   return `${Math.round((read / total) * 100)}%`;
 }
 
-function Row({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Row({ label, value, hint, title }: { label: string; value: string; hint?: string; title?: string }) {
   return (
-    <div className="usage-row">
+    <div className="usage-row" title={title}>
       <span className="usage-row-label">{label}</span>
       <span className="usage-row-value">
         {value}
@@ -64,15 +64,19 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 /** 单个 Token 明细块：输入 / 输出 / 缓存 / 推理 + 缓存命中率。 */
+function exactTitle(value: number | null | undefined): string | undefined {
+  return value != null && value >= 0 ? `${precise(value)} token` : undefined;
+}
+
 function TokenBlock({ tokens, coverage }: { tokens: AiTokenUsage | null | undefined; coverage?: string }) {
   return (
     <div className="usage-token-block">
-      <Row label="输入" value={`${precise(tokens?.inputTokens)} token`} />
-      <Row label="输出" value={`${precise(tokens?.outputTokens)} token`} />
-      <Row label="其中缓存读取" value={`${precise(tokens?.cacheReadInputTokens)} token`} />
-      <Row label="其中缓存写入" value={`${precise(tokens?.cacheCreationInputTokens)} token`} />
+      <Row label="输入" value={compact(tokens?.inputTokens)} title={exactTitle(tokens?.inputTokens)} />
+      <Row label="输出" value={compact(tokens?.outputTokens)} title={exactTitle(tokens?.outputTokens)} />
+      <Row label="其中缓存读取" value={compact(tokens?.cacheReadInputTokens)} title={exactTitle(tokens?.cacheReadInputTokens)} />
+      <Row label="其中缓存写入" value={compact(tokens?.cacheCreationInputTokens)} title={exactTitle(tokens?.cacheCreationInputTokens)} />
       {(tokens?.reasoningOutputTokens != null) && (
-        <Row label="其中推理输出" value={`${precise(tokens?.reasoningOutputTokens)} token`} />
+        <Row label="其中推理输出" value={compact(tokens?.reasoningOutputTokens)} title={exactTitle(tokens?.reasoningOutputTokens)} />
       )}
       <Row label="缓存命中率" value={cacheHitRate(tokens)} hint="缓存读取 ÷ 输入" />
       {coverage === 'partial' && (

@@ -3,7 +3,7 @@ import { RefreshCw, X } from 'lucide-react';
 import type { AiTokenUsage, AntigravityQuotaSummary } from '../../services/tauri';
 import { AgentIcon } from '../agent-chat/AgentIcon';
 import { AntigravityQuotaRings } from '../shared/QuotaRing';
-import { cacheHitRate, contextPercent, precise } from '../agent-chat/UsagePanel';
+import { cacheHitRate, compact, contextPercent, precise } from '../agent-chat/UsagePanel';
 import { agentEffortLabel, contextLevel, type AgentStatusView } from './agentStatusView';
 import './StatusBarAgent.css';
 
@@ -42,9 +42,9 @@ function hasTokens(tokens: AiTokenUsage | null): tokens is AiTokenUsage {
     || tokens.cacheCreationInputTokens != null;
 }
 
-function StatRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function StatRow({ label, value, hint, title }: { label: string; value: string; hint?: string; title?: string }) {
   return (
-    <div className="agent-stats-row">
+    <div className="agent-stats-row" title={title}>
       <span className="agent-stats-row-label">{label}</span>
       <span className="agent-stats-row-value">
         {value}
@@ -238,13 +238,33 @@ export function AgentStatsPopover({ view, anchor, anchorRef, onClose, agyQuota, 
         {hasTokens(total) && (
           <section className="agent-stats-section">
             <h4 className="agent-stats-section-title">本会话累计</h4>
-            <StatRow label="输入" value={`${precise(total.inputTokens)} token`} />
-            <StatRow label="输出" value={`${precise(total.outputTokens)} token`} />
+            <StatRow
+              label="输入"
+              value={compact(total.inputTokens)}
+              title={total.inputTokens != null ? `${precise(total.inputTokens)} token` : undefined}
+            />
+            <StatRow
+              label="输出"
+              value={compact(total.outputTokens)}
+              title={total.outputTokens != null ? `${precise(total.outputTokens)} token` : undefined}
+            />
             {total.reasoningOutputTokens != null && total.reasoningOutputTokens > 0 && (
-              <StatRow label="其中推理输出" value={`${precise(total.reasoningOutputTokens)} token`} />
+              <StatRow
+                label="其中推理输出"
+                value={compact(total.reasoningOutputTokens)}
+                title={`${precise(total.reasoningOutputTokens)} token`}
+              />
             )}
-            <StatRow label="缓存读取" value={`${precise(total.cacheReadInputTokens)} token`} />
-            <StatRow label="缓存写入" value={`${precise(total.cacheCreationInputTokens)} token`} />
+            <StatRow
+              label="缓存读取"
+              value={compact(total.cacheReadInputTokens)}
+              title={total.cacheReadInputTokens != null ? `${precise(total.cacheReadInputTokens)} token` : undefined}
+            />
+            <StatRow
+              label="缓存写入"
+              value={compact(total.cacheCreationInputTokens)}
+              title={total.cacheCreationInputTokens != null ? `${precise(total.cacheCreationInputTokens)} token` : undefined}
+            />
             <StatRow label="缓存命中率" value={cacheHitRate(total)} hint="缓存读取 ÷ 输入" />
           </section>
         )}
