@@ -91,19 +91,11 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
   const geminiLevel = agyQuota?.geminiPercent != null
     ? (agyQuota.geminiPercent <= 10 ? 'critical' : agyQuota.geminiPercent <= 30 ? 'warn' : null)
     : null;
-  const gemini5hReset = formatResetShort(window5h?.resetText);
-  const geminiWeeklyReset = formatResetShort(windowWeekly?.resetText);
   const geminiQuotaText = (() => {
     if (window5h || windowWeekly) {
       const parts: string[] = [];
-      if (window5h && (window5h.remainingPercent != null || gemini5hReset)) {
-        const pct = window5h.remainingPercent != null ? `${window5h.remainingPercent}%` : '—';
-        parts.push(`5h ${pct}${gemini5hReset ? `(${gemini5hReset})` : ''}`);
-      }
-      if (windowWeekly && (windowWeekly.remainingPercent != null || geminiWeeklyReset)) {
-        const pct = windowWeekly.remainingPercent != null ? `${windowWeekly.remainingPercent}%` : '—';
-        parts.push(`周 ${pct}${geminiWeeklyReset ? `(${geminiWeeklyReset})` : ''}`);
-      }
+      if (window5h?.remainingPercent != null) parts.push(`5h ${window5h.remainingPercent}%`);
+      if (windowWeekly?.remainingPercent != null) parts.push(`周 ${windowWeekly.remainingPercent}%`);
       if (parts.length > 0) return parts.join(' · ');
     }
     if (agyQuota?.geminiPercent != null) return `${agyQuota.geminiPercent}%`;
@@ -154,21 +146,20 @@ export function StatusBarAgent({ view }: { view: AgentStatusView }) {
         {isAntigravity && geminiQuotaText && (
           <span className={`app-statusbar-agent-metric${geminiLevel ? ` ${geminiLevel}` : ''}`}>
             <Sparkles className="app-statusbar-icon" aria-hidden="true" />
-            <span className="app-statusbar-label">Gemini</span>
             <span className="app-statusbar-mono">{geminiQuotaText}</span>
           </span>
         )}
-        {effortLabel && (
+        {!isAntigravity && effortLabel && (
           <span className="app-statusbar-agent-effort">思考 {effortLabel}</span>
         )}
         {contextText && (
           <span className={`app-statusbar-agent-metric app-statusbar-optional${level ? ` ${level}` : ''}`}>
             <Gauge className="app-statusbar-icon" aria-hidden="true" />
-            <span className="app-statusbar-label">上下文</span>
+            {!isAntigravity && <span className="app-statusbar-label">上下文</span>}
             <span className="app-statusbar-mono">{contextText}</span>
           </span>
         )}
-        {tokenText && (
+        {!isAntigravity && tokenText && (
           <span className="app-statusbar-agent-metric app-statusbar-optional">
             <Coins className="app-statusbar-icon" aria-hidden="true" />
             <span className="app-statusbar-mono">{tokenText}</span>
